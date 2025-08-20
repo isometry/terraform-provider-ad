@@ -386,6 +386,11 @@ func GetErrorCategory(err error) ErrorCategory {
 		return ldapErr.GetCategory()
 	}
 
+	// Check for raw go-ldap library errors
+	if ldapResultErr, ok := err.(*ldap.Error); ok {
+		return categorizeError(ldapResultErr.ResultCode)
+	}
+
 	return categorizeGenericError(err)
 }
 

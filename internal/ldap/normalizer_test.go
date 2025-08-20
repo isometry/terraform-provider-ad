@@ -68,6 +68,16 @@ func (m *MockClient) Stats() PoolStats {
 	return args.Get(0).(PoolStats)
 }
 
+func (m *MockClient) SearchWithPaging(ctx context.Context, req *SearchRequest) (*SearchResult, error) {
+	args := m.Called(ctx, req)
+	return args.Get(0).(*SearchResult), args.Error(1)
+}
+
+func (m *MockClient) GetBaseDN(ctx context.Context) (string, error) {
+	args := m.Called(ctx)
+	return args.String(0), args.Error(1)
+}
+
 func TestIdentifierType_String(t *testing.T) {
 	tests := []struct {
 		idType   IdentifierType

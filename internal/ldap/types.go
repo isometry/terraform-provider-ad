@@ -121,6 +121,7 @@ type Client interface {
 
 	// Basic operations
 	Search(ctx context.Context, req *SearchRequest) (*SearchResult, error)
+	SearchWithPaging(ctx context.Context, req *SearchRequest) (*SearchResult, error)
 	Add(ctx context.Context, req *AddRequest) error
 	Modify(ctx context.Context, req *ModifyRequest) error
 	Delete(ctx context.Context, dn string) error
@@ -128,6 +129,9 @@ type Client interface {
 	// Health and statistics
 	Ping(ctx context.Context) error
 	Stats() PoolStats
+
+	// Directory information
+	GetBaseDN(ctx context.Context) (string, error)
 }
 
 // SearchRequest encapsulates LDAP search parameters.
