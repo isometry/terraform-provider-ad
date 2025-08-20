@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__gopls__go_workspace",
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "WebSearch",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__get-library-docs",
+      "Bash(git clone:*)",
+      "WebFetch(domain:pkg.go.dev)",
+      "Bash(go get:*)",
+      "Bash(go test:*)",
+      "Bash(go build:*)",
+      "Bash(make:*)",
+      "Bash(golangci-lint run:*)",
+      "Bash(go mod:*)",
+      "Bash(go vet:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

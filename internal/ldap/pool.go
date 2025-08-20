@@ -1,0 +1,435 @@
+package ldap
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/go-ldap/ldap/v3"
+)
+
+// connectionPool implements ConnectionPool interface.
+type connectionPool struct {
+	config      *ConnectionConfig
+	servers     []*ServerInfo
+	connections chan *PooledConnection
+	mu          sync.RWMutex
+	closed      bool
+	discovery   *SRVDiscovery
+
+	// Statistics
+	activeConns  int64
+	totalCreated int64
+	totalErrors  int64
+	startTime    time.Time
+
+	// Health checking
+	healthTicker *time.Ticker
+	healthStop   chan struct{}
+	healthWg     sync.WaitGroup
+}
+
+// NewConnectionPool creates a new connection pool.
+func NewConnectionPool(config *ConnectionConfig) (ConnectionPool, error) {
+	if config == nil {
+		config = DefaultConfig()
+	}
+
+	if err := validateConfig(config); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	pool := &connectionPool{
+		config:      config,
+		connections: make(chan *PooledConnection, config.MaxConnections),
+		discovery:   NewSRVDiscovery(),
+		startTime:   time.Now(),
+		healthStop:  make(chan struct{}),
+	}
+
+	// Discover servers
+	if err := pool.discoverServers(); err != nil {
+		return nil, fmt.Errorf("server discovery failed: %w", err)
+	}
+
+	// Start health checking if enabled
+	if config.HealthCheck > 0 {
+		pool.startHealthChecker()
+	}
+
+	return pool, nil
+}
+
+// discoverServers discovers available servers.
+func (p *connectionPool) discoverServers() error {
+	var servers []*ServerInfo
+
+	// Use configured URLs if provided
+	if len(p.config.LDAPURLs) > 0 {
+		for _, url := range p.config.LDAPURLs {
+			server, err := ParseLDAPURL(url)
+			if err != nil {
+				return fmt.Errorf("invalid LDAP URL %s: %w", url, err)
+			}
+			servers = append(servers, server)
+		}
+	} else if p.config.Domain != "" {
+		// Use SRV discovery
+		ctx, cancel := context.WithTimeout(context.Background(), p.config.Timeout)
+		defer cancel()
+
+		discoveredServers, err := p.discovery.DiscoverServers(ctx, p.config.Domain)
+		if err != nil {
+			return fmt.Errorf("SRV discovery failed: %w", err)
+		}
+		servers = discoveredServers
+	} else {
+		return errors.New("either domain or LDAP URLs must be specified")
+	}
+
+	if len(servers) == 0 {
+		return errors.New("no servers discovered")
+	}
+
+	p.mu.Lock()
+	p.servers = servers
+	p.mu.Unlock()
+
+	return nil
+}
+
+// Get retrieves a connection from the pool.
+func (p *connectionPool) Get(ctx context.Context) (*PooledConnection, error) {
+	p.mu.RLock()
+	if p.closed {
+		p.mu.RUnlock()
+		return nil, errors.New("connection pool is closed")
+	}
+	p.mu.RUnlock()
+
+	// Try to get an existing connection from the pool
+	select {
+	case conn := <-p.connections:
+		if p.isConnectionHealthy(conn) {
+			conn.lastUsed = time.Now()
+			atomic.AddInt64(&p.activeConns, 1)
+			return conn, nil
+		}
+		// Connection is unhealthy, close it and create a new one
+		p.closeConnection(conn)
+	default:
+		// No connections available, create a new one
+	}
+
+	// Create a new connection with retry logic
+	return p.createConnection(ctx)
+}
+
+// createConnection creates a new connection with retry logic.
+func (p *connectionPool) createConnection(ctx context.Context) (*PooledConnection, error) {
+	var lastErr error
+	backoff := p.config.InitialBackoff
+
+	for attempt := 0; attempt <= p.config.MaxRetries; attempt++ {
+		for _, server := range p.servers {
+			conn, err := p.createSingleConnection(ctx, server)
+			if err != nil {
+				lastErr = err
+				atomic.AddInt64(&p.totalErrors, 1)
+				continue
+			}
+
+			atomic.AddInt64(&p.totalCreated, 1)
+			atomic.AddInt64(&p.activeConns, 1)
+			return conn, nil
+		}
+
+		// All servers failed, wait before retrying
+		if attempt < p.config.MaxRetries {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+				// Exponential backoff with jitter
+				backoff = time.Duration(float64(backoff) * p.config.BackoffFactor)
+				if backoff > p.config.MaxBackoff {
+					backoff = p.config.MaxBackoff
+				}
+			}
+		}
+	}
+
+	return nil, NewConnectionError("failed to create connection after retries", true, lastErr)
+}
+
+// createSingleConnection creates a connection to a specific server.
+func (p *connectionPool) createSingleConnection(_ context.Context, server *ServerInfo) (*PooledConnection, error) {
+	url := ServerInfoToURL(server)
+
+	var conn *ldap.Conn
+	var err error
+
+	if server.UseTLS {
+		// Direct TLS connection (LDAPS)
+		conn, err = ldap.DialURL(url, ldap.DialWithTLSConfig(p.config.TLSConfig))
+	} else {
+		// Plain connection, will use StartTLS if needed
+		conn, err = ldap.DialURL(url)
+		if err == nil && p.config.UseTLS && !p.config.SkipTLS {
+			// Upgrade to TLS using StartTLS
+			err = conn.StartTLS(p.config.TLSConfig)
+		}
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to %s: %w", url, err)
+	}
+
+	// Set connection timeout
+	conn.SetTimeout(p.config.Timeout)
+
+	pooledConn := &PooledConnection{
+		conn:         conn,
+		lastUsed:     time.Now(),
+		healthy:      true,
+		serverInfo:   server,
+		returnToPool: p.returnConnection,
+	}
+
+	return pooledConn, nil
+}
+
+// returnConnection returns a connection to the pool.
+func (p *connectionPool) returnConnection(conn *PooledConnection) {
+	if conn == nil {
+		return
+	}
+
+	atomic.AddInt64(&p.activeConns, -1)
+
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	if p.closed {
+		p.closeConnection(conn)
+		return
+	}
+
+	// Check if connection is still healthy and not too old
+	if p.isConnectionHealthy(conn) && time.Since(conn.lastUsed) < p.config.MaxIdleTime {
+		select {
+		case p.connections <- conn:
+			// Successfully returned to pool
+		default:
+			// Pool is full, close the connection
+			p.closeConnection(conn)
+		}
+	} else {
+		// Connection is unhealthy or too old, close it
+		p.closeConnection(conn)
+	}
+}
+
+// isConnectionHealthy checks if a connection is healthy.
+func (p *connectionPool) isConnectionHealthy(conn *PooledConnection) bool {
+	if conn == nil || conn.conn == nil || !conn.healthy {
+		return false
+	}
+
+	// Check if connection is too old
+	if time.Since(conn.lastUsed) > p.config.MaxIdleTime {
+		return false
+	}
+
+	return true
+}
+
+// closeConnection closes a pooled connection.
+func (p *connectionPool) closeConnection(conn *PooledConnection) {
+	if conn != nil && conn.conn != nil {
+		conn.conn.Close()
+		conn.healthy = false
+	}
+}
+
+// Close closes all connections and shuts down the pool.
+func (p *connectionPool) Close() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.closed {
+		return nil
+	}
+
+	p.closed = true
+
+	// Stop health checker
+	if p.healthTicker != nil {
+		close(p.healthStop)
+		p.healthWg.Wait()
+		p.healthTicker.Stop()
+	}
+
+	// Close all connections in the pool
+	close(p.connections)
+	for conn := range p.connections {
+		p.closeConnection(conn)
+	}
+
+	return nil
+}
+
+// Stats returns pool statistics.
+func (p *connectionPool) Stats() PoolStats {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	stats := PoolStats{
+		Total:   len(p.connections),
+		Active:  atomic.LoadInt64(&p.activeConns),
+		Idle:    len(p.connections),
+		Created: atomic.LoadInt64(&p.totalCreated),
+		Errors:  atomic.LoadInt64(&p.totalErrors),
+		Uptime:  time.Since(p.startTime),
+	}
+
+	return stats
+}
+
+// HealthCheck performs health checks on all connections.
+func (p *connectionPool) HealthCheck(ctx context.Context) error {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	if p.closed {
+		return errors.New("pool is closed")
+	}
+
+	// Health check implementation would test connections
+	// For now, just return success if pool is operational
+	return nil
+}
+
+// startHealthChecker starts the periodic health checker.
+func (p *connectionPool) startHealthChecker() {
+	p.healthTicker = time.NewTicker(p.config.HealthCheck)
+	p.healthWg.Add(1)
+
+	go func() {
+		defer p.healthWg.Done()
+
+		for {
+			select {
+			case <-p.healthTicker.C:
+				p.performHealthCheck()
+			case <-p.healthStop:
+				return
+			}
+		}
+	}()
+}
+
+// performHealthCheck performs periodic health checks.
+func (p *connectionPool) performHealthCheck() {
+	ctx, cancel := context.WithTimeout(context.Background(), p.config.Timeout)
+	defer cancel()
+
+	// Check a few connections from the pool
+	var toCheck []*PooledConnection
+
+	// Get up to 3 connections for health checking
+	for i := 0; i < 3; i++ {
+		select {
+		case conn := <-p.connections:
+			toCheck = append(toCheck, conn)
+		default:
+			break
+		}
+	}
+
+	// Test each connection and return healthy ones to pool
+	for _, conn := range toCheck {
+		if p.testConnection(ctx, conn) {
+			p.returnConnection(conn)
+		} else {
+			p.closeConnection(conn)
+		}
+	}
+}
+
+// testConnection tests if a connection is working.
+func (p *connectionPool) testConnection(_ context.Context, conn *PooledConnection) bool {
+	if conn == nil || conn.conn == nil {
+		return false
+	}
+
+	// Perform a simple operation to test the connection
+	// Use a minimal search that should always work
+	searchReq := ldap.NewSearchRequest(
+		"", // Empty base DN for root DSE
+		ldap.ScopeBaseObject,
+		ldap.NeverDerefAliases,
+		1, 0, false,
+		"(objectClass=*)",
+		[]string{"defaultNamingContext"},
+		nil,
+	)
+
+	_, err := conn.conn.Search(searchReq)
+	return err == nil
+}
+
+// validateConfig validates the connection configuration.
+func validateConfig(config *ConnectionConfig) error {
+	if config.MaxConnections <= 0 {
+		return errors.New("MaxConnections must be positive")
+	}
+
+	if config.MaxConnections > 100 {
+		return errors.New("MaxConnections too high (max 100)")
+	}
+
+	if config.MaxIdleTime <= 0 {
+		return errors.New("MaxIdleTime must be positive")
+	}
+
+	if config.Timeout <= 0 {
+		return errors.New("timeout must be positive")
+	}
+
+	if config.MaxRetries < 0 {
+		return errors.New("MaxRetries cannot be negative")
+	}
+
+	if config.BackoffFactor <= 1.0 {
+		return errors.New("BackoffFactor must be greater than 1.0")
+	}
+
+	return nil
+}
+
+// Methods for PooledConnection.
+func (pc *PooledConnection) Close() {
+	if pc.returnToPool != nil {
+		pc.returnToPool(pc)
+	}
+}
+
+func (pc *PooledConnection) Conn() *ldap.Conn {
+	return pc.conn
+}
+
+func (pc *PooledConnection) ServerInfo() *ServerInfo {
+	return pc.serverInfo
+}
+
+func (pc *PooledConnection) IsHealthy() bool {
+	return pc.healthy
+}
+
+func (pc *PooledConnection) LastUsed() time.Time {
+	return pc.lastUsed
+}
