@@ -799,7 +799,7 @@ func TestOUManager_PerformanceNestedOUs(t *testing.T) {
 	startTime := time.Now()
 
 	// Mock search for deep hierarchy (up to 10 levels)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		ouDN := fmt.Sprintf("OU=Level%d", i)
 		for j := i - 1; j >= 0; j-- {
 			ouDN += fmt.Sprintf(",OU=Level%d", j)
@@ -828,7 +828,7 @@ func TestOUManager_PerformanceNestedOUs(t *testing.T) {
 		// Test DN building for each level
 		parentDN := "dc=example,dc=com"
 		if i > 0 {
-			for j := 0; j < i; j++ {
+			for j := range i {
 				if j == 0 {
 					parentDN = fmt.Sprintf("OU=Level%d,dc=example,dc=com", j)
 				} else {

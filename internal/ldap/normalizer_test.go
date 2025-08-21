@@ -774,8 +774,7 @@ func BenchmarkMemberNormalizer_DetectIdentifierType(b *testing.B) {
 		"DOMAIN\\username",
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for _, identifier := range identifiers {
 			normalizer.DetectIdentifierType(identifier)
 		}
@@ -787,14 +786,13 @@ func BenchmarkMemberNormalizer_CacheOperations(b *testing.B) {
 	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
 
 	// Pre-populate cache
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		identifier := fmt.Sprintf("user%d@example.com", i)
 		dn := fmt.Sprintf("CN=User%d,OU=Users,DC=example,DC=com", i)
 		normalizer.cacheDN(identifier, dn)
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		identifier := fmt.Sprintf("user%d@example.com", i%100)
 		normalizer.getCachedDN(identifier)
 	}

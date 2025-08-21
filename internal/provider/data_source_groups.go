@@ -245,7 +245,7 @@ func (d *GroupsDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 	}
 
 	// Log the search parameters
-	tflog.Debug(ctx, "Searching for AD groups", map[string]interface{}{
+	tflog.Debug(ctx, "Searching for AD groups", map[string]any{
 		"container":     searchFilter.Container,
 		"name_prefix":   searchFilter.NamePrefix,
 		"name_suffix":   searchFilter.NameSuffix,
@@ -265,7 +265,7 @@ func (d *GroupsDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		return
 	}
 
-	tflog.Debug(ctx, "Successfully found AD groups", map[string]interface{}{
+	tflog.Debug(ctx, "Successfully found AD groups", map[string]any{
 		"group_count": len(groups),
 	})
 
@@ -385,7 +385,7 @@ func (d *GroupsDataSource) mapGroupsToModel(ctx context.Context, groups []*ldapc
 
 	data.Groups = groupsList
 
-	tflog.Trace(ctx, "Mapped groups data to model", map[string]interface{}{
+	tflog.Trace(ctx, "Mapped groups data to model", map[string]any{
 		"total_groups": len(groups),
 	})
 }

@@ -199,10 +199,7 @@ func (gmm *GroupMembershipManager) batchAddMembers(ctx context.Context, groupDN 
 	const batchSize = 1000 // Active Directory recommended batch size
 
 	for i := 0; i < len(memberDNs); i += batchSize {
-		end := i + batchSize
-		if end > len(memberDNs) {
-			end = len(memberDNs)
-		}
+		end := min(i+batchSize, len(memberDNs))
 
 		batch := memberDNs[i:end]
 		if err := gmm.addMembersBatch(ctx, groupDN, batch); err != nil {
@@ -377,7 +374,7 @@ func (gmm *GroupMembershipManager) ValidateMembers(members []string) error {
 }
 
 // GetMembershipStats returns statistics about group membership operations.
-func (gmm *GroupMembershipManager) GetMembershipStats(ctx context.Context, groupGUID string) (map[string]interface{}, error) {
+func (gmm *GroupMembershipManager) GetMembershipStats(ctx context.Context, groupGUID string) (map[string]any, error) {
 	if groupGUID == "" {
 		return nil, fmt.Errorf("group GUID cannot be empty")
 	}
@@ -387,7 +384,7 @@ func (gmm *GroupMembershipManager) GetMembershipStats(ctx context.Context, group
 		return nil, WrapError("get_group_for_stats", err)
 	}
 
-	stats := map[string]interface{}{
+	stats := map[string]any{
 		"group_dn":     group.DistinguishedName,
 		"group_name":   group.Name,
 		"member_count": len(group.MemberDNs),

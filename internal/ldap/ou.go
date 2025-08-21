@@ -42,8 +42,8 @@ type OU struct {
 	Children []string `json:"children,omitempty"` // Child OU DNs
 
 	// Timestamps
-	WhenCreated time.Time `json:"whenCreated,omitempty"`
-	WhenChanged time.Time `json:"whenChanged,omitempty"`
+	WhenCreated time.Time `json:"whenCreated"`
+	WhenChanged time.Time `json:"whenChanged"`
 }
 
 // CreateOURequest represents a request to create a new OU.

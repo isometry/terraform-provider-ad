@@ -727,8 +727,7 @@ func BenchmarkGUIDHandler_StringToGUIDBytes(b *testing.B) {
 	handler := NewGUIDHandler()
 	guid := "12345678-1234-1234-1234-123456789012"
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := handler.StringToGUIDBytes(guid)
 		if err != nil {
 			b.Fatal(err)
@@ -743,8 +742,7 @@ func BenchmarkGUIDHandler_GUIDBytesToString(b *testing.B) {
 		0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12,
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := handler.GUIDBytesToString(guidBytes)
 		if err != nil {
 			b.Fatal(err)
@@ -756,8 +754,7 @@ func BenchmarkGUIDHandler_NormalizeGUID(b *testing.B) {
 	handler := NewGUIDHandler()
 	guid := "12345678123412341234123456789012" // Compact format
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := handler.NormalizeGUID(guid)
 		if err != nil {
 			b.Fatal(err)

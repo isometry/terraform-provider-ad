@@ -637,7 +637,7 @@ func (h *BenchmarkHelper) CreateTestGroups(ctx context.Context, count int) ([]st
 	groupManager := ldap.NewGroupManager(h.client, h.config.BaseDN)
 	groups := make([]string, 0, count)
 
-	for i := 0; i < count; i++ {
+	for i := range count {
 		name := fmt.Sprintf("bench-group-%d", i)
 		samName := fmt.Sprintf("BenchGroup%d", i)
 		container := fmt.Sprintf("%s,%s", h.config.Container, h.config.BaseDN)

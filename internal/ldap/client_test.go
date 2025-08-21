@@ -484,9 +484,7 @@ func BenchmarkNewClient(b *testing.B) {
 	config.LDAPURLs = []string{"ldaps://dc1.example.com:636"}
 	config.Domain = ""
 
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		client, err := NewClient(config)
 		if err != nil {
 			b.Fatalf("Failed to create client: %v", err)
@@ -496,9 +494,8 @@ func BenchmarkNewClient(b *testing.B) {
 }
 
 func BenchmarkSearchRequest_Creation(b *testing.B) {
-	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		req := &SearchRequest{
 			BaseDN:       "dc=example,dc=com",
 			Scope:        ScopeWholeSubtree,
@@ -529,9 +526,7 @@ func BenchmarkClient_IsRetryableError(b *testing.B) {
 	}
 	testErr := errors.New("connection timeout")
 
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = c.isRetryableError(testErr)
 	}
 }

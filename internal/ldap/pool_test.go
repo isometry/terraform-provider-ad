@@ -316,9 +316,7 @@ func BenchmarkConnectionPool_Creation(b *testing.B) {
 	config.LDAPURLs = []string{"ldaps://dc1.example.com:636"}
 	config.Domain = ""
 
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		pool, err := NewConnectionPool(config)
 		if err != nil {
 			b.Fatalf("Failed to create pool: %v", err)
@@ -330,9 +328,7 @@ func BenchmarkConnectionPool_Creation(b *testing.B) {
 func BenchmarkValidateConfig(b *testing.B) {
 	config := DefaultConfig()
 
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		err := validateConfig(config)
 		if err != nil {
 			b.Fatalf("Config validation failed: %v", err)
@@ -347,9 +343,7 @@ func BenchmarkServerInfoToURL(b *testing.B) {
 		UseTLS: true,
 	}
 
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		url := ServerInfoToURL(server)
 		_ = url
 	}

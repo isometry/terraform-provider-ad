@@ -151,7 +151,7 @@ func (r *OUResource) Create(ctx context.Context, req resource.CreateRequest, res
 		return
 	}
 
-	tflog.Debug(ctx, "Creating AD OU", map[string]interface{}{
+	tflog.Debug(ctx, "Creating AD OU", map[string]any{
 		"name": data.Name.ValueString(),
 		"path": data.Path.ValueString(),
 	})
@@ -188,7 +188,7 @@ func (r *OUResource) Create(ctx context.Context, req resource.CreateRequest, res
 		return
 	}
 
-	tflog.Debug(ctx, "Created AD OU", map[string]interface{}{
+	tflog.Debug(ctx, "Created AD OU", map[string]any{
 		"guid": ou.ObjectGUID,
 		"dn":   ou.DistinguishedName,
 	})
@@ -210,7 +210,7 @@ func (r *OUResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 		return
 	}
 
-	tflog.Debug(ctx, "Reading AD OU", map[string]interface{}{
+	tflog.Debug(ctx, "Reading AD OU", map[string]any{
 		"guid": data.ID.ValueString(),
 	})
 
@@ -259,7 +259,7 @@ func (r *OUResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		return
 	}
 
-	tflog.Debug(ctx, "Updating AD OU", map[string]interface{}{
+	tflog.Debug(ctx, "Updating AD OU", map[string]any{
 		"guid": data.ID.ValueString(),
 	})
 
@@ -315,7 +315,7 @@ func (r *OUResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		return
 	}
 
-	tflog.Debug(ctx, "Updated AD OU", map[string]interface{}{
+	tflog.Debug(ctx, "Updated AD OU", map[string]any{
 		"guid": ou.ObjectGUID,
 	})
 
@@ -336,7 +336,7 @@ func (r *OUResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 		return
 	}
 
-	tflog.Debug(ctx, "Deleting AD OU", map[string]interface{}{
+	tflog.Debug(ctx, "Deleting AD OU", map[string]any{
 		"guid": data.ID.ValueString(),
 	})
 
@@ -369,7 +369,7 @@ func (r *OUResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 		return
 	}
 
-	tflog.Debug(ctx, "Deleted AD OU", map[string]interface{}{
+	tflog.Debug(ctx, "Deleted AD OU", map[string]any{
 		"guid": data.ID.ValueString(),
 	})
 }
@@ -378,7 +378,7 @@ func (r *OUResource) ImportState(ctx context.Context, req resource.ImportStateRe
 	// Support import by GUID or DN
 	importID := strings.TrimSpace(req.ID)
 
-	tflog.Debug(ctx, "Importing AD OU", map[string]interface{}{
+	tflog.Debug(ctx, "Importing AD OU", map[string]any{
 		"import_id": importID,
 	})
 
@@ -421,7 +421,7 @@ func (r *OUResource) ImportState(ctx context.Context, req resource.ImportStateRe
 	var data OUResourceModel
 	r.updateModelFromOU(&data, ou)
 
-	tflog.Debug(ctx, "Imported AD OU", map[string]interface{}{
+	tflog.Debug(ctx, "Imported AD OU", map[string]any{
 		"guid": ou.ObjectGUID,
 		"dn":   ou.DistinguishedName,
 	})

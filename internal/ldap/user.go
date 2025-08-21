@@ -123,8 +123,8 @@ type User struct {
 	PrimaryGroup string   `json:"primaryGroup,omitempty"` // Primary group DN
 
 	// Timestamps
-	WhenCreated     time.Time  `json:"whenCreated,omitempty"`     // When user was created
-	WhenChanged     time.Time  `json:"whenChanged,omitempty"`     // When user was last modified
+	WhenCreated     time.Time  `json:"whenCreated"`               // When user was created
+	WhenChanged     time.Time  `json:"whenChanged"`               // When user was last modified
 	LastLogon       *time.Time `json:"lastLogon,omitempty"`       // Last logon timestamp
 	PasswordLastSet *time.Time `json:"passwordLastSet,omitempty"` // Password last set timestamp
 	AccountExpires  *time.Time `json:"accountExpires,omitempty"`  // Account expiration timestamp

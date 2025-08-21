@@ -154,10 +154,7 @@ func (p *connectionPool) createConnection(ctx context.Context) (*PooledConnectio
 				return nil, ctx.Err()
 			case <-time.After(backoff):
 				// Exponential backoff with jitter
-				backoff = time.Duration(float64(backoff) * p.config.BackoffFactor)
-				if backoff > p.config.MaxBackoff {
-					backoff = p.config.MaxBackoff
-				}
+				backoff = min(time.Duration(float64(backoff)*p.config.BackoffFactor), p.config.MaxBackoff)
 			}
 		}
 	}
@@ -316,11 +313,8 @@ func (p *connectionPool) HealthCheck(ctx context.Context) error {
 // startHealthChecker starts the periodic health checker.
 func (p *connectionPool) startHealthChecker() {
 	p.healthTicker = time.NewTicker(p.config.HealthCheck)
-	p.healthWg.Add(1)
 
-	go func() {
-		defer p.healthWg.Done()
-
+	p.healthWg.Go(func() {
 		for {
 			select {
 			case <-p.healthTicker.C:
@@ -329,7 +323,7 @@ func (p *connectionPool) startHealthChecker() {
 				return
 			}
 		}
-	}()
+	})
 }
 
 // performHealthCheck performs periodic health checks.
@@ -341,7 +335,7 @@ func (p *connectionPool) performHealthCheck() {
 	var toCheck []*PooledConnection
 
 	// Get up to 3 connections for health checking
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		select {
 		case conn := <-p.connections:
 			toCheck = append(toCheck, conn)

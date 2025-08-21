@@ -165,10 +165,14 @@ func (c *client) Search(ctx context.Context, req *SearchRequest) (*SearchResult,
 		return nil, fmt.Errorf("search failed: %w", err)
 	}
 
+	// Detect if there might be more results available
+	// If we got exactly the size limit, there might be more results
+	hasMore := req.SizeLimit > 0 && len(result.Entries) >= req.SizeLimit
+
 	return &SearchResult{
 		Entries: result.Entries,
 		Total:   len(result.Entries),
-		HasMore: false, // TODO: Implement pagination detection
+		HasMore: hasMore,
 	}, nil
 }
 
@@ -371,10 +375,7 @@ func (c *client) withRetry(ctx context.Context, operation func() error) error {
 			return ctx.Err()
 		case <-time.After(backoff):
 			// Exponential backoff
-			backoff = time.Duration(float64(backoff) * c.config.BackoffFactor)
-			if backoff > c.config.MaxBackoff {
-				backoff = c.config.MaxBackoff
-			}
+			backoff = min(time.Duration(float64(backoff)*c.config.BackoffFactor), c.config.MaxBackoff)
 		}
 	}
 

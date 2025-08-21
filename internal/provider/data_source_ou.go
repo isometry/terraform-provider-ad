@@ -184,7 +184,7 @@ func (d *OUDataSource) Read(ctx context.Context, req datasource.ReadRequest, res
 	}
 
 	// Log the successful retrieval
-	tflog.Debug(ctx, "Successfully retrieved AD OU", map[string]interface{}{
+	tflog.Debug(ctx, "Successfully retrieved AD OU", map[string]any{
 		"ou_guid": ou.ObjectGUID,
 		"ou_dn":   ou.DistinguishedName,
 		"ou_name": ou.Name,
@@ -215,7 +215,7 @@ func (d *OUDataSource) retrieveOU(ctx context.Context, data *OUDataSourceModel, 
 			return nil, fmt.Errorf("invalid GUID format: %s", guid)
 		}
 
-		tflog.Debug(ctx, "Looking up OU by objectGUID", map[string]interface{}{
+		tflog.Debug(ctx, "Looking up OU by objectGUID", map[string]any{
 			"guid": guid,
 		})
 		return d.ouManager.GetOU(ctx, guid)
@@ -224,7 +224,7 @@ func (d *OUDataSource) retrieveOU(ctx context.Context, data *OUDataSourceModel, 
 	// DN lookup
 	if !data.DN.IsNull() && data.DN.ValueString() != "" {
 		dn := data.DN.ValueString()
-		tflog.Debug(ctx, "Looking up OU by DN", map[string]interface{}{
+		tflog.Debug(ctx, "Looking up OU by DN", map[string]any{
 			"dn": dn,
 		})
 		return d.ouManager.GetOUByDN(ctx, dn)
@@ -237,7 +237,7 @@ func (d *OUDataSource) retrieveOU(ctx context.Context, data *OUDataSourceModel, 
 
 		// Construct the full DN from name and path
 		ouDN := fmt.Sprintf("OU=%s,%s", name, path)
-		tflog.Debug(ctx, "Looking up OU by name and path", map[string]interface{}{
+		tflog.Debug(ctx, "Looking up OU by name and path", map[string]any{
 			"name":    name,
 			"path":    path,
 			"full_dn": ouDN,
@@ -261,7 +261,7 @@ func (d *OUDataSource) mapOUToModel(ctx context.Context, ou *ldapclient.OU, data
 	// Get child OUs
 	children, err := d.ouManager.GetOUChildren(ctx, ou.DistinguishedName)
 	if err != nil {
-		tflog.Warn(ctx, "Failed to retrieve child OUs", map[string]interface{}{
+		tflog.Warn(ctx, "Failed to retrieve child OUs", map[string]any{
 			"ou_dn": ou.DistinguishedName,
 			"error": err.Error(),
 		})
@@ -293,7 +293,7 @@ func (d *OUDataSource) mapOUToModel(ctx context.Context, ou *ldapclient.OU, data
 		}
 	}
 
-	tflog.Trace(ctx, "Mapped OU data to model", map[string]interface{}{
+	tflog.Trace(ctx, "Mapped OU data to model", map[string]any{
 		"ou_guid":     ou.ObjectGUID,
 		"ou_name":     ou.Name,
 		"child_count": childCount,

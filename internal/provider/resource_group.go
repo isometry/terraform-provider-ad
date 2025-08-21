@@ -185,7 +185,7 @@ func (r *GroupResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	tflog.Debug(ctx, "Creating AD group", map[string]interface{}{
+	tflog.Debug(ctx, "Creating AD group", map[string]any{
 		"name":             data.Name.ValueString(),
 		"sam_account_name": data.SAMAccountName.ValueString(),
 		"container":        data.Container.ValueString(),
@@ -225,7 +225,7 @@ func (r *GroupResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	tflog.Debug(ctx, "Created AD group", map[string]interface{}{
+	tflog.Debug(ctx, "Created AD group", map[string]any{
 		"guid": group.ObjectGUID,
 		"dn":   group.DistinguishedName,
 	})
@@ -247,7 +247,7 @@ func (r *GroupResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	tflog.Debug(ctx, "Reading AD group", map[string]interface{}{
+	tflog.Debug(ctx, "Reading AD group", map[string]any{
 		"guid": data.ID.ValueString(),
 	})
 
@@ -296,7 +296,7 @@ func (r *GroupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 
-	tflog.Debug(ctx, "Updating AD group", map[string]interface{}{
+	tflog.Debug(ctx, "Updating AD group", map[string]any{
 		"guid": data.ID.ValueString(),
 	})
 
@@ -365,7 +365,7 @@ func (r *GroupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 
-	tflog.Debug(ctx, "Updated AD group", map[string]interface{}{
+	tflog.Debug(ctx, "Updated AD group", map[string]any{
 		"guid": group.ObjectGUID,
 	})
 
@@ -386,7 +386,7 @@ func (r *GroupResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		return
 	}
 
-	tflog.Debug(ctx, "Deleting AD group", map[string]interface{}{
+	tflog.Debug(ctx, "Deleting AD group", map[string]any{
 		"guid": data.ID.ValueString(),
 	})
 
@@ -410,7 +410,7 @@ func (r *GroupResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		return
 	}
 
-	tflog.Debug(ctx, "Deleted AD group", map[string]interface{}{
+	tflog.Debug(ctx, "Deleted AD group", map[string]any{
 		"guid": data.ID.ValueString(),
 	})
 }
@@ -419,7 +419,7 @@ func (r *GroupResource) ImportState(ctx context.Context, req resource.ImportStat
 	// Support import by GUID or DN
 	importID := strings.TrimSpace(req.ID)
 
-	tflog.Debug(ctx, "Importing AD group", map[string]interface{}{
+	tflog.Debug(ctx, "Importing AD group", map[string]any{
 		"import_id": importID,
 	})
 
@@ -462,7 +462,7 @@ func (r *GroupResource) ImportState(ctx context.Context, req resource.ImportStat
 	var data GroupResourceModel
 	r.updateModelFromGroup(&data, group)
 
-	tflog.Debug(ctx, "Imported AD group", map[string]interface{}{
+	tflog.Debug(ctx, "Imported AD group", map[string]any{
 		"guid": group.ObjectGUID,
 		"dn":   group.DistinguishedName,
 	})

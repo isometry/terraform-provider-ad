@@ -296,7 +296,7 @@ func (d *UsersDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	}
 
 	// Log the search parameters
-	tflog.Debug(ctx, "Searching for AD users", map[string]interface{}{
+	tflog.Debug(ctx, "Searching for AD users", map[string]any{
 		"container":     searchFilter.Container,
 		"name_prefix":   searchFilter.NamePrefix,
 		"name_suffix":   searchFilter.NameSuffix,
@@ -319,7 +319,7 @@ func (d *UsersDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 		return
 	}
 
-	tflog.Debug(ctx, "Successfully found AD users", map[string]interface{}{
+	tflog.Debug(ctx, "Successfully found AD users", map[string]any{
 		"user_count": len(users),
 	})
 
@@ -471,7 +471,7 @@ func (d *UsersDataSource) mapUsersToModel(ctx context.Context, users []*ldapclie
 
 	data.Users = usersList
 
-	tflog.Trace(ctx, "Mapped users data to model", map[string]interface{}{
+	tflog.Trace(ctx, "Mapped users data to model", map[string]any{
 		"total_users": len(users),
 	})
 }

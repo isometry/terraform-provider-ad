@@ -91,8 +91,8 @@ type Group struct {
 	MemberOf  []string `json:"memberOf,omitempty"`  // Groups this group is a member of
 
 	// Timestamps
-	WhenCreated time.Time `json:"whenCreated,omitempty"`
-	WhenChanged time.Time `json:"whenChanged,omitempty"`
+	WhenCreated time.Time `json:"whenCreated"`
+	WhenChanged time.Time `json:"whenChanged"`
 }
 
 // CreateGroupRequest represents a request to create a new group.

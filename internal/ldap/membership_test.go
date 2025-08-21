@@ -914,7 +914,7 @@ func TestBatchOperationsLargeSet(t *testing.T) {
 
 	// Create 2500 mock users (more than the 1000 batch limit)
 	largeUserSet := make([]string, 2500)
-	for i := 0; i < 2500; i++ {
+	for i := range 2500 {
 		userDN := fmt.Sprintf("CN=User%d,OU=Users,DC=example,DC=com", i)
 		largeUserSet[i] = userDN
 		client.AddMockObject(userDN, "", "", "", fmt.Sprintf("user%d", i))
@@ -1013,15 +1013,13 @@ func BenchmarkNormalizeLargeSet(b *testing.B) {
 
 	// Setup test data
 	testMembers := make([]string, 100)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		userDN := fmt.Sprintf("CN=User%d,OU=Users,DC=example,DC=com", i)
 		testMembers[i] = userDN
 		client.AddMockObject(userDN, "", "", "", fmt.Sprintf("user%d", i))
 	}
 
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := gmm.normalizer.NormalizeToDNBatch(testMembers)
 		if err != nil {
 			b.Fatalf("Normalization failed: %v", err)
@@ -1041,7 +1039,7 @@ func BenchmarkCalculateMembershipDelta(b *testing.B) {
 
 	// Create test members
 	testMembers := make([]string, 100)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		userDN := fmt.Sprintf("CN=User%d,OU=Users,DC=example,DC=com", i)
 		testMembers[i] = userDN
 		client.AddMockObject(userDN, "", "", "", fmt.Sprintf("user%d", i))
@@ -1055,9 +1053,8 @@ func BenchmarkCalculateMembershipDelta(b *testing.B) {
 	desiredMembers := testMembers[50:]
 
 	ctx := context.Background()
-	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := gmm.CalculateMembershipDelta(ctx, groupGUID, desiredMembers)
 		if err != nil {
 			b.Fatalf("Delta calculation failed: %v", err)

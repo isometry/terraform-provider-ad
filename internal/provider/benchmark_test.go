@@ -35,7 +35,7 @@ func BenchmarkGroupSearch(b *testing.B) {
 	// Benchmark searching for groups
 	b.Run("SearchByFilter", func(b *testing.B) {
 		filter := "(objectClass=group)"
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, err := groupManager.SearchGroups(ctx, filter, []string{"objectGUID", "name"})
 			if err != nil {
 				b.Fatalf("Search failed: %v", err)
@@ -45,7 +45,7 @@ func BenchmarkGroupSearch(b *testing.B) {
 
 	b.Run("GetByID", func(b *testing.B) {
 		groupID := testGroups[0] // Use first test group
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, err := groupManager.GetGroup(ctx, groupID)
 			if err != nil {
 				b.Fatalf("GetGroup failed: %v", err)
@@ -100,7 +100,7 @@ func BenchmarkGroupMembership(b *testing.B) {
 	b.ResetTimer()
 
 	b.Run("GetMembers", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, err := membershipManager.GetGroupMembers(ctx, mainGroupID)
 			if err != nil {
 				b.Fatalf("GetMembers failed: %v", err)
@@ -112,7 +112,7 @@ func BenchmarkGroupMembership(b *testing.B) {
 		targetGroupID := testGroups[1] // Use second test group
 		memberDN := memberDNs[0]       // Use first member DN
 
-		for i := 0; i < b.N; i++ {
+		for i := 0; b.Loop(); i++ {
 			// Add member
 			err := membershipManager.AddGroupMembers(ctx, targetGroupID, []string{memberDN})
 			if err != nil {
@@ -146,7 +146,7 @@ func BenchmarkUserSearch(b *testing.B) {
 
 	b.Run("SearchByFilter", func(b *testing.B) {
 		filter := "(objectClass=user)"
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, err := userReader.SearchUsers(ctx, filter, []string{"objectGUID", "userPrincipalName"})
 			if err != nil {
 				b.Fatalf("Search failed: %v", err)
@@ -156,7 +156,7 @@ func BenchmarkUserSearch(b *testing.B) {
 
 	b.Run("GetByUPN", func(b *testing.B) {
 		upn := "Administrator@" + helper.config.Domain
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, err := userReader.GetUserByUPN(ctx, upn)
 			if err != nil && !ldap.IsNotFoundError(err) {
 				b.Fatalf("GetByUPN failed: %v", err)
@@ -182,7 +182,7 @@ func BenchmarkConnectionPool(b *testing.B) {
 	}
 
 	b.Run("ClientCreation", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			client, err := ldap.NewClient(ldapConfig)
 			if err != nil {
 				b.Fatalf("Failed to create client: %v", err)
@@ -233,7 +233,7 @@ func BenchmarkPagination(b *testing.B) {
 
 	for _, pageSize := range pageSizes {
 		b.Run(fmt.Sprintf("PageSize_%d", pageSize), func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				req := &ldap.SearchRequest{
 					BaseDN:     helper.config.BaseDN,
 					Scope:      ldap.ScopeWholeSubtree,
@@ -279,7 +279,7 @@ func BenchmarkNormalizer(b *testing.B) {
 
 	// Test normalization of different identifier types
 	b.Run("NormalizeGUID", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, err := normalizer.NormalizeToDN(group.ObjectGUID)
 			if err != nil {
 				b.Fatalf("GUID normalization failed: %v", err)
@@ -288,7 +288,7 @@ func BenchmarkNormalizer(b *testing.B) {
 	})
 
 	b.Run("NormalizeDN", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, err := normalizer.NormalizeToDN(group.DistinguishedName)
 			if err != nil {
 				b.Fatalf("DN normalization failed: %v", err)
@@ -298,7 +298,7 @@ func BenchmarkNormalizer(b *testing.B) {
 
 	b.Run("NormalizeSAM", func(b *testing.B) {
 		samName := helper.config.Domain + "\\" + group.SAMAccountName
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, err := normalizer.NormalizeToDN(samName)
 			if err != nil {
 				b.Fatalf("SAM normalization failed: %v", err)
@@ -329,7 +329,7 @@ func BenchmarkMemoryUsage(b *testing.B) {
 	b.ResetTimer()
 
 	b.Run("LargeResultSet", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			filter := "(objectClass=group)"
 			results, err := groupManager.SearchGroups(ctx, filter, []string{
 				"objectGUID", "distinguishedName", "name", "sAMAccountName",
@@ -365,7 +365,7 @@ func BenchmarkErrorHandling(b *testing.B) {
 
 	b.Run("NotFoundErrors", func(b *testing.B) {
 		nonExistentGUID := "550e8400-e29b-41d4-a716-446655440000"
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, err := groupManager.GetGroup(ctx, nonExistentGUID)
 			if err == nil {
 				b.Fatal("Expected not found error")
@@ -378,7 +378,7 @@ func BenchmarkErrorHandling(b *testing.B) {
 
 	b.Run("InvalidFilter", func(b *testing.B) {
 		invalidFilter := "(invalid filter syntax"
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_, err := groupManager.SearchGroups(ctx, invalidFilter, []string{"objectGUID"})
 			if err == nil {
 				b.Fatal("Expected filter error")
@@ -472,7 +472,7 @@ func BenchmarkPerformanceRegression(b *testing.B) {
 				b.ResetTimer()
 				start := time.Now()
 
-				for i := 0; i < b.N; i++ {
+				for b.Loop() {
 					_, err := groupManager.GetGroup(ctx, groupID)
 					if err != nil {
 						b.Fatalf("GetGroup failed: %v", err)

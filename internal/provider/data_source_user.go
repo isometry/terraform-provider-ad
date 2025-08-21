@@ -425,7 +425,7 @@ func (d *UserDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 	}
 
 	// Log the successful retrieval
-	tflog.Debug(ctx, "Successfully retrieved AD user", map[string]interface{}{
+	tflog.Debug(ctx, "Successfully retrieved AD user", map[string]any{
 		"user_guid": user.ObjectGUID,
 		"user_dn":   user.DistinguishedName,
 		"user_upn":  user.UserPrincipalName,
@@ -447,7 +447,7 @@ func (d *UserDataSource) retrieveUser(ctx context.Context, data *UserDataSourceM
 	// ID (objectGUID) lookup - most reliable
 	if !data.ID.IsNull() && data.ID.ValueString() != "" {
 		guid := data.ID.ValueString()
-		tflog.Debug(ctx, "Looking up user by objectGUID", map[string]interface{}{
+		tflog.Debug(ctx, "Looking up user by objectGUID", map[string]any{
 			"guid": guid,
 		})
 		return d.userReader.GetUserByGUID(ctx, guid)
@@ -456,7 +456,7 @@ func (d *UserDataSource) retrieveUser(ctx context.Context, data *UserDataSourceM
 	// DN lookup
 	if !data.DistinguishedName.IsNull() && data.DistinguishedName.ValueString() != "" {
 		dn := data.DistinguishedName.ValueString()
-		tflog.Debug(ctx, "Looking up user by DN", map[string]interface{}{
+		tflog.Debug(ctx, "Looking up user by DN", map[string]any{
 			"dn": dn,
 		})
 		return d.userReader.GetUserByDN(ctx, dn)
@@ -465,7 +465,7 @@ func (d *UserDataSource) retrieveUser(ctx context.Context, data *UserDataSourceM
 	// UPN lookup
 	if !data.UserPrincipalName.IsNull() && data.UserPrincipalName.ValueString() != "" {
 		upn := data.UserPrincipalName.ValueString()
-		tflog.Debug(ctx, "Looking up user by UPN", map[string]interface{}{
+		tflog.Debug(ctx, "Looking up user by UPN", map[string]any{
 			"upn": upn,
 		})
 		return d.userReader.GetUserByUPN(ctx, upn)
@@ -474,7 +474,7 @@ func (d *UserDataSource) retrieveUser(ctx context.Context, data *UserDataSourceM
 	// SAM account name lookup
 	if !data.SAMAccountName.IsNull() && data.SAMAccountName.ValueString() != "" {
 		samAccountName := data.SAMAccountName.ValueString()
-		tflog.Debug(ctx, "Looking up user by SAM account name", map[string]interface{}{
+		tflog.Debug(ctx, "Looking up user by SAM account name", map[string]any{
 			"sam_account_name": samAccountName,
 		})
 		return d.userReader.GetUserBySAM(ctx, samAccountName)
@@ -483,7 +483,7 @@ func (d *UserDataSource) retrieveUser(ctx context.Context, data *UserDataSourceM
 	// SID lookup
 	if !data.SID.IsNull() && data.SID.ValueString() != "" {
 		sid := data.SID.ValueString()
-		tflog.Debug(ctx, "Looking up user by SID", map[string]interface{}{
+		tflog.Debug(ctx, "Looking up user by SID", map[string]any{
 			"sid": sid,
 		})
 		return d.userReader.GetUserBySID(ctx, sid)
@@ -600,7 +600,7 @@ func (d *UserDataSource) mapUserToModel(ctx context.Context, user *ldapclient.Us
 		data.AccountExpires = types.StringNull()
 	}
 
-	tflog.Trace(ctx, "Mapped user data to model", map[string]interface{}{
+	tflog.Trace(ctx, "Mapped user data to model", map[string]any{
 		"user_guid":    user.ObjectGUID,
 		"user_upn":     user.UserPrincipalName,
 		"user_sam":     user.SAMAccountName,

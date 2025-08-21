@@ -470,7 +470,7 @@ func (m *MemberNormalizer) ClearCache() {
 }
 
 // CacheStats returns statistics about the cache.
-func (m *MemberNormalizer) CacheStats() map[string]interface{} {
+func (m *MemberNormalizer) CacheStats() map[string]any {
 	m.cacheMu.RLock()
 	defer m.cacheMu.RUnlock()
 
@@ -483,7 +483,7 @@ func (m *MemberNormalizer) CacheStats() map[string]interface{} {
 		}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"total_entries":   total,
 		"expired_entries": expired,
 		"active_entries":  total - expired,

@@ -218,7 +218,7 @@ func (d *GroupDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	}
 
 	// Log the successful retrieval
-	tflog.Debug(ctx, "Successfully retrieved AD group", map[string]interface{}{
+	tflog.Debug(ctx, "Successfully retrieved AD group", map[string]any{
 		"group_guid": group.ObjectGUID,
 		"group_dn":   group.DistinguishedName,
 		"group_name": group.Name,
@@ -239,7 +239,7 @@ func (d *GroupDataSource) retrieveGroup(ctx context.Context, data *GroupDataSour
 	// ID (objectGUID) lookup - most reliable
 	if !data.ID.IsNull() && data.ID.ValueString() != "" {
 		guid := data.ID.ValueString()
-		tflog.Debug(ctx, "Looking up group by objectGUID", map[string]interface{}{
+		tflog.Debug(ctx, "Looking up group by objectGUID", map[string]any{
 			"guid": guid,
 		})
 		return d.groupManager.GetGroup(ctx, guid)
@@ -248,7 +248,7 @@ func (d *GroupDataSource) retrieveGroup(ctx context.Context, data *GroupDataSour
 	// DN lookup
 	if !data.DN.IsNull() && data.DN.ValueString() != "" {
 		dn := data.DN.ValueString()
-		tflog.Debug(ctx, "Looking up group by DN", map[string]interface{}{
+		tflog.Debug(ctx, "Looking up group by DN", map[string]any{
 			"dn": dn,
 		})
 		return d.groupManager.GetGroupByDN(ctx, dn)
@@ -261,7 +261,7 @@ func (d *GroupDataSource) retrieveGroup(ctx context.Context, data *GroupDataSour
 
 		// Construct the full DN from name and container
 		groupDN := fmt.Sprintf("CN=%s,%s", name, container)
-		tflog.Debug(ctx, "Looking up group by name in container", map[string]interface{}{
+		tflog.Debug(ctx, "Looking up group by name in container", map[string]any{
 			"name":      name,
 			"container": container,
 			"full_dn":   groupDN,
@@ -272,7 +272,7 @@ func (d *GroupDataSource) retrieveGroup(ctx context.Context, data *GroupDataSour
 	// SAM account name lookup - requires search
 	if !data.SAMAccountName.IsNull() && data.SAMAccountName.ValueString() != "" {
 		samAccountName := data.SAMAccountName.ValueString()
-		tflog.Debug(ctx, "Looking up group by SAM account name", map[string]interface{}{
+		tflog.Debug(ctx, "Looking up group by SAM account name", map[string]any{
 			"sam_account_name": samAccountName,
 		})
 
@@ -340,7 +340,7 @@ func (d *GroupDataSource) mapGroupToModel(ctx context.Context, group *ldapclient
 		}
 	}
 
-	tflog.Trace(ctx, "Mapped group data to model", map[string]interface{}{
+	tflog.Trace(ctx, "Mapped group data to model", map[string]any{
 		"group_guid":   group.ObjectGUID,
 		"group_name":   group.Name,
 		"member_count": memberCount,

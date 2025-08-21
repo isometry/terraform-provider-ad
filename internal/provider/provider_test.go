@@ -17,24 +17,3 @@ var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServe
 func testAccPreCheck(t *testing.T) {
 	testAccPreCheckWithConfig(t)
 }
-
-// TestAccProvider_Domain tests domain-based configuration.
-func TestAccProvider_Domain(t *testing.T) {
-	// This test would verify domain-based SRV discovery configuration
-	// It requires a real AD environment for full testing
-	testAccPreCheck(t)
-}
-
-// TestAccProvider_LDAPURL tests direct LDAP URL configuration.
-func TestAccProvider_LDAPURL(t *testing.T) {
-	// This test would verify direct LDAP URL configuration
-	// It requires a real AD environment for full testing
-	testAccPreCheck(t)
-}
-
-// TestAccProvider_ConfigValidation tests configuration validation.
-func TestAccProvider_ConfigValidation(t *testing.T) {
-	// This test would verify the ConfigValidators work correctly
-	// For now, unit tests of individual validators would be more appropriate
-	testAccPreCheck(t)
-}

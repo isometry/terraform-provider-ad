@@ -198,7 +198,7 @@ func testAccCheckOUDataSourceHasChildren(dataSourceName string, expectedChildRes
 		}
 
 		// Check that all expected children are present
-		for i := 0; i < expectedCount; i++ {
+		for i := range expectedCount {
 			childDN, ok := rs.Primary.Attributes[fmt.Sprintf("children.%d", i)]
 			if !ok {
 				return fmt.Errorf("Child DN at index %d not found", i)

@@ -103,6 +103,18 @@ func (r *GroupMembershipResource) Configure(ctx context.Context, req resource.Co
 	r.client = client
 }
 
+// getMembershipManager creates a GroupMembershipManager from the client.
+func (r *GroupMembershipResource) getMembershipManager(ctx context.Context) (*ldapclient.GroupMembershipManager, error) {
+	// Get base DN from client
+	baseDN, err := r.client.GetBaseDN(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("could not get base DN from LDAP server: %w", err)
+	}
+
+	// Create and return GroupMembershipManager
+	return ldapclient.NewGroupMembershipManager(r.client, baseDN), nil
+}
+
 func (r *GroupMembershipResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data GroupMembershipResourceModel
 
@@ -112,7 +124,7 @@ func (r *GroupMembershipResource) Create(ctx context.Context, req resource.Creat
 		return
 	}
 
-	tflog.Debug(ctx, "Creating AD group membership", map[string]interface{}{
+	tflog.Debug(ctx, "Creating AD group membership", map[string]any{
 		"group_id": data.GroupID.ValueString(),
 	})
 
@@ -133,7 +145,7 @@ func (r *GroupMembershipResource) Create(ctx context.Context, req resource.Creat
 		return
 	}
 
-	tflog.Debug(ctx, "Setting group members", map[string]interface{}{
+	tflog.Debug(ctx, "Setting group members", map[string]any{
 		"group_id":     data.GroupID.ValueString(),
 		"member_count": len(members),
 		"members":      members,
@@ -141,7 +153,7 @@ func (r *GroupMembershipResource) Create(ctx context.Context, req resource.Creat
 
 	// Validate member identifiers (only if we have members)
 	if len(members) > 0 {
-		if err := validateMemberIdentifiers(ctx, membershipManager, members); err != nil {
+		if err := membershipManager.ValidateMembers(members); err != nil {
 			resp.Diagnostics.AddError(
 				"Invalid Member Identifiers",
 				fmt.Sprintf("One or more member identifiers are invalid: %s", err.Error()),
@@ -173,7 +185,7 @@ func (r *GroupMembershipResource) Create(ctx context.Context, req resource.Creat
 		return
 	}
 
-	tflog.Debug(ctx, "Created AD group membership", map[string]interface{}{
+	tflog.Debug(ctx, "Created AD group membership", map[string]any{
 		"group_id":           data.GroupID.ValueString(),
 		"normalized_members": data.Members,
 	})
@@ -191,7 +203,7 @@ func (r *GroupMembershipResource) Read(ctx context.Context, req resource.ReadReq
 		return
 	}
 
-	tflog.Debug(ctx, "Reading AD group membership", map[string]interface{}{
+	tflog.Debug(ctx, "Reading AD group membership", map[string]any{
 		"group_id": data.GroupID.ValueString(),
 	})
 
@@ -211,7 +223,7 @@ func (r *GroupMembershipResource) Read(ctx context.Context, req resource.ReadReq
 		// Check if the group was not found (has been deleted)
 		if ldapErr, ok := err.(*ldapclient.LDAPError); ok {
 			if strings.Contains(ldapErr.Error(), "not found") {
-				tflog.Debug(ctx, "Group not found, removing from state", map[string]interface{}{
+				tflog.Debug(ctx, "Group not found, removing from state", map[string]any{
 					"group_id": data.GroupID.ValueString(),
 				})
 				resp.State.RemoveResource(ctx)
@@ -249,7 +261,7 @@ func (r *GroupMembershipResource) Update(ctx context.Context, req resource.Updat
 		return
 	}
 
-	tflog.Debug(ctx, "Updating AD group membership", map[string]interface{}{
+	tflog.Debug(ctx, "Updating AD group membership", map[string]any{
 		"group_id": data.GroupID.ValueString(),
 	})
 
@@ -270,7 +282,7 @@ func (r *GroupMembershipResource) Update(ctx context.Context, req resource.Updat
 		return
 	}
 
-	tflog.Debug(ctx, "Updating group members", map[string]interface{}{
+	tflog.Debug(ctx, "Updating group members", map[string]any{
 		"group_id":     data.GroupID.ValueString(),
 		"member_count": len(members),
 		"members":      members,
@@ -278,7 +290,7 @@ func (r *GroupMembershipResource) Update(ctx context.Context, req resource.Updat
 
 	// Validate member identifiers (only if we have members)
 	if len(members) > 0 {
-		if err := validateMemberIdentifiers(ctx, membershipManager, members); err != nil {
+		if err := membershipManager.ValidateMembers(members); err != nil {
 			resp.Diagnostics.AddError(
 				"Invalid Member Identifiers",
 				fmt.Sprintf("One or more member identifiers are invalid: %s", err.Error()),
@@ -307,7 +319,7 @@ func (r *GroupMembershipResource) Update(ctx context.Context, req resource.Updat
 		return
 	}
 
-	tflog.Debug(ctx, "Updated AD group membership", map[string]interface{}{
+	tflog.Debug(ctx, "Updated AD group membership", map[string]any{
 		"group_id":           data.GroupID.ValueString(),
 		"normalized_members": data.Members,
 	})
@@ -325,7 +337,7 @@ func (r *GroupMembershipResource) Delete(ctx context.Context, req resource.Delet
 		return
 	}
 
-	tflog.Debug(ctx, "Deleting AD group membership", map[string]interface{}{
+	tflog.Debug(ctx, "Deleting AD group membership", map[string]any{
 		"group_id": data.GroupID.ValueString(),
 	})
 
@@ -345,7 +357,7 @@ func (r *GroupMembershipResource) Delete(ctx context.Context, req resource.Delet
 		// If the group no longer exists, that's fine - the membership is effectively deleted
 		if ldapErr, ok := err.(*ldapclient.LDAPError); ok {
 			if strings.Contains(ldapErr.Error(), "not found") {
-				tflog.Debug(ctx, "Group not found during delete, membership already removed", map[string]interface{}{
+				tflog.Debug(ctx, "Group not found during delete, membership already removed", map[string]any{
 					"group_id": data.GroupID.ValueString(),
 				})
 				return
@@ -359,7 +371,7 @@ func (r *GroupMembershipResource) Delete(ctx context.Context, req resource.Delet
 		return
 	}
 
-	tflog.Debug(ctx, "Deleted AD group membership", map[string]interface{}{
+	tflog.Debug(ctx, "Deleted AD group membership", map[string]any{
 		"group_id": data.GroupID.ValueString(),
 	})
 }
@@ -368,7 +380,7 @@ func (r *GroupMembershipResource) ImportState(ctx context.Context, req resource.
 	// Import by group GUID
 	groupGUID := strings.TrimSpace(req.ID)
 
-	tflog.Debug(ctx, "Importing AD group membership", map[string]interface{}{
+	tflog.Debug(ctx, "Importing AD group membership", map[string]any{
 		"group_id": groupGUID,
 	})
 
@@ -424,7 +436,7 @@ func (r *GroupMembershipResource) ImportState(ctx context.Context, req resource.
 		data.Members = emptySet
 	}
 
-	tflog.Debug(ctx, "Imported AD group membership", map[string]interface{}{
+	tflog.Debug(ctx, "Imported AD group membership", map[string]any{
 		"group_id":     groupGUID,
 		"member_count": len(currentMembers),
 	})
@@ -453,7 +465,7 @@ func (r *GroupMembershipResource) refreshMembershipState(ctx context.Context, me
 
 	model.Members = membersSet
 
-	tflog.Trace(ctx, "Refreshed membership state", map[string]interface{}{
+	tflog.Trace(ctx, "Refreshed membership state", map[string]any{
 		"group_id":           model.GroupID.ValueString(),
 		"member_count":       len(currentMembers),
 		"normalized_members": currentMembers,
