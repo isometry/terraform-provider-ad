@@ -414,6 +414,7 @@ func (p *ActiveDirectoryProvider) getInt64Value(configValue types.Int64, envVar 
 func (p *ActiveDirectoryProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewGroupResource,
+		NewGroupMembershipResource,
 		NewExampleResource,
 	}
 }

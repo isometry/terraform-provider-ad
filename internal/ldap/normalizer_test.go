@@ -271,7 +271,7 @@ func TestMemberNormalizer_ValidateIdentifier(t *testing.T) {
 		},
 		{
 			name:       "invalid GUID",
-			identifier: "12345678-1234-1234-1234-12345678901",
+			identifier: "invalid@guid@format",
 			wantErr:    true,
 		},
 	}

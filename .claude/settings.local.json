@@ -15,7 +15,9 @@
       "Bash(make:*)",
       "Bash(golangci-lint run:*)",
       "Bash(go mod:*)",
-      "Bash(go vet:*)"
+      "Bash(go vet:*)",
+      "Bash(go list:*)",
+      "Bash(gofmt:*)"
     ],
     "deny": [],
     "ask": []
