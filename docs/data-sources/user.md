@@ -1,0 +1,568 @@
+---
+page_title: "Data Source ad_user"
+description: |-
+  Retrieves information about an Active Directory user. Supports multiple lookup methods: objectGUID, Distinguished Name, User Principal Name (UPN), SAM account name, or Security Identifier (SID).
+---
+
+# Data Source (ad_user)
+
+Retrieves information about an Active Directory user. Supports multiple lookup methods: objectGUID, Distinguished Name, User Principal Name (UPN), SAM account name, or Security Identifier (SID).
+
+This data source provides comprehensive information about Active Directory user accounts, including personal attributes, organizational information, account settings, and group memberships. It supports multiple lookup methods for maximum flexibility in identifying users.
+
+## Key Features
+
+- **Multiple Lookup Methods**: Find users by GUID, Distinguished Name, UPN, or SAM account name
+- **Complete User Information**: Access all standard Active Directory user attributes
+- **Group Memberships**: Get lists of groups the user belongs to
+- **Account Status**: Check account enabled/disabled status and lockout information
+- **Organizational Data**: Access department, title, manager, and other organizational attributes
+
+## Lookup Methods
+
+### By Object GUID (Recommended)
+Most reliable method as GUIDs are immutable and unique:
+
+```terraform
+data "ad_user" "by_guid" {
+  id = "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+### By User Principal Name (UPN)
+Lookup by email-like identifier:
+
+```terraform
+data "ad_user" "by_upn" {
+  user_principal_name = "john.doe@example.com"
+}
+```
+
+### By Distinguished Name
+Direct lookup using the full LDAP path:
+
+```terraform
+data "ad_user" "by_dn" {
+  dn = "CN=John Doe,OU=Users,DC=example,DC=com"
+}
+```
+
+### By SAM Account Name
+Lookup using the pre-Windows 2000 username:
+
+```terraform
+data "ad_user" "by_sam" {
+  sam_account_name = "jdoe"
+}
+```
+
+## Example Usage
+
+### Basic User Information Retrieval
+
+```terraform
+# Get information about a user
+data "ad_user" "john_doe" {
+  user_principal_name = "john.doe@example.com"
+}
+
+# Output user information
+output "user_info" {
+  value = {
+    id           = data.ad_user.john_doe.id
+    display_name = data.ad_user.john_doe.display_name
+    department   = data.ad_user.john_doe.department
+    title        = data.ad_user.john_doe.title
+    manager      = data.ad_user.john_doe.manager
+    enabled      = data.ad_user.john_doe.enabled
+    group_count  = length(data.ad_user.john_doe.member_of)
+  }
+}
+```
+
+### User-Based Resource Creation
+
+```terraform
+# Find a department manager
+data "ad_user" "dept_manager" {
+  user_principal_name = "manager@example.com"
+}
+
+# Create a group for the manager's department
+resource "ad_group" "dept_group" {
+  name             = "${data.ad_user.dept_manager.department} Team"
+  sam_account_name = "${replace(data.ad_user.dept_manager.department, " ", "")}Team"
+  container        = "OU=Department Groups,DC=example,DC=com"
+  scope            = "Global"
+  category         = "Security"
+  description      = "Team group for ${data.ad_user.dept_manager.department} department"
+}
+
+# Add the manager to the group
+resource "ad_group_membership" "manager_membership" {
+  group_id = ad_group.dept_group.id
+  members  = [data.ad_user.dept_manager.distinguished_name]
+}
+```
+
+### Group Membership Analysis
+
+```terraform
+data "ad_user" "admin_user" {
+  sam_account_name = "adminuser"
+}
+
+# Check if user is in admin groups
+locals {
+  is_domain_admin = contains(
+    [for group in data.ad_user.admin_user.member_of : lower(group)],
+    lower("CN=Domain Admins,CN=Users,DC=example,DC=com")
+  )
+  
+  is_enterprise_admin = contains(
+    [for group in data.ad_user.admin_user.member_of : lower(group)],
+    lower("CN=Enterprise Admins,CN=Users,DC=example,DC=com")
+  )
+  
+  admin_groups = [
+    for group in data.ad_user.admin_user.member_of :
+    group if can(regex("(?i)admin", group))
+  ]
+}
+
+output "admin_analysis" {
+  value = {
+    user                = data.ad_user.admin_user.display_name
+    is_domain_admin     = local.is_domain_admin
+    is_enterprise_admin = local.is_enterprise_admin
+    admin_groups        = local.admin_groups
+    total_groups        = length(data.ad_user.admin_user.member_of)
+  }
+}
+```
+
+### Organizational Hierarchy Mapping
+
+```terraform
+# Find users by manager relationship
+variable "manager_upn" {
+  type = string
+  default = "manager@example.com"
+}
+
+data "ad_user" "manager" {
+  user_principal_name = var.manager_upn
+}
+
+# Find all users in the organization
+data "ad_users" "all_users" {
+  container = "OU=Users,DC=example,DC=com"
+  scope     = "subtree"
+}
+
+# Filter direct reports
+locals {
+  direct_reports = [
+    for user in data.ad_users.all_users.users :
+    user if user.manager == data.ad_user.manager.distinguished_name
+  ]
+}
+
+# Get detailed information for each direct report
+data "ad_user" "direct_reports" {
+  for_each = {
+    for user in local.direct_reports :
+    user.sam_account_name => user
+  }
+  
+  sam_account_name = each.key
+}
+
+output "team_structure" {
+  value = {
+    manager = {
+      name       = data.ad_user.manager.display_name
+      title      = data.ad_user.manager.title
+      department = data.ad_user.manager.department
+    }
+    direct_reports = {
+      for sam, user in data.ad_user.direct_reports :
+      sam => {
+        name       = user.display_name
+        title      = user.title
+        department = user.department
+        enabled    = user.enabled
+      }
+    }
+    team_size = length(local.direct_reports)
+  }
+}
+```
+
+### Account Status Monitoring
+
+```terraform
+# Monitor service accounts
+variable "service_accounts" {
+  type = list(string)
+  default = [
+    "svc-web@example.com",
+    "svc-db@example.com",
+    "svc-app@example.com"
+  ]
+}
+
+data "ad_user" "service_accounts" {
+  for_each = toset(var.service_accounts)
+  
+  user_principal_name = each.value
+}
+
+# Generate service account report
+output "service_account_status" {
+  value = {
+    for upn, user in data.ad_user.service_accounts :
+    upn => {
+      display_name     = user.display_name
+      enabled          = user.enabled
+      locked_out       = user.locked_out
+      password_expired = user.password_expired
+      last_logon       = user.last_logon
+      group_count      = length(user.member_of)
+    }
+  }
+}
+
+# Alert on disabled service accounts
+locals {
+  disabled_service_accounts = [
+    for upn, user in data.ad_user.service_accounts :
+    upn if !user.enabled
+  ]
+}
+
+output "alerts" {
+  value = {
+    disabled_service_accounts = local.disabled_service_accounts
+    alert_count              = length(local.disabled_service_accounts)
+  }
+}
+```
+
+### User Attribute-Based Provisioning
+
+```terraform
+# Find users needing specific access
+data "ad_user" "privileged_user" {
+  user_principal_name = var.user_upn
+}
+
+# Conditional group membership based on user attributes
+resource "ad_group_membership" "conditional_access" {
+  count = (
+    data.ad_user.privileged_user.department == "IT" &&
+    data.ad_user.privileged_user.enabled
+  ) ? 1 : 0
+  
+  group_id = data.ad_group.it_access.id
+  members  = [data.ad_user.privileged_user.distinguished_name]
+}
+
+# Create user-specific OU if manager
+resource "ad_ou" "manager_ou" {
+  count = can(regex("(?i)manager|director|vp", data.ad_user.privileged_user.title)) ? 1 : 0
+  
+  name        = "${data.ad_user.privileged_user.display_name} Team"
+  path        = "OU=${data.ad_user.privileged_user.department},OU=Departments,DC=example,DC=com"
+  description = "OU for ${data.ad_user.privileged_user.display_name}'s team"
+  protected   = false
+}
+```
+
+### Multi-User Lookup Pattern
+
+```terraform
+# Define users to lookup
+variable "user_list" {
+  type = list(string)
+  default = [
+    "admin1@example.com",
+    "admin2@example.com", 
+    "admin3@example.com"
+  ]
+}
+
+# Lookup all users
+data "ad_user" "admin_users" {
+  for_each = toset(var.user_list)
+  
+  user_principal_name = each.value
+}
+
+# Create admin summary
+output "admin_summary" {
+  value = {
+    for upn, user in data.ad_user.admin_users :
+    upn => {
+      name         = user.display_name
+      department   = user.department
+      title        = user.title
+      enabled      = user.enabled
+      group_count  = length(user.member_of)
+      is_manager   = user.direct_reports > 0
+    }
+  }
+}
+
+# Find common groups among admins
+locals {
+  all_admin_groups = flatten([
+    for user in data.ad_user.admin_users : user.member_of
+  ])
+  
+  common_groups = [
+    for group in distinct(local.all_admin_groups) :
+    group if length([
+      for user in data.ad_user.admin_users :
+      user if contains(user.member_of, group)
+    ]) == length(data.ad_user.admin_users)
+  ]
+}
+
+output "common_admin_groups" {
+  value = local.common_groups
+}
+```
+
+## Available Attributes
+
+All attributes are computed (read-only) and provide comprehensive user information:
+
+### Identification Attributes
+- `id`: ObjectGUID of the user
+- `distinguished_name`: Full Distinguished Name
+- `user_principal_name`: User Principal Name (UPN)
+- `sam_account_name`: SAM account name
+- `display_name`: Display name
+- `sid`: Security Identifier
+
+### Personal Information
+- `given_name`: First name
+- `surname`: Last name
+- `initials`: User initials
+- `email_address`: Email address
+
+### Organizational Information
+- `department`: Department name
+- `company`: Company name
+- `title`: Job title
+- `manager`: Manager's Distinguished Name
+- `direct_reports`: Number of direct reports
+- `office`: Office location
+- `telephone_number`: Phone number
+
+### Account Information
+- `enabled`: Account enabled status
+- `locked_out`: Account lockout status
+- `password_expired`: Password expiration status
+- `password_never_expires`: Password never expires flag
+- `cannot_change_password`: Cannot change password flag
+- `must_change_password_at_next_logon`: Must change password flag
+
+### Timestamps
+- `created`: Account creation date
+- `modified`: Last modification date
+- `last_logon`: Last logon timestamp
+- `last_password_set`: Last password change date
+
+### Group Memberships
+- `member_of`: List of group Distinguished Names the user belongs to
+
+## Best Practices
+
+### Efficient Lookups
+```terraform
+# Prefer UPN for user lookups (commonly available)
+data "ad_user" "by_upn" {
+  user_principal_name = "user@example.com"
+}
+
+# Use GUID when available (most efficient)
+data "ad_user" "by_guid" {
+  id = "550e8400-e29b-41d4-a716-446655440000"
+}
+
+# Use SAM for legacy compatibility
+data "ad_user" "by_sam" {
+  sam_account_name = "username"
+}
+```
+
+### Caching User Data
+```terraform
+# For repeated user access, use locals
+data "ad_user" "frequently_referenced" {
+  user_principal_name = "admin@example.com"
+}
+
+locals {
+  admin_user = {
+    dn         = data.ad_user.frequently_referenced.distinguished_name
+    department = data.ad_user.frequently_referenced.department
+    enabled    = data.ad_user.frequently_referenced.enabled
+  }
+}
+
+# Use cached values in multiple places
+resource "ad_group" "admin_dept_group" {
+  name      = "${local.admin_user.department} Administrators"
+  container = dirname(local.admin_user.dn)
+  # ... other attributes
+}
+```
+
+### Error Handling Patterns
+```terraform
+# Optional user lookup with try()
+locals {
+  optional_user = try(data.ad_user.optional_user, null)
+  user_exists   = local.optional_user != null
+}
+
+# Conditional resource creation
+resource "ad_group_membership" "conditional" {
+  count = local.user_exists && local.optional_user.enabled ? 1 : 0
+  
+  group_id = ad_group.example.id
+  members  = [local.optional_user.distinguished_name]
+}
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **User Not Found**
+   ```
+   Error: User with UPN 'nonexistent@example.com' not found
+   ```
+   Verify the user exists and the identifier is correct.
+
+2. **Multiple Lookup Methods**
+   ```
+   Error: Only one lookup method can be specified
+   ```
+   Use only one of: `id`, `dn`, `user_principal_name`, or `sam_account_name`.
+
+3. **Permission Issues**
+   ```
+   Error: Insufficient permissions to read user
+   ```
+   Ensure the service account has read permissions for user objects.
+
+### Debug Examples
+
+```terraform
+# Debug user lookup
+data "ad_user" "debug_user" {
+  user_principal_name = "debug@example.com"
+}
+
+# Output comprehensive user information
+output "debug_user_info" {
+  value = {
+    # Identity
+    id                  = data.ad_user.debug_user.id
+    dn                  = data.ad_user.debug_user.distinguished_name
+    upn                 = data.ad_user.debug_user.user_principal_name
+    sam                 = data.ad_user.debug_user.sam_account_name
+    display_name        = data.ad_user.debug_user.display_name
+    
+    # Personal
+    given_name          = data.ad_user.debug_user.given_name
+    surname             = data.ad_user.debug_user.surname
+    email               = data.ad_user.debug_user.email_address
+    
+    # Organizational
+    department          = data.ad_user.debug_user.department
+    title               = data.ad_user.debug_user.title
+    manager             = data.ad_user.debug_user.manager
+    direct_reports      = data.ad_user.debug_user.direct_reports
+    
+    # Account Status
+    enabled             = data.ad_user.debug_user.enabled
+    locked_out          = data.ad_user.debug_user.locked_out
+    password_expired    = data.ad_user.debug_user.password_expired
+    
+    # Timestamps
+    created             = data.ad_user.debug_user.created
+    last_logon          = data.ad_user.debug_user.last_logon
+    
+    # Memberships
+    group_count         = length(data.ad_user.debug_user.member_of)
+    first_few_groups    = slice(data.ad_user.debug_user.member_of, 0, min(5, length(data.ad_user.debug_user.member_of)))
+  }
+}
+```
+
+<!-- schema generated by tfplugindocs -->
+## Schema
+
+### Optional
+
+- `distinguished_name` (String) The Distinguished Name of the user to retrieve. Example: `CN=John Doe,CN=Users,DC=example,DC=com`
+- `id` (String) The objectGUID of the user to retrieve. This is the most reliable lookup method as objectGUIDs are immutable and unique. Format: `550e8400-e29b-41d4-a716-446655440000`
+- `sam_account_name` (String) The SAM account name (pre-Windows 2000 name) of the user to retrieve. This performs a domain-wide search. Example: `jdoe`
+- `sid` (String) The Security Identifier (SID) of the user to retrieve. Example: `S-1-5-21-123456789-123456789-123456789-1001`
+- `user_principal_name` (String) The User Principal Name (UPN) of the user to retrieve. Example: `john.doe@example.com`
+
+### Read-Only
+
+- `account_enabled` (Boolean) Whether the user account is enabled.
+- `account_expires` (String) When the user account expires (RFC3339 format).
+- `account_locked_out` (Boolean) Whether the user account is locked out.
+- `cannot_change_password` (Boolean) Whether the user cannot change their password.
+- `change_password_at_logon` (Boolean) Whether the user must change password at next logon.
+- `city` (String) The city/locality of the user.
+- `company` (String) The company name of the user.
+- `country` (String) The country of the user.
+- `department` (String) The department of the user.
+- `description` (String) The description of the user.
+- `display_name` (String) The display name of the user.
+- `division` (String) The division of the user.
+- `email_address` (String) The primary email address of the user (mail attribute).
+- `employee_id` (String) The employee ID of the user.
+- `employee_number` (String) The employee number of the user.
+- `fax` (String) The fax number of the user.
+- `given_name` (String) The first name (given name) of the user.
+- `home_directory` (String) The home directory path of the user.
+- `home_drive` (String) The home drive letter of the user.
+- `home_page` (String) The web page URL of the user.
+- `home_phone` (String) The home telephone number of the user.
+- `initials` (String) The middle initials of the user.
+- `last_logon` (String) When the user last logged on (RFC3339 format).
+- `logon_script` (String) The logon script path of the user.
+- `manager` (String) The Distinguished Name of the user's manager.
+- `member_of` (List of String) A list of Distinguished Names of groups this user is a member of.
+- `mobile_phone` (String) The mobile telephone number of the user.
+- `object_guid` (String) The objectGUID of the user (immutable unique identifier).
+- `object_sid` (String) The Security Identifier (SID) of the user.
+- `office` (String) The physical office location of the user.
+- `office_phone` (String) The office telephone number of the user.
+- `organization` (String) The organization of the user.
+- `password_last_set` (String) When the user's password was last set (RFC3339 format).
+- `password_never_expires` (Boolean) Whether the user's password never expires.
+- `password_not_required` (Boolean) Whether the user account requires a password.
+- `po_box` (String) The P.O. Box of the user.
+- `postal_code` (String) The ZIP/postal code of the user.
+- `primary_group` (String) The Distinguished Name of the user's primary group.
+- `profile_path` (String) The profile path of the user.
+- `smart_card_logon_required` (Boolean) Whether the user requires smart card for logon.
+- `state` (String) The state/province of the user.
+- `street_address` (String) The street address of the user.
+- `surname` (String) The last name (surname) of the user.
+- `title` (String) The job title of the user.
+- `trusted_for_delegation` (Boolean) Whether the user is trusted for delegation.
+- `user_account_control` (Number) The raw Active Directory userAccountControl value as an integer.
+- `when_changed` (String) When the user was last modified (RFC3339 format).
+- `when_created` (String) When the user was created (RFC3339 format).

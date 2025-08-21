@@ -415,26 +415,29 @@ func (p *ActiveDirectoryProvider) Resources(ctx context.Context) []func() resour
 	return []func() resource.Resource{
 		NewGroupResource,
 		NewGroupMembershipResource,
-		NewExampleResource,
+		NewOUResource,
 	}
 }
 
 func (p *ActiveDirectoryProvider) EphemeralResources(ctx context.Context) []func() ephemeral.EphemeralResource {
 	return []func() ephemeral.EphemeralResource{
-		NewExampleEphemeralResource,
+		// No ephemeral resources defined yet
 	}
 }
 
 func (p *ActiveDirectoryProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewGroupDataSource,
-		NewExampleDataSource,
+		NewGroupsDataSource,
+		NewOUDataSource,
+		NewUserDataSource,
+		NewUsersDataSource,
 	}
 }
 
 func (p *ActiveDirectoryProvider) Functions(ctx context.Context) []func() function.Function {
 	return []func() function.Function{
-		NewExampleFunction,
+		// No provider functions defined yet
 	}
 }
 

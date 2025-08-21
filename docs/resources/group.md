@@ -1,0 +1,314 @@
+---
+page_title: "Resource ad_group"
+description: |-
+  Manages an Active Directory group. Groups are used for organizing users and other groups for access control and email distribution.
+---
+
+# Resource (ad_group)
+
+Manages an Active Directory group. Groups are used for organizing users and other groups for access control and email distribution.
+
+This resource allows you to create and manage Active Directory groups with full control over group attributes, scope, and category. Groups are essential for organizing users and controlling access to resources in Active Directory environments.
+
+## Key Features
+
+- **Full Group Lifecycle Management**: Create, read, update, and delete Active Directory groups
+- **Flexible Group Types**: Support for both security and distribution groups
+- **Multiple Scopes**: Global, Universal, and Domain Local group scopes
+- **Container Placement**: Place groups in any organizational unit or container
+- **Automatic Attributes**: Computed attributes like Distinguished Name, SID, and Group Type
+- **Import Support**: Import existing Active Directory groups using multiple identifier formats
+
+## Example Usage
+
+### Basic Security Group
+
+```terraform
+resource "ad_group" "basic_security" {
+  name             = "IT Security Team"
+  sam_account_name = "ITSecurity"
+  container        = "ou=Security Groups,dc=example,dc=com"
+  scope            = "Global"
+  category         = "Security"
+  description      = "IT Security team members"
+}
+```
+
+### Distribution Group for Email
+
+```terraform
+resource "ad_group" "marketing_list" {
+  name             = "Marketing Distribution List"
+  sam_account_name = "MarketingList"
+  container        = "ou=Distribution Groups,dc=example,dc=com"
+  scope            = "Universal"
+  category         = "Distribution"
+  description      = "Marketing team email distribution list"
+}
+```
+
+### Domain Local Group with Users Container
+
+```terraform
+resource "ad_group" "local_access" {
+  name             = "Local Resource Access"
+  sam_account_name = "LocalAccess"
+  container        = "cn=users,dc=example,dc=com"
+  scope            = "DomainLocal"
+  category         = "Security"
+  description      = "Local resource access group"
+}
+```
+
+### Group with Membership Management
+
+```terraform
+resource "ad_group" "project_team" {
+  name             = "Project Alpha Team"
+  sam_account_name = "ProjectAlpha"
+  container        = "ou=Project Groups,dc=example,dc=com"
+  scope            = "Global"
+  category         = "Security"
+  description      = "Members of Project Alpha"
+}
+
+# Manage group membership separately
+resource "ad_group_membership" "project_team_members" {
+  group_id = ad_group.project_team.id
+  members = [
+    "user1@example.com",
+    "user2@example.com",
+    "cn=service-account,cn=users,dc=example,dc=com"
+  ]
+}
+```
+
+## Group Scopes Explained
+
+### Global Groups
+- **Best for**: User accounts and nested global groups
+- **Membership**: Users and global groups from the same domain
+- **Usage**: Can be used in any domain in the forest
+- **Typical Use Case**: Department groups, role-based groups
+
+```terraform
+resource "ad_group" "global_group" {
+  name             = "Finance Department"
+  sam_account_name = "Finance"
+  container        = "ou=Departments,dc=example,dc=com"
+  scope            = "Global"
+  category         = "Security"
+}
+```
+
+### Universal Groups
+- **Best for**: Cross-domain scenarios in multi-domain forests
+- **Membership**: Users and groups from any domain in the forest
+- **Usage**: Can be used anywhere in the forest
+- **Typical Use Case**: Organization-wide groups, email distribution lists
+
+```terraform
+resource "ad_group" "universal_group" {
+  name             = "Enterprise Admins"
+  sam_account_name = "EnterpriseAdmins"
+  container        = "cn=users,dc=example,dc=com"
+  scope            = "Universal"
+  category         = "Security"
+}
+```
+
+### Domain Local Groups
+- **Best for**: Resource access permissions
+- **Membership**: Users and groups from any domain
+- **Usage**: Only within the same domain
+- **Typical Use Case**: Resource permissions, printer access, file shares
+
+```terraform
+resource "ad_group" "domain_local_group" {
+  name             = "File Share Access"
+  sam_account_name = "FileAccess"
+  container        = "ou=Resource Groups,dc=example,dc=com"
+  scope            = "DomainLocal"
+  category         = "Security"
+}
+```
+
+## Import Examples
+
+Groups can be imported using various identifier formats:
+
+### Import by Distinguished Name
+```bash
+terraform import ad_group.example "cn=MyGroup,ou=Groups,dc=example,dc=com"
+```
+
+### Import by GUID
+```bash
+terraform import ad_group.example "12345678-1234-5678-9012-123456789012"
+```
+
+### Import by SID
+```bash
+terraform import ad_group.example "S-1-5-21-123456789-123456789-123456789-1001"
+```
+
+### Import by SAM Account Name
+```bash
+terraform import ad_group.example "MyGroup"
+```
+
+## Complete Configuration Example
+
+```terraform
+# Create organizational unit for groups
+resource "ad_ou" "application_groups" {
+  name        = "Application Groups"
+  path        = "dc=example,dc=com"
+  description = "Groups for application access control"
+}
+
+# Create application-specific security group
+resource "ad_group" "app_users" {
+  name             = "Application Users"
+  sam_account_name = "AppUsers"
+  container        = ad_ou.application_groups.distinguished_name
+  scope            = "Global"
+  category         = "Security"
+  description      = "Users with access to the main application"
+}
+
+# Create application administrators group
+resource "ad_group" "app_admins" {
+  name             = "Application Administrators"
+  sam_account_name = "AppAdmins"
+  container        = ad_ou.application_groups.distinguished_name
+  scope            = "Global"
+  category         = "Security"
+  description      = "Administrators for the main application"
+}
+
+# Create distribution list for notifications
+resource "ad_group" "app_notifications" {
+  name             = "Application Notifications"
+  sam_account_name = "AppNotifications"
+  container        = ad_ou.application_groups.distinguished_name
+  scope            = "Universal"
+  category         = "Distribution"
+  description      = "Distribution list for application notifications"
+}
+
+# Output group information for use in other resources
+output "app_users_group" {
+  value = {
+    id                = ad_group.app_users.id
+    distinguished_name = ad_group.app_users.distinguished_name
+    sid               = ad_group.app_users.sid
+  }
+}
+```
+
+## Best Practices
+
+### Naming Conventions
+- Use descriptive names that clearly indicate the group's purpose
+- Follow your organization's naming standards
+- Keep SAM account names concise (max 20 characters)
+- Use consistent prefixes or suffixes for easy identification
+
+### Container Organization
+```terraform
+# Organize groups in dedicated OUs
+resource "ad_ou" "security_groups" {
+  name = "Security Groups"
+  path = "dc=example,dc=com"
+}
+
+resource "ad_ou" "distribution_groups" {
+  name = "Distribution Groups"  
+  path = "dc=example,dc=com"
+}
+
+resource "ad_group" "security_group" {
+  name             = "Resource Access"
+  sam_account_name = "ResourceAccess"
+  container        = ad_ou.security_groups.distinguished_name
+  scope            = "Global"
+  category         = "Security"
+}
+```
+
+### Scope Selection Guidelines
+1. **Start with Global scope** for most user groups
+2. **Use Universal scope** for cross-domain scenarios
+3. **Use Domain Local scope** for resource permissions
+4. **Follow the A-G-DL pattern**: Accounts in Global groups, Global groups in Domain Local groups
+
+### Security Considerations
+- Use security groups for access control
+- Use distribution groups only for email distribution
+- Regularly audit group memberships
+- Follow the principle of least privilege
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Container Not Found**
+   ```
+   Error: Container 'ou=Groups,dc=example,dc=com' not found
+   ```
+   Ensure the organizational unit exists before creating the group.
+
+2. **SAM Account Name Conflicts**
+   ```
+   Error: Group with SAM account name 'GroupName' already exists
+   ```
+   SAM account names must be unique within the domain.
+
+3. **Invalid Characters in Names**
+   ```
+   Error: Group name cannot contain double quotes
+   ```
+   Avoid special characters like quotes in group names.
+
+4. **Permission Denied**
+   ```
+   Error: Insufficient permissions to create group
+   ```
+   Ensure the service account has necessary permissions in the target container.
+
+### Debug Configuration
+
+```terraform
+# For debugging, you might temporarily relax some constraints
+resource "ad_group" "debug_group" {
+  name             = "Debug Test Group"
+  sam_account_name = "DebugTest"
+  container        = "cn=users,dc=example,dc=com"  # Use default users container
+  scope            = "Global"
+  category         = "Security"
+  description      = "Temporary group for testing"
+}
+```
+
+<!-- schema generated by tfplugindocs -->
+## Schema
+
+### Required
+
+- `container` (String) The distinguished name of the container or organizational unit where the group will be created (e.g., `ou=Groups,dc=example,dc=com`).
+- `name` (String) The name of the group (cn attribute). This is the display name visible in Active Directory.
+- `sam_account_name` (String) The SAM account name (pre-Windows 2000 group name). Must be unique within the domain and follow SAM naming conventions.
+
+### Optional
+
+- `category` (String) The category of the group. Valid values are `Security` or `Distribution`. Defaults to `Security`.
+- `description` (String) A description for the group. This is optional and can be used to provide additional context about the group's purpose.
+- `scope` (String) The scope of the group. Valid values are `Global`, `Universal`, or `DomainLocal`. Defaults to `Global`.
+
+### Read-Only
+
+- `distinguished_name` (String) The distinguished name of the group. This is automatically generated based on the name and container.
+- `group_type` (Number) The numeric group type value used internally by Active Directory. This is derived from the scope and category.
+- `id` (String) The objectGUID of the group. This is automatically assigned by Active Directory and used as the unique identifier.
+- `sid` (String) The Security Identifier (SID) of the group. This is automatically assigned by Active Directory.

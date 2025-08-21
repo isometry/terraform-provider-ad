@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -1023,6 +1024,707 @@ func TestCreateGroupLDAPError(t *testing.T) {
 	assert.Contains(t, err.Error(), "create_group")
 
 	mockClient.AssertExpectations(t)
+}
+
+func TestSearchGroupsWithFilter(t *testing.T) {
+	gm, mockClient := createTestGroupManager()
+	ctx := context.Background()
+
+	// Create multiple mock group entries with different characteristics
+	// Security Global Group with members
+	group1GUID := "12345678-1234-1234-1234-123456789012"
+	group1DN := "CN=SecurityTeam,OU=Groups,DC=test,DC=local"
+	group1Entry := createMockGroupEntry("SecurityTeam", group1GUID, group1DN, CalculateGroupType(GroupScopeGlobal, GroupCategorySecurity))
+	group1Entry.Attributes = append(group1Entry.Attributes, &ldap.EntryAttribute{
+		Name:   "member",
+		Values: []string{"CN=User1,CN=Users,DC=test,DC=local"},
+	})
+
+	// Distribution Universal Group without members
+	group2GUID := "87654321-4321-4321-4321-210987654321"
+	group2DN := "CN=AllUsers,CN=Users,DC=test,DC=local"
+	group2Entry := createMockGroupEntry("AllUsers", group2GUID, group2DN, CalculateGroupType(GroupScopeUniversal, GroupCategoryDistribution))
+
+	// Security Domain Local Group
+	group3GUID := "11111111-2222-3333-4444-555555555555"
+	group3DN := "CN=LocalAdmins,OU=Groups,DC=test,DC=local"
+	group3Entry := createMockGroupEntry("LocalAdmins", group3GUID, group3DN, CalculateGroupType(GroupScopeDomainLocal, GroupCategorySecurity))
+
+	tests := []struct {
+		name           string
+		filter         *GroupSearchFilter
+		expectedFilter string
+		expectedBaseDN string
+		mockEntries    []*ldap.Entry
+		expectedCount  int
+	}{
+		{
+			name:           "Empty filter returns all groups",
+			filter:         &GroupSearchFilter{},
+			expectedFilter: "(objectClass=group)",
+			expectedBaseDN: "DC=test,DC=local",
+			mockEntries:    []*ldap.Entry{group1Entry, group2Entry, group3Entry},
+			expectedCount:  3,
+		},
+		{
+			name:           "Nil filter returns all groups",
+			filter:         nil,
+			expectedFilter: "(objectClass=group)",
+			expectedBaseDN: "DC=test,DC=local",
+			mockEntries:    []*ldap.Entry{group1Entry, group2Entry, group3Entry},
+			expectedCount:  3,
+		},
+		{
+			name: "Name prefix filter",
+			filter: &GroupSearchFilter{
+				NamePrefix: "Security",
+			},
+			expectedFilter: "(&(objectClass=group)(cn=Security*))",
+			expectedBaseDN: "DC=test,DC=local",
+			mockEntries:    []*ldap.Entry{group1Entry},
+			expectedCount:  1,
+		},
+		{
+			name: "Name suffix filter",
+			filter: &GroupSearchFilter{
+				NameSuffix: "Users",
+			},
+			expectedFilter: "(&(objectClass=group)(cn=*Users))",
+			expectedBaseDN: "DC=test,DC=local",
+			mockEntries:    []*ldap.Entry{group2Entry},
+			expectedCount:  1,
+		},
+		{
+			name: "Name contains filter",
+			filter: &GroupSearchFilter{
+				NameContains: "Admin",
+			},
+			expectedFilter: "(&(objectClass=group)(cn=*Admin*))",
+			expectedBaseDN: "DC=test,DC=local",
+			mockEntries:    []*ldap.Entry{group3Entry},
+			expectedCount:  1,
+		},
+		{
+			name: "Security category filter",
+			filter: &GroupSearchFilter{
+				Category: "security",
+			},
+			expectedFilter: "(&(objectClass=group)(groupType:1.2.840.113556.1.4.803:=2147483648))",
+			expectedBaseDN: "DC=test,DC=local",
+			mockEntries:    []*ldap.Entry{group1Entry, group3Entry},
+			expectedCount:  2,
+		},
+		{
+			name: "Distribution category filter",
+			filter: &GroupSearchFilter{
+				Category: "distribution",
+			},
+			expectedFilter: "(&(objectClass=group)(!(groupType:1.2.840.113556.1.4.803:=2147483648)))",
+			expectedBaseDN: "DC=test,DC=local",
+			mockEntries:    []*ldap.Entry{group2Entry},
+			expectedCount:  1,
+		},
+		{
+			name: "Global scope filter",
+			filter: &GroupSearchFilter{
+				Scope: "global",
+			},
+			expectedFilter: "(&(objectClass=group)(groupType:1.2.840.113556.1.4.803:=2))",
+			expectedBaseDN: "DC=test,DC=local",
+			mockEntries:    []*ldap.Entry{group1Entry},
+			expectedCount:  1,
+		},
+		{
+			name: "Universal scope filter",
+			filter: &GroupSearchFilter{
+				Scope: "universal",
+			},
+			expectedFilter: "(&(objectClass=group)(groupType:1.2.840.113556.1.4.803:=8))",
+			expectedBaseDN: "DC=test,DC=local",
+			mockEntries:    []*ldap.Entry{group2Entry},
+			expectedCount:  1,
+		},
+		{
+			name: "Domain Local scope filter",
+			filter: &GroupSearchFilter{
+				Scope: "domainlocal",
+			},
+			expectedFilter: "(&(objectClass=group)(groupType:1.2.840.113556.1.4.803:=4))",
+			expectedBaseDN: "DC=test,DC=local",
+			mockEntries:    []*ldap.Entry{group3Entry},
+			expectedCount:  1,
+		},
+		{
+			name: "Has members filter (true)",
+			filter: &GroupSearchFilter{
+				HasMembers: func(b bool) *bool { return &b }(true),
+			},
+			expectedFilter: "(&(objectClass=group)(member=*))",
+			expectedBaseDN: "DC=test,DC=local",
+			mockEntries:    []*ldap.Entry{group1Entry},
+			expectedCount:  1,
+		},
+		{
+			name: "Has members filter (false)",
+			filter: &GroupSearchFilter{
+				HasMembers: func(b bool) *bool { return &b }(false),
+			},
+			expectedFilter: "(&(objectClass=group)(!(member=*)))",
+			expectedBaseDN: "DC=test,DC=local",
+			mockEntries:    []*ldap.Entry{group2Entry, group3Entry},
+			expectedCount:  2,
+		},
+		{
+			name: "Custom container",
+			filter: &GroupSearchFilter{
+				Container: "OU=Groups,DC=test,DC=local",
+			},
+			expectedFilter: "(objectClass=group)",
+			expectedBaseDN: "OU=Groups,DC=test,DC=local",
+			mockEntries:    []*ldap.Entry{group1Entry, group3Entry},
+			expectedCount:  2,
+		},
+		{
+			name: "Combined filters",
+			filter: &GroupSearchFilter{
+				NameContains: "Security",
+				Category:     "security",
+				Scope:        "global",
+				HasMembers:   func(b bool) *bool { return &b }(true),
+			},
+			expectedFilter: "(&(objectClass=group)(&(cn=*Security*)(groupType:1.2.840.113556.1.4.803:=2147483648)(groupType:1.2.840.113556.1.4.803:=2)(member=*)))",
+			expectedBaseDN: "DC=test,DC=local",
+			mockEntries:    []*ldap.Entry{group1Entry},
+			expectedCount:  1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create search result
+			searchResult := &SearchResult{
+				Entries: tt.mockEntries,
+				Total:   len(tt.mockEntries),
+			}
+
+			// Mock the search call
+			mockClient.On("SearchWithPaging", ctx, mock.MatchedBy(func(searchReq *SearchRequest) bool {
+				return searchReq.BaseDN == tt.expectedBaseDN &&
+					searchReq.Scope == ScopeWholeSubtree &&
+					searchReq.Filter == tt.expectedFilter
+			})).Return(searchResult, nil).Once()
+
+			// Execute test
+			groups, err := gm.SearchGroupsWithFilter(ctx, tt.filter)
+
+			// Assertions
+			require.NoError(t, err)
+			assert.Len(t, groups, tt.expectedCount)
+			mockClient.AssertExpectations(t)
+		})
+	}
+}
+
+func TestValidateSearchFilter(t *testing.T) {
+	gm, _ := createTestGroupManager()
+
+	tests := []struct {
+		name        string
+		filter      *GroupSearchFilter
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name:        "Nil filter is valid",
+			filter:      nil,
+			expectError: false,
+		},
+		{
+			name:        "Empty filter is valid",
+			filter:      &GroupSearchFilter{},
+			expectError: false,
+		},
+		{
+			name: "Valid security category",
+			filter: &GroupSearchFilter{
+				Category: "security",
+			},
+			expectError: false,
+		},
+		{
+			name: "Valid distribution category",
+			filter: &GroupSearchFilter{
+				Category: "distribution",
+			},
+			expectError: false,
+		},
+		{
+			name: "Invalid category",
+			filter: &GroupSearchFilter{
+				Category: "invalid",
+			},
+			expectError: true,
+			errorMsg:    "invalid category 'invalid': must be 'security', 'distribution', or empty",
+		},
+		{
+			name: "Valid global scope",
+			filter: &GroupSearchFilter{
+				Scope: "global",
+			},
+			expectError: false,
+		},
+		{
+			name: "Valid domainlocal scope",
+			filter: &GroupSearchFilter{
+				Scope: "domainlocal",
+			},
+			expectError: false,
+		},
+		{
+			name: "Valid universal scope",
+			filter: &GroupSearchFilter{
+				Scope: "universal",
+			},
+			expectError: false,
+		},
+		{
+			name: "Invalid scope",
+			filter: &GroupSearchFilter{
+				Scope: "invalid",
+			},
+			expectError: true,
+			errorMsg:    "invalid scope 'invalid': must be 'global', 'domainlocal', 'universal', or empty",
+		},
+		{
+			name: "Valid container DN",
+			filter: &GroupSearchFilter{
+				Container: "OU=Groups,DC=test,DC=local",
+			},
+			expectError: false,
+		},
+		{
+			name: "Invalid container DN",
+			filter: &GroupSearchFilter{
+				Container: "invalid-dn",
+			},
+			expectError: true,
+			errorMsg:    "invalid container DN 'invalid-dn'",
+		},
+		{
+			name: "Valid name filters",
+			filter: &GroupSearchFilter{
+				NamePrefix:   "Test",
+				NameSuffix:   "Group",
+				NameContains: "Admin",
+			},
+			expectError: false,
+		},
+		{
+			name: "Valid has members true",
+			filter: &GroupSearchFilter{
+				HasMembers: func(b bool) *bool { return &b }(true),
+			},
+			expectError: false,
+		},
+		{
+			name: "Valid has members false",
+			filter: &GroupSearchFilter{
+				HasMembers: func(b bool) *bool { return &b }(false),
+			},
+			expectError: false,
+		},
+		{
+			name: "Complex valid filter",
+			filter: &GroupSearchFilter{
+				NamePrefix: "Admin",
+				Category:   "security",
+				Scope:      "global",
+				Container:  "OU=Groups,DC=test,DC=local",
+				HasMembers: func(b bool) *bool { return &b }(true),
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := gm.validateSearchFilter(tt.filter)
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorMsg != "" {
+					assert.Contains(t, err.Error(), tt.errorMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestBuildLDAPFilter(t *testing.T) {
+	gm, _ := createTestGroupManager()
+
+	tests := []struct {
+		name           string
+		filter         *GroupSearchFilter
+		expectedFilter string
+	}{
+		{
+			name:           "Nil filter",
+			filter:         nil,
+			expectedFilter: "",
+		},
+		{
+			name:           "Empty filter",
+			filter:         &GroupSearchFilter{},
+			expectedFilter: "",
+		},
+		{
+			name: "Name prefix only",
+			filter: &GroupSearchFilter{
+				NamePrefix: "Test",
+			},
+			expectedFilter: "(cn=Test*)",
+		},
+		{
+			name: "Name suffix only",
+			filter: &GroupSearchFilter{
+				NameSuffix: "Group",
+			},
+			expectedFilter: "(cn=*Group)",
+		},
+		{
+			name: "Name contains only",
+			filter: &GroupSearchFilter{
+				NameContains: "Admin",
+			},
+			expectedFilter: "(cn=*Admin*)",
+		},
+		{
+			name: "Security category",
+			filter: &GroupSearchFilter{
+				Category: "security",
+			},
+			expectedFilter: "(groupType:1.2.840.113556.1.4.803:=2147483648)",
+		},
+		{
+			name: "Distribution category",
+			filter: &GroupSearchFilter{
+				Category: "distribution",
+			},
+			expectedFilter: "(!(groupType:1.2.840.113556.1.4.803:=2147483648))",
+		},
+		{
+			name: "Global scope",
+			filter: &GroupSearchFilter{
+				Scope: "global",
+			},
+			expectedFilter: "(groupType:1.2.840.113556.1.4.803:=2)",
+		},
+		{
+			name: "Domain Local scope",
+			filter: &GroupSearchFilter{
+				Scope: "domainlocal",
+			},
+			expectedFilter: "(groupType:1.2.840.113556.1.4.803:=4)",
+		},
+		{
+			name: "Universal scope",
+			filter: &GroupSearchFilter{
+				Scope: "universal",
+			},
+			expectedFilter: "(groupType:1.2.840.113556.1.4.803:=8)",
+		},
+		{
+			name: "Has members true",
+			filter: &GroupSearchFilter{
+				HasMembers: func(b bool) *bool { return &b }(true),
+			},
+			expectedFilter: "(member=*)",
+		},
+		{
+			name: "Has members false",
+			filter: &GroupSearchFilter{
+				HasMembers: func(b bool) *bool { return &b }(false),
+			},
+			expectedFilter: "(!(member=*))",
+		},
+		{
+			name: "Multiple name filters",
+			filter: &GroupSearchFilter{
+				NamePrefix:   "Test",
+				NameContains: "Admin",
+			},
+			expectedFilter: "(&(cn=Test*)(cn=*Admin*))",
+		},
+		{
+			name: "Complex filter",
+			filter: &GroupSearchFilter{
+				NameContains: "Admin",
+				Category:     "security",
+				Scope:        "global",
+				HasMembers:   func(b bool) *bool { return &b }(true),
+			},
+			expectedFilter: "(&(cn=*Admin*)(groupType:1.2.840.113556.1.4.803:=2147483648)(groupType:1.2.840.113556.1.4.803:=2)(member=*))",
+		},
+		{
+			name: "LDAP injection protection",
+			filter: &GroupSearchFilter{
+				NamePrefix: "Test)(objectClass=*",
+			},
+			expectedFilter: "(cn=Test\\29\\28objectClass=\\2a*)", // Should be properly escaped
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := gm.buildLDAPFilter(tt.filter)
+			assert.Equal(t, tt.expectedFilter, result)
+		})
+	}
+}
+
+func TestSearchGroupsWithFilterEdgeCases(t *testing.T) {
+	gm, mockClient := createTestGroupManager()
+	ctx := context.Background()
+
+	t.Run("Search with invalid filter returns error", func(t *testing.T) {
+		filter := &GroupSearchFilter{
+			Category: "invalid",
+		}
+
+		_, err := gm.SearchGroupsWithFilter(ctx, filter)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid category")
+	})
+
+	t.Run("Search with LDAP error is wrapped", func(t *testing.T) {
+		filter := &GroupSearchFilter{
+			NamePrefix: "Test",
+		}
+
+		ldapErr := fmt.Errorf("LDAP connection failed")
+		mockClient.On("SearchWithPaging", ctx, mock.AnythingOfType("*ldap.SearchRequest")).Return(nil, ldapErr).Once()
+
+		_, err := gm.SearchGroupsWithFilter(ctx, filter)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "search_groups_in_container")
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("Search with malformed entry is skipped", func(t *testing.T) {
+		filter := &GroupSearchFilter{
+			NamePrefix: "Test",
+		}
+
+		// Create a malformed entry (missing objectGUID)
+		malformedEntry := &ldap.Entry{
+			DN: "CN=MalformedGroup,CN=Users,DC=test,DC=local",
+			Attributes: []*ldap.EntryAttribute{
+				{Name: "cn", Values: []string{"MalformedGroup"}},
+				// Missing objectGUID
+			},
+		}
+
+		// Create a valid entry
+		validGUID := "12345678-1234-1234-1234-123456789012"
+		validDN := "CN=ValidGroup,CN=Users,DC=test,DC=local"
+		validEntry := createMockGroupEntry("ValidGroup", validGUID, validDN, CalculateGroupType(GroupScopeGlobal, GroupCategorySecurity))
+
+		searchResult := &SearchResult{
+			Entries: []*ldap.Entry{malformedEntry, validEntry},
+			Total:   2,
+		}
+
+		mockClient.On("SearchWithPaging", ctx, mock.AnythingOfType("*ldap.SearchRequest")).Return(searchResult, nil).Once()
+
+		groups, err := gm.SearchGroupsWithFilter(ctx, filter)
+		require.NoError(t, err)
+		assert.Len(t, groups, 1) // Only valid entry should be returned
+		assert.Equal(t, validGUID, groups[0].ObjectGUID)
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("Case insensitive category and scope", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			value string
+			valid bool
+		}{
+			{"Category uppercase", "SECURITY", true},
+			{"Category mixed case", "Security", true},
+			{"Scope uppercase", "GLOBAL", true},
+			{"Scope mixed case", "Global", true},
+			{"Invalid category case insensitive", "INVALID", false},
+			{"Invalid scope case insensitive", "INVALID", false},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				filter := &GroupSearchFilter{}
+				if strings.Contains(strings.ToLower(tt.name), "category") {
+					filter.Category = tt.value
+				} else {
+					filter.Scope = tt.value
+				}
+
+				err := gm.validateSearchFilter(filter)
+				if tt.valid {
+					assert.NoError(t, err)
+				} else {
+					assert.Error(t, err)
+				}
+			})
+		}
+	})
+}
+
+func TestSearchGroupsWithFilterBackwardCompatibility(t *testing.T) {
+	gm, mockClient := createTestGroupManager()
+	ctx := context.Background()
+
+	// Create some test groups
+	group1GUID := "12345678-1234-1234-1234-123456789012"
+	group1DN := "CN=TestGroup1,CN=Users,DC=test,DC=local"
+	group1Entry := createMockGroupEntry("TestGroup1", group1GUID, group1DN, CalculateGroupType(GroupScopeGlobal, GroupCategorySecurity))
+
+	group2GUID := "87654321-4321-4321-4321-210987654321"
+	group2DN := "CN=TestGroup2,CN=Users,DC=test,DC=local"
+	group2Entry := createMockGroupEntry("TestGroup2", group2GUID, group2DN, CalculateGroupType(GroupScopeUniversal, GroupCategoryDistribution))
+
+	t.Run("Nil filter calls existing SearchGroups", func(t *testing.T) {
+		searchResult := &SearchResult{
+			Entries: []*ldap.Entry{group1Entry, group2Entry},
+			Total:   2,
+		}
+
+		// Mock the SearchWithPaging call that SearchGroups makes
+		mockClient.On("SearchWithPaging", ctx, mock.MatchedBy(func(searchReq *SearchRequest) bool {
+			return searchReq.BaseDN == "DC=test,DC=local" &&
+				searchReq.Scope == ScopeWholeSubtree &&
+				searchReq.Filter == "(objectClass=group)"
+		})).Return(searchResult, nil).Once()
+
+		groups, err := gm.SearchGroupsWithFilter(ctx, nil)
+
+		require.NoError(t, err)
+		assert.Len(t, groups, 2)
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("Existing SearchGroups method still works", func(t *testing.T) {
+		searchResult := &SearchResult{
+			Entries: []*ldap.Entry{group1Entry},
+			Total:   1,
+		}
+
+		// Test that the original SearchGroups method works unchanged
+		mockClient.On("SearchWithPaging", ctx, mock.MatchedBy(func(searchReq *SearchRequest) bool {
+			return searchReq.BaseDN == "DC=test,DC=local" &&
+				searchReq.Scope == ScopeWholeSubtree &&
+				searchReq.Filter == "(&(objectClass=group)(cn=TestGroup1))"
+		})).Return(searchResult, nil).Once()
+
+		groups, err := gm.SearchGroups(ctx, "(cn=TestGroup1)", nil)
+
+		require.NoError(t, err)
+		assert.Len(t, groups, 1)
+		assert.Equal(t, "TestGroup1", groups[0].Name)
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("SearchGroupsWithFilter uses custom attributes", func(t *testing.T) {
+		// Test that if we need specific attributes, they get passed through
+		filter := &GroupSearchFilter{
+			NamePrefix: "Test",
+		}
+
+		searchResult := &SearchResult{
+			Entries: []*ldap.Entry{group1Entry},
+			Total:   1,
+		}
+
+		mockClient.On("SearchWithPaging", ctx, mock.MatchedBy(func(searchReq *SearchRequest) bool {
+			return searchReq.BaseDN == "DC=test,DC=local" &&
+				searchReq.Scope == ScopeWholeSubtree &&
+				searchReq.Filter == "(&(objectClass=group)(cn=Test*))" &&
+				len(searchReq.Attributes) > 0
+		})).Return(searchResult, nil).Once()
+
+		groups, err := gm.SearchGroupsWithFilter(ctx, filter)
+
+		require.NoError(t, err)
+		assert.Len(t, groups, 1)
+		mockClient.AssertExpectations(t)
+	})
+}
+
+func TestSearchGroupsInContainer(t *testing.T) {
+	gm, mockClient := createTestGroupManager()
+	ctx := context.Background()
+
+	groupGUID := "12345678-1234-1234-1234-123456789012"
+	groupDN := "CN=TestGroup,OU=TestOU,DC=test,DC=local"
+	groupEntry := createMockGroupEntry("TestGroup", groupGUID, groupDN, CalculateGroupType(GroupScopeGlobal, GroupCategorySecurity))
+
+	t.Run("Search in custom container", func(t *testing.T) {
+		customBaseDN := "OU=TestOU,DC=test,DC=local"
+		filter := "(cn=Test*)"
+		attributes := []string{"cn", "objectGUID"}
+
+		searchResult := &SearchResult{
+			Entries: []*ldap.Entry{groupEntry},
+			Total:   1,
+		}
+
+		mockClient.On("SearchWithPaging", ctx, mock.MatchedBy(func(searchReq *SearchRequest) bool {
+			return searchReq.BaseDN == customBaseDN &&
+				searchReq.Scope == ScopeWholeSubtree &&
+				searchReq.Filter == "(&(objectClass=group)(cn=Test*))" &&
+				len(searchReq.Attributes) == 2
+		})).Return(searchResult, nil)
+
+		groups, err := gm.searchGroupsInContainer(ctx, customBaseDN, filter, attributes)
+
+		require.NoError(t, err)
+		assert.Len(t, groups, 1)
+		assert.Equal(t, groupGUID, groups[0].ObjectGUID)
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("Empty filter uses default", func(t *testing.T) {
+		searchResult := &SearchResult{
+			Entries: []*ldap.Entry{groupEntry},
+			Total:   1,
+		}
+
+		mockClient.On("SearchWithPaging", ctx, mock.MatchedBy(func(searchReq *SearchRequest) bool {
+			return searchReq.Filter == "(objectClass=group)"
+		})).Return(searchResult, nil)
+
+		groups, err := gm.searchGroupsInContainer(ctx, "DC=test,DC=local", "", nil)
+
+		require.NoError(t, err)
+		assert.Len(t, groups, 1)
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("Empty attributes uses defaults", func(t *testing.T) {
+		searchResult := &SearchResult{
+			Entries: []*ldap.Entry{groupEntry},
+			Total:   1,
+		}
+
+		mockClient.On("SearchWithPaging", ctx, mock.MatchedBy(func(searchReq *SearchRequest) bool {
+			return len(searchReq.Attributes) > 5 // Should have default attributes
+		})).Return(searchResult, nil)
+
+		groups, err := gm.searchGroupsInContainer(ctx, "DC=test,DC=local", "", nil)
+
+		require.NoError(t, err)
+		assert.Len(t, groups, 1)
+		mockClient.AssertExpectations(t)
+	})
 }
 
 func TestAddMembersConflictHandling(t *testing.T) {

@@ -48,6 +48,24 @@ const (
 	GroupTypeFlagSecurity int32 = -2147483648 // ADS_GROUP_TYPE_SECURITY_ENABLED (0x80000000 as signed int32)
 )
 
+// GroupSearchFilter represents user-friendly filter options for searching groups.
+type GroupSearchFilter struct {
+	// Name filters
+	NamePrefix   string `json:"namePrefix,omitempty"`   // Groups whose name starts with this string
+	NameSuffix   string `json:"nameSuffix,omitempty"`   // Groups whose name ends with this string
+	NameContains string `json:"nameContains,omitempty"` // Groups whose name contains this string
+
+	// Type filters
+	Category string `json:"category,omitempty"` // "security", "distribution", or empty for both
+	Scope    string `json:"scope,omitempty"`    // "global", "domainlocal", "universal", or empty for all
+
+	// Location filter
+	Container string `json:"container,omitempty"` // Specific OU to search, empty for base DN
+
+	// Membership filter
+	HasMembers *bool `json:"hasMembers,omitempty"` // true=groups with members, false=empty groups, nil=all
+}
+
 // Group represents an Active Directory group.
 type Group struct {
 	// Core identification
@@ -627,6 +645,30 @@ func (gm *GroupManager) GetMembers(ctx context.Context, groupGUID string) ([]str
 	return group.MemberDNs, nil
 }
 
+// SearchGroupsWithFilter searches for groups using user-friendly filter criteria.
+func (gm *GroupManager) SearchGroupsWithFilter(ctx context.Context, filter *GroupSearchFilter) ([]*Group, error) {
+	if filter == nil {
+		return gm.SearchGroups(ctx, "", nil)
+	}
+
+	// Validate filter values
+	if err := gm.validateSearchFilter(filter); err != nil {
+		return nil, WrapError("validate_search_filter", err)
+	}
+
+	// Convert user-friendly filter to LDAP filter
+	ldapFilter := gm.buildLDAPFilter(filter)
+
+	// Determine search base DN (container or baseDN)
+	searchBaseDN := gm.baseDN
+	if filter.Container != "" {
+		searchBaseDN = filter.Container
+	}
+
+	// Perform search using existing SearchGroups method with custom base DN
+	return gm.searchGroupsInContainer(ctx, searchBaseDN, ldapFilter, nil)
+}
+
 // SearchGroups searches for groups using various criteria.
 func (gm *GroupManager) SearchGroups(ctx context.Context, filter string, attributes []string) ([]*Group, error) {
 	if filter == "" {
@@ -836,6 +878,154 @@ func (gm *GroupManager) ListGroupsByContainer(ctx context.Context, containerDN s
 		group, err := gm.entryToGroup(entry)
 		if err != nil {
 			continue // Skip malformed entries
+		}
+		groups = append(groups, group)
+	}
+
+	return groups, nil
+}
+
+// validateSearchFilter validates the user-provided search filter.
+func (gm *GroupManager) validateSearchFilter(filter *GroupSearchFilter) error {
+	if filter == nil {
+		return nil
+	}
+
+	// Validate category
+	if filter.Category != "" {
+		switch strings.ToLower(filter.Category) {
+		case "security", "distribution":
+			// Valid categories
+		default:
+			return fmt.Errorf("invalid category '%s': must be 'security', 'distribution', or empty", filter.Category)
+		}
+	}
+
+	// Validate scope
+	if filter.Scope != "" {
+		switch strings.ToLower(filter.Scope) {
+		case "global", "domainlocal", "universal":
+			// Valid scopes
+		default:
+			return fmt.Errorf("invalid scope '%s': must be 'global', 'domainlocal', 'universal', or empty", filter.Scope)
+		}
+	}
+
+	// Validate container DN format if provided
+	if filter.Container != "" {
+		if _, err := ldap.ParseDN(filter.Container); err != nil {
+			return fmt.Errorf("invalid container DN '%s': %w", filter.Container, err)
+		}
+	}
+
+	// Empty filter is okay, will return all groups
+	// All combinations of filter values are valid
+
+	return nil
+}
+
+// buildLDAPFilter converts a user-friendly filter to an LDAP filter string.
+func (gm *GroupManager) buildLDAPFilter(filter *GroupSearchFilter) string {
+	if filter == nil {
+		return ""
+	}
+
+	var filterParts []string
+
+	// Name filters
+	if filter.NamePrefix != "" {
+		filterParts = append(filterParts, fmt.Sprintf("(cn=%s*)", ldap.EscapeFilter(filter.NamePrefix)))
+	}
+	if filter.NameSuffix != "" {
+		filterParts = append(filterParts, fmt.Sprintf("(cn=*%s)", ldap.EscapeFilter(filter.NameSuffix)))
+	}
+	if filter.NameContains != "" {
+		filterParts = append(filterParts, fmt.Sprintf("(cn=*%s*)", ldap.EscapeFilter(filter.NameContains)))
+	}
+
+	// Category filter
+	if filter.Category != "" {
+		switch strings.ToLower(filter.Category) {
+		case "security":
+			// Security groups have the security flag set (bit 31 = 0x80000000)
+			filterParts = append(filterParts, "(groupType:1.2.840.113556.1.4.803:=2147483648)")
+		case "distribution":
+			// Distribution groups do NOT have the security flag set
+			filterParts = append(filterParts, "(!(groupType:1.2.840.113556.1.4.803:=2147483648))")
+		}
+	}
+
+	// Scope filter
+	if filter.Scope != "" {
+		switch strings.ToLower(filter.Scope) {
+		case "global":
+			// Global groups have bit 1 set (0x00000002)
+			filterParts = append(filterParts, "(groupType:1.2.840.113556.1.4.803:=2)")
+		case "domainlocal":
+			// Domain Local groups have bit 2 set (0x00000004)
+			filterParts = append(filterParts, "(groupType:1.2.840.113556.1.4.803:=4)")
+		case "universal":
+			// Universal groups have bit 3 set (0x00000008)
+			filterParts = append(filterParts, "(groupType:1.2.840.113556.1.4.803:=8)")
+		}
+	}
+
+	// Membership filter
+	if filter.HasMembers != nil {
+		if *filter.HasMembers {
+			// Groups with members (has member attribute with at least one value)
+			filterParts = append(filterParts, "(member=*)")
+		} else {
+			// Groups without members (no member attribute or empty)
+			filterParts = append(filterParts, "(!(member=*))")
+		}
+	}
+
+	// Combine all filter parts
+	if len(filterParts) == 0 {
+		return ""
+	} else if len(filterParts) == 1 {
+		return filterParts[0]
+	} else {
+		return fmt.Sprintf("(&%s)", strings.Join(filterParts, ""))
+	}
+}
+
+// searchGroupsInContainer searches for groups in a specific container using LDAP filter.
+func (gm *GroupManager) searchGroupsInContainer(ctx context.Context, baseDN, filter string, attributes []string) ([]*Group, error) {
+	if filter == "" {
+		filter = "(objectClass=group)"
+	} else {
+		// Ensure we're only searching for groups
+		filter = fmt.Sprintf("(&(objectClass=group)%s)", filter)
+	}
+
+	if len(attributes) == 0 {
+		attributes = []string{
+			"objectGUID", "distinguishedName", "objectSid", "cn", "sAMAccountName",
+			"description", "groupType", "mail", "mailNickname", "whenCreated", "whenChanged",
+		}
+	}
+
+	searchReq := &SearchRequest{
+		BaseDN:     baseDN,
+		Scope:      ScopeWholeSubtree,
+		Filter:     filter,
+		Attributes: attributes,
+		TimeLimit:  gm.timeout,
+	}
+
+	result, err := gm.client.SearchWithPaging(ctx, searchReq)
+	if err != nil {
+		return nil, WrapError("search_groups_in_container", err)
+	}
+
+	groups := make([]*Group, 0, len(result.Entries))
+	for _, entry := range result.Entries {
+		group, err := gm.entryToGroup(entry)
+		if err != nil {
+			// Log error but continue with other entries
+			continue
 		}
 		groups = append(groups, group)
 	}

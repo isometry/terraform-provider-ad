@@ -1,0 +1,407 @@
+---
+page_title: "Resource ad_group_membership"
+description: |-
+  Manages the membership of an Active Directory group. This resource allows you to define the complete set of members for a group, with automatic anti-drift protection through identifier normalization.
+  Anti-Drift Protection: This resource automatically normalizes all member identifiers to distinguished names (DNs) to prevent configuration drift. For example, specifying a member as john@example.com (UPN) in your configuration will not cause drift even if Active Directory stores it as CN=John Doe,OU=Users,DC=example,DC=com (DN).
+  Supported Identifier Formats:
+  Distinguished Name (DN): CN=John Doe,OU=Users,DC=example,DC=comUser Principal Name (UPN): john@example.comSAM Account Name: DOMAIN\john or johnObject GUID: 550e8400-e29b-41d4-a716-446655440000Security Identifier (SID): S-1-5-21-123456789-123456789-123456789-1001
+---
+
+# Resource (ad_group_membership)
+
+Manages the membership of an Active Directory group. This resource allows you to define the complete set of members for a group, with automatic anti-drift protection through identifier normalization.
+
+**Anti-Drift Protection**: This resource automatically normalizes all member identifiers to distinguished names (DNs) to prevent configuration drift. For example, specifying a member as `john@example.com` (UPN) in your configuration will not cause drift even if Active Directory stores it as `CN=John Doe,OU=Users,DC=example,DC=com` (DN).
+
+**Supported Identifier Formats**:
+- Distinguished Name (DN): `CN=John Doe,OU=Users,DC=example,DC=com`
+- User Principal Name (UPN): `john@example.com`
+- SAM Account Name: `DOMAIN\john` or `john`
+- Object GUID: `550e8400-e29b-41d4-a716-446655440000`
+- Security Identifier (SID): `S-1-5-21-123456789-123456789-123456789-1001`
+
+This resource provides complete control over Active Directory group membership with intelligent anti-drift protection through automatic identifier normalization. It manages the entire membership set, ensuring that only the specified members are present in the group.
+
+## Key Features
+
+- **Complete Membership Management**: Manages the full set of group members - adds missing members and removes unexpected ones
+- **Anti-Drift Protection**: Automatically normalizes all member identifiers to prevent configuration drift
+- **Multiple Identifier Formats**: Support for DN, UPN, SAM, GUID, and SID identifiers
+- **Flexible Member Types**: Support for users, computers, and nested groups as members
+- **Import Support**: Import existing group memberships for management
+- **Large Group Support**: Handles up to 10,000 members per group
+
+## Supported Identifier Formats
+
+The resource accepts members in any of these formats:
+
+| Format | Example | Description |
+|--------|---------|-------------|
+| Distinguished Name (DN) | `CN=John Doe,OU=Users,DC=example,DC=com` | Full LDAP path to the object |
+| User Principal Name (UPN) | `john@example.com` | Email-like format for users |
+| SAM Account Name | `DOMAIN\john` or `john` | Pre-Windows 2000 name format |
+| Object GUID | `550e8400-e29b-41d4-a716-446655440000` | Unique object identifier |
+| Security Identifier (SID) | `S-1-5-21-123456789-123456789-123456789-1001` | Windows security identifier |
+
+All identifiers are automatically normalized to Distinguished Names internally to prevent configuration drift.
+
+## Example Usage
+
+### Basic Group Membership
+
+```terraform
+# Create a group first
+resource "ad_group" "project_team" {
+  name             = "Project Alpha Team"
+  sam_account_name = "ProjectAlpha"
+  container        = "ou=Groups,dc=example,dc=com"
+  scope            = "Global"
+  category         = "Security"
+}
+
+# Manage the group membership
+resource "ad_group_membership" "project_team_members" {
+  group_id = ad_group.project_team.id
+  members = [
+    "john@example.com",                                    # UPN format
+    "jane@example.com",                                    # UPN format
+    "CN=Service Account,OU=Service Accounts,DC=example,DC=com", # DN format
+    "EXAMPLE\\workstation01$"                              # Computer account
+  ]
+}
+```
+
+### Mixed Identifier Formats
+
+```terraform
+resource "ad_group_membership" "mixed_formats" {
+  group_id = ad_group.example.id
+  members = [
+    # Different identifier formats - all will be normalized internally
+    "user1@example.com",                                   # UPN
+    "CN=User Two,OU=Users,DC=example,DC=com",             # DN
+    "EXAMPLE\\user3",                                      # SAM with domain
+    "user4",                                               # SAM account name only
+    "550e8400-e29b-41d4-a716-446655440000",              # GUID
+    "S-1-5-21-123456789-123456789-123456789-1001"        # SID
+  ]
+}
+```
+
+### Nested Group Membership
+
+```terraform
+# Parent group
+resource "ad_group" "all_users" {
+  name             = "All Users"
+  sam_account_name = "AllUsers"
+  container        = "ou=Groups,dc=example,dc=com"
+  scope            = "Global"
+  category         = "Security"
+}
+
+# Child groups
+resource "ad_group" "developers" {
+  name             = "Developers"
+  sam_account_name = "Developers"
+  container        = "ou=Groups,dc=example,dc=com"
+  scope            = "Global"
+  category         = "Security"
+}
+
+resource "ad_group" "administrators" {
+  name             = "Administrators"
+  sam_account_name = "Administrators"
+  container        = "ou=Groups,dc=example,dc=com"
+  scope            = "Global"
+  category         = "Security"
+}
+
+# Add child groups to parent group
+resource "ad_group_membership" "all_users_nested" {
+  group_id = ad_group.all_users.id
+  members = [
+    ad_group.developers.distinguished_name,
+    ad_group.administrators.distinguished_name,
+    # Also add individual users
+    "globaladmin@example.com"
+  ]
+}
+```
+
+### Dynamic Membership from Data Sources
+
+```terraform
+# Find users by department
+data "ad_users" "marketing_users" {
+  filter = "department=Marketing"
+}
+
+# Find users by title
+data "ad_users" "managers" {
+  filter = "title=*Manager*"
+}
+
+# Create dynamic group membership
+resource "ad_group_membership" "marketing_group" {
+  group_id = ad_group.marketing.id
+  # Use toset() to convert list to set as required by the resource
+  members = toset(concat(
+    data.ad_users.marketing_users.users[*].user_principal_name,
+    data.ad_users.managers.users[*].user_principal_name
+  ))
+}
+```
+
+### Service Account and Computer Membership
+
+```terraform
+resource "ad_group_membership" "service_access" {
+  group_id = ad_group.service_accounts.id
+  members = [
+    # Service accounts
+    "CN=App Service,OU=Service Accounts,DC=example,DC=com",
+    "CN=Web Service,OU=Service Accounts,DC=example,DC=com",
+    
+    # Computer accounts (note the $ suffix)
+    "EXAMPLE\\webserver01$",
+    "EXAMPLE\\appserver01$",
+    "CN=DATABASE01,OU=Servers,DC=example,DC=com",
+    
+    # Mix with user accounts
+    "serviceadmin@example.com"
+  ]
+}
+```
+
+## Import Examples
+
+Group memberships can be imported using the group's identifier:
+
+### Import by Group GUID
+```bash
+terraform import ad_group_membership.example "12345678-1234-5678-9012-123456789012"
+```
+
+### Import by Group Distinguished Name
+```bash
+terraform import ad_group_membership.example "cn=MyGroup,ou=Groups,dc=example,dc=com"
+```
+
+### Import by Group SAM Account Name
+```bash
+terraform import ad_group_membership.example "MyGroup"
+```
+
+## Advanced Patterns
+
+### Conditional Membership
+
+```terraform
+# Define variables for conditional membership
+variable "include_contractors" {
+  type        = bool
+  default     = false
+  description = "Whether to include contractors in the group"
+}
+
+# Get different user sets
+data "ad_users" "employees" {
+  filter = "employeeType=Employee"
+}
+
+data "ad_users" "contractors" {
+  filter = "employeeType=Contractor"
+}
+
+# Conditional membership based on variable
+resource "ad_group_membership" "project_access" {
+  group_id = ad_group.project.id
+  
+  members = toset(concat(
+    data.ad_users.employees.users[*].distinguished_name,
+    var.include_contractors ? data.ad_users.contractors.users[*].distinguished_name : []
+  ))
+}
+```
+
+### Multi-Environment Management
+
+```terraform
+# Different membership per environment
+variable "environment" {
+  type = string
+}
+
+locals {
+  # Define environment-specific members
+  environment_members = {
+    "dev" = [
+      "dev-team@example.com",
+      "CN=Dev Service,OU=Service Accounts,DC=example,DC=com"
+    ]
+    "prod" = [
+      "prod-team@example.com", 
+      "CN=Prod Service,OU=Service Accounts,DC=example,DC=com",
+      "operations@example.com"
+    ]
+  }
+}
+
+resource "ad_group_membership" "environment_access" {
+  group_id = ad_group.environment_group.id
+  members  = toset(local.environment_members[var.environment])
+}
+```
+
+### Membership with External Data
+
+```terraform
+# Read members from external JSON file
+locals {
+  members_data = jsondecode(file("${path.module}/group-members.json"))
+}
+
+resource "ad_group_membership" "external_data" {
+  group_id = ad_group.example.id
+  members  = toset(local.members_data.members)
+}
+```
+
+Example `group-members.json`:
+```json
+{
+  "members": [
+    "user1@example.com",
+    "user2@example.com",
+    "CN=Service Account,OU=Service Accounts,DC=example,DC=com"
+  ]
+}
+```
+
+## Best Practices
+
+### Member Organization
+- Use consistent identifier formats when possible
+- Prefer UPN format for user accounts (`user@domain.com`)
+- Use full DN for service accounts and computer accounts
+- Group similar member types together in your configuration
+
+### Performance Optimization
+```terraform
+# For large groups, consider breaking into smaller logical groups
+resource "ad_group" "all_employees" {
+  name             = "All Employees"
+  sam_account_name = "AllEmployees"
+  container        = "ou=Groups,dc=example,dc=com"
+  scope            = "Universal"
+  category         = "Security"
+}
+
+# Break down by department
+resource "ad_group_membership" "it_department" {
+  group_id = ad_group.it_department.id
+  members  = toset(data.ad_users.it_users.users[*].user_principal_name)
+}
+
+# Then add department groups to the main group
+resource "ad_group_membership" "all_employees" {
+  group_id = ad_group.all_employees.id
+  members = [
+    ad_group.it_department.distinguished_name,
+    ad_group.hr_department.distinguished_name,
+    ad_group.finance_department.distinguished_name
+  ]
+}
+```
+
+### Anti-Drift Configuration
+```terraform
+# The resource automatically handles drift caused by different identifier formats
+# This configuration will NOT cause drift even if AD stores members differently
+resource "ad_group_membership" "stable_config" {
+  group_id = ad_group.example.id
+  members = [
+    "john@example.com",  # Will not drift if AD shows as CN=John,OU=Users,DC=example,DC=com
+    "jane@example.com",  # Will not drift if AD shows as EXAMPLE\jane
+    "service@example.com" # Will not drift regardless of how AD represents it
+  ]
+}
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Member Not Found**
+   ```
+   Error: Unable to resolve member identifier 'invalid@example.com'
+   ```
+   Ensure all specified members exist in Active Directory.
+
+2. **Permission Denied**
+   ```
+   Error: Insufficient permissions to modify group membership
+   ```
+   The service account needs write permissions to the group.
+
+3. **Large Group Performance**
+   ```
+   Warning: Group membership operation took longer than expected
+   ```
+   Consider breaking large groups into smaller nested groups.
+
+4. **Identifier Format Issues**
+   ```
+   Error: Invalid identifier format
+   ```
+   Verify the identifier format is correct for the member type.
+
+### Debug Configuration
+
+```terraform
+# For debugging, start with a small set of known members
+resource "ad_group_membership" "debug" {
+  group_id = ad_group.test.id
+  members = [
+    "testuser@example.com"  # Start with one known user
+  ]
+}
+
+# Gradually add more members to isolate issues
+# members = [
+#   "testuser@example.com",
+#   "CN=Test User 2,OU=Users,DC=example,DC=com"
+# ]
+```
+
+### Member Validation
+
+```terraform
+# Use data sources to validate members exist before adding
+data "ad_user" "validate_user" {
+  user_principal_name = "user@example.com"
+}
+
+resource "ad_group_membership" "validated" {
+  group_id = ad_group.example.id
+  members = [
+    data.ad_user.validate_user.user_principal_name
+  ]
+  
+  # This ensures the user exists before attempting membership
+  depends_on = [data.ad_user.validate_user]
+}
+```
+
+<!-- schema generated by tfplugindocs -->
+## Schema
+
+### Required
+
+- `group_id` (String) The objectGUID of the group whose membership is being managed. This must be the GUID of an existing Active Directory group.
+- `members` (Set of String) Set of group member identifiers. Members can be specified using any supported identifier format (DN, UPN, SAM, GUID, or SID). The resource automatically normalizes all identifiers to distinguished names to prevent configuration drift. **Note**: This resource manages the complete membership set - members not listed here will be removed from the group.
+
+### Read-Only
+
+- `id` (String) The resource identifier, which is the objectGUID of the group. This is the same value as `group_id`.

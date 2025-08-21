@@ -351,35 +351,47 @@ func TestAccGroupResource_disappears(t *testing.T) {
 // Helper functions for test configurations.
 func testAccGroupResourceConfig_basic(name, samName string) string {
 	return fmt.Sprintf(`
+%s
+
+%s
+
 resource "ad_group" "test" {
   name             = %[1]q
   sam_account_name = %[2]q
-  container        = "cn=Users,dc=example,dc=com"
+  container        = "%[3]s,${data.ad_domain.test.distinguished_name}"
 }
-`, name, samName)
+`, TestProviderConfig(), TestDomainDataSource(), name, samName, DefaultTestContainer)
 }
 
 func testAccGroupResourceConfig_withDescription(name, samName, description string) string {
 	return fmt.Sprintf(`
+%s
+
+%s
+
 resource "ad_group" "test" {
   name             = %[1]q
   sam_account_name = %[2]q
-  container        = "cn=Users,dc=example,dc=com"
+  container        = "%[4]s,${data.ad_domain.test.distinguished_name}"
   description      = %[3]q
 }
-`, name, samName, description)
+`, TestProviderConfig(), TestDomainDataSource(), name, samName, description, DefaultTestContainer)
 }
 
 func testAccGroupResourceConfig_scopeCategory(name, samName, scope, category string) string {
 	return fmt.Sprintf(`
+%s
+
+%s
+
 resource "ad_group" "test" {
   name             = %[1]q
   sam_account_name = %[2]q
-  container        = "cn=Users,dc=example,dc=com"
+  container        = "%[5]s,${data.ad_domain.test.distinguished_name}"
   scope            = %[3]q
   category         = %[4]q
 }
-`, name, samName, scope, category)
+`, TestProviderConfig(), TestDomainDataSource(), name, samName, scope, category, DefaultTestContainer)
 }
 
 // Helper functions for import testing.
@@ -403,25 +415,15 @@ func testAccGroupImportStateIdFuncDN(s *terraform.State) (string, error) {
 
 // Helper functions for existence and destroy testing.
 func testAccCheckGroupExists(resourceName string) resource.TestCheckFunc {
-	return func(s *terraform.State) error {
-		// Implement group existence check
-		// This would use the LDAP client to verify the group exists
-		return nil
-	}
+	return TestCheckGroupExists(resourceName)
 }
 
 func testAccCheckGroupDestroy(s *terraform.State) error {
-	// Implement group destroy check
-	// This would use the LDAP client to verify all groups are deleted
-	return nil
+	return TestCheckGroupDestroy(s)
 }
 
 func testAccCheckGroupDisappears(resourceName string) resource.TestCheckFunc {
-	return func(s *terraform.State) error {
-		// Implement group disappears check
-		// This would manually delete the group outside Terraform
-		return nil
-	}
+	return TestCheckGroupDisappears(resourceName)
 }
 
 // Note: testAccPreCheck is defined in provider_test.go

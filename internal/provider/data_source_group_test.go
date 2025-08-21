@@ -374,14 +374,5 @@ data "ad_group" "test" {
 
 // Helper function to get provider configuration for tests.
 func testAccProviderConfig() string {
-	return `
-provider "ad" {
-  domain   = "example.com"
-  username = "Administrator"
-  password = "Password123!"
-}
-
-# Get domain information for building DNs
-data "ad_domain" "test" {}
-`
+	return TestProviderConfig() + "\n\n" + TestDomainDataSource()
 }

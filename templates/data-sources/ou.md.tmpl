@@ -1,0 +1,510 @@
+---
+page_title: "{{.Type}} {{.Name}}"
+description: |-
+{{ .Description | plainmarkdown | trimspace | prefixlines "  " }}
+---
+
+# {{.Type}} ({{.Name}})
+
+{{ .Description | trimspace }}
+
+This data source provides comprehensive information about Active Directory organizational units, including protection status, child containers, and hierarchical relationships. It supports multiple lookup methods for maximum flexibility in identifying OUs.
+
+## Key Features
+
+- **Multiple Lookup Methods**: Find OUs by GUID, Distinguished Name, or name with parent path
+- **Hierarchical Information**: Get details about child OUs and container relationships
+- **Protection Status**: Check if OUs are protected from accidental deletion
+- **Child Enumeration**: List all child organizational units
+- **Integration Ready**: Perfect for building dynamic OU structures
+
+## Lookup Methods
+
+### By Object GUID (Recommended)
+Most reliable method as GUIDs are immutable and unique:
+
+```terraform
+data "ad_ou" "by_guid" {
+  id = "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+### By Distinguished Name
+Direct lookup using the full LDAP path:
+
+```terraform
+data "ad_ou" "by_dn" {
+  dn = "OU=IT Department,DC=example,DC=com"
+}
+```
+
+### By Name and Path
+Lookup by OU name within a specific parent container:
+
+```terraform
+data "ad_ou" "by_name" {
+  name = "IT Department"
+  path = "DC=example,DC=com"
+}
+```
+
+## Example Usage
+
+### Basic OU Information Retrieval
+
+```terraform
+# Get information about an IT department OU
+data "ad_ou" "it_department" {
+  name = "IT Department"
+  path = "DC=example,DC=com"
+}
+
+# Output OU information
+output "it_department_info" {
+  value = {
+    id          = data.ad_ou.it_department.id
+    dn          = data.ad_ou.it_department.dn
+    description = data.ad_ou.it_department.description
+    protected   = data.ad_ou.it_department.protected
+    child_count = data.ad_ou.it_department.child_count
+  }
+}
+```
+
+### Hierarchical OU Discovery
+
+```terraform
+# Find a parent OU
+data "ad_ou" "departments" {
+  name = "Departments"
+  path = "DC=example,DC=com"
+}
+
+# Create child OUs based on parent information
+resource "ad_ou" "sub_departments" {
+  for_each = toset(["Finance", "HR", "Marketing"])
+  
+  name        = each.value
+  path        = data.ad_ou.departments.dn
+  description = "${each.value} department under ${data.ad_ou.departments.dn}"
+  protected   = data.ad_ou.departments.protected  # Inherit protection
+}
+```
+
+### Dynamic OU Structure Discovery
+
+```terraform
+# Discover all child OUs of a parent
+data "ad_ou" "company_root" {
+  name = "Acme Corporation"
+  path = "DC=example,DC=com"
+}
+
+# Get details for each child OU
+data "ad_ou" "child_ous" {
+  for_each = toset(data.ad_ou.company_root.children)
+  
+  dn = each.value
+}
+
+# Create a map of child OU information
+locals {
+  child_ou_info = {
+    for child_dn in data.ad_ou.company_root.children :
+    regex("^OU=([^,]+)", child_dn)[0] => {
+      dn          = child_dn
+      description = data.ad_ou.child_ous[child_dn].description
+      protected   = data.ad_ou.child_ous[child_dn].protected
+      child_count = data.ad_ou.child_ous[child_dn].child_count
+    }
+  }
+}
+
+output "organizational_structure" {
+  value = {
+    parent = {
+      name        = "Acme Corporation"
+      dn          = data.ad_ou.company_root.dn
+      child_count = data.ad_ou.company_root.child_count
+    }
+    children = local.child_ou_info
+  }
+}
+```
+
+### Using OU Information for Resource Placement
+
+```terraform
+# Find the standard Users OU for each department
+data "ad_ou" "departments" {
+  for_each = toset(["IT", "HR", "Finance"])
+  
+  name = each.value
+  path = "OU=Departments,DC=example,DC=com"
+}
+
+# Create groups in each department OU
+resource "ad_group" "department_admins" {
+  for_each = data.ad_ou.departments
+  
+  name             = "${each.key} Administrators"
+  sam_account_name = "${each.key}Admins"
+  container        = each.value.dn
+  scope            = "Global"
+  category         = "Security"
+  description      = "Administrators for the ${each.key} department"
+}
+
+# Create service account OUs under each department
+resource "ad_ou" "service_accounts" {
+  for_each = data.ad_ou.departments
+  
+  name        = "Service Accounts"
+  path        = each.value.dn
+  description = "Service accounts for the ${each.key} department"
+  protected   = each.value.protected  # Inherit protection setting
+}
+```
+
+### OU Protection Management
+
+```terraform
+# Find OUs that need protection review
+data "ad_ou" "infrastructure_ous" {
+  for_each = toset([
+    "OU=Servers,DC=example,DC=com",
+    "OU=Service Accounts,DC=example,DC=com",
+    "OU=Security Groups,DC=example,DC=com"
+  ])
+  
+  dn = each.value
+}
+
+# Report on protection status
+output "protection_status" {
+  value = {
+    for dn, ou in data.ad_ou.infrastructure_ous :
+    dn => {
+      protected   = ou.protected
+      child_count = ou.child_count
+      needs_review = !ou.protected && ou.child_count > 0
+    }
+  }
+}
+
+# Create protected wrapper OUs if needed
+resource "ad_ou" "protected_wrappers" {
+  for_each = {
+    for dn, ou in data.ad_ou.infrastructure_ous :
+    dn => ou if !ou.protected && ou.child_count > 0
+  }
+  
+  name        = "Protected-${regex("^OU=([^,]+)", each.key)[0]}"
+  path        = dirname(each.key)
+  description = "Protected wrapper for ${each.key}"
+  protected   = true
+}
+```
+
+### Multi-Level OU Navigation
+
+```terraform
+# Start from domain root
+data "ad_ou" "domain_root" {
+  dn = "DC=example,DC=com"
+}
+
+# Navigate through OU hierarchy
+data "ad_ou" "level1_ous" {
+  for_each = toset(data.ad_ou.domain_root.children)
+  dn = each.value
+}
+
+# Get second level OUs
+locals {
+  level2_ou_dns = flatten([
+    for ou in data.ad_ou.level1_ous : ou.children
+  ])
+}
+
+data "ad_ou" "level2_ous" {
+  for_each = toset(local.level2_ou_dns)
+  dn = each.value
+}
+
+# Create a complete hierarchy map
+locals {
+  ou_hierarchy = {
+    domain = data.ad_ou.domain_root.dn
+    level1 = {
+      for dn, ou in data.ad_ou.level1_ous : dn => {
+        description = ou.description
+        protected   = ou.protected
+        child_count = ou.child_count
+      }
+    }
+    level2 = {
+      for dn, ou in data.ad_ou.level2_ous : dn => {
+        description = ou.description
+        protected   = ou.protected
+        child_count = ou.child_count
+      }
+    }
+  }
+}
+
+output "complete_hierarchy" {
+  value = local.ou_hierarchy
+}
+```
+
+### Conditional Resource Creation
+
+```terraform
+# Check if staging OU exists
+data "ad_ou" "staging" {
+  name = "Staging"
+  path = "OU=Environments,DC=example,DC=com"
+}
+
+# Create production OU with similar structure if staging exists
+resource "ad_ou" "production" {
+  count = data.ad_ou.staging.child_count > 0 ? 1 : 0
+  
+  name        = "Production"
+  path        = dirname(data.ad_ou.staging.dn)
+  description = "Production environment (mirroring staging structure)"
+  protected   = true  # Production should always be protected
+}
+
+# Mirror child OUs from staging to production
+resource "ad_ou" "prod_mirrors" {
+  for_each = data.ad_ou.staging.child_count > 0 ? toset(data.ad_ou.staging.children) : []
+  
+  name        = regex("^OU=([^,]+)", each.value)[0]
+  path        = ad_ou.production[0].dn
+  description = "Production ${regex("^OU=([^,]+)", each.value)[0]}"
+  protected   = false
+}
+```
+
+### Integration with External Systems
+
+```terraform
+# Define OU structure from external configuration
+variable "ou_structure" {
+  type = map(object({
+    parent_path = string
+    description = string
+  }))
+  default = {
+    "Applications" = {
+      parent_path = "DC=example,DC=com"
+      description = "Application-specific resources"
+    }
+    "Infrastructure" = {
+      parent_path = "DC=example,DC=com"
+      description = "Infrastructure resources"
+    }
+  }
+}
+
+# Check if OUs exist
+data "ad_ou" "existing_ous" {
+  for_each = var.ou_structure
+  
+  name = each.key
+  path = each.value.parent_path
+}
+
+# Create OUs that don't exist
+resource "ad_ou" "missing_ous" {
+  for_each = {
+    for name, config in var.ou_structure :
+    name => config
+    if !can(data.ad_ou.existing_ous[name].id)
+  }
+  
+  name        = each.key
+  path        = each.value.parent_path
+  description = each.value.description
+  protected   = true
+}
+
+# Use existing or created OUs for further resources
+locals {
+  all_ous = merge(
+    {
+      for name, ou in data.ad_ou.existing_ous :
+      name => ou.dn
+      if can(ou.id)
+    },
+    {
+      for name, ou in resource.ad_ou.missing_ous :
+      name => ou.dn
+    }
+  )
+}
+```
+
+## Available Attributes
+
+All attributes are computed (read-only) and provide comprehensive OU information:
+
+### Identification Attributes
+- `id`: ObjectGUID of the OU
+- `dn`: Full Distinguished Name
+- `guid`: ObjectGUID in string format (same as id)
+- `name`: OU name (extracted from CN component)
+
+### Properties
+- `description`: OU description if set
+- `protected`: Boolean indicating if OU is protected from deletion
+
+### Hierarchical Information
+- `children`: List of child OU Distinguished Names
+- `child_count`: Number of direct child OUs
+
+## Best Practices
+
+### Efficient Lookups
+```terraform
+# Prefer GUID when available (most efficient)
+data "ad_ou" "by_guid" {
+  id = "550e8400-e29b-41d4-a716-446655440000"
+}
+
+# Use DN for direct access when known
+data "ad_ou" "by_dn" {
+  dn = "OU=Known Path,DC=example,DC=com"
+}
+
+# Use name+path for readable configurations
+data "ad_ou" "by_name" {
+  name = "Department Name"
+  path = "DC=example,DC=com"
+}
+```
+
+### Hierarchy Navigation
+```terraform
+# Build OU maps for complex navigation
+data "ad_ou" "root_ous" {
+  for_each = toset([
+    "OU=Departments,DC=example,DC=com",
+    "OU=Infrastructure,DC=example,DC=com",
+    "OU=Applications,DC=example,DC=com"
+  ])
+  
+  dn = each.value
+}
+
+locals {
+  ou_map = {
+    for dn, ou in data.ad_ou.root_ous :
+    regex("^OU=([^,]+)", dn)[0] => {
+      dn          = ou.dn
+      description = ou.description
+      protected   = ou.protected
+      children    = ou.children
+    }
+  }
+}
+```
+
+### Protection Management
+```terraform
+# Check protection status before operations
+data "ad_ou" "target_ou" {
+  name = "Target OU"
+  path = "DC=example,DC=com"
+}
+
+# Conditional operations based on protection
+resource "ad_group" "ou_group" {
+  count = !data.ad_ou.target_ou.protected ? 1 : 0
+  
+  name      = "OU Management Group"
+  container = data.ad_ou.target_ou.dn
+  # ... other attributes
+}
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **OU Not Found**
+   ```
+   Error: OU with name 'NonExistent' not found
+   ```
+   Verify the OU exists and the path is correct.
+
+2. **Multiple Lookup Methods**
+   ```
+   Error: Only one lookup method can be specified
+   ```
+   Use only one of: `id`, `dn`, or `name` (with `path`).
+
+3. **Name Lookup Without Path**
+   ```
+   Error: Path is required when looking up by name
+   ```
+   Specify the `path` attribute when using `name` lookup.
+
+4. **Permission Issues**
+   ```
+   Error: Insufficient permissions to read OU
+   ```
+   Ensure the service account has read permissions for the OU.
+
+### Debug Examples
+
+```terraform
+# Debug OU structure
+data "ad_ou" "debug_ou" {
+  name = "Debug OU"
+  path = "DC=example,DC=com"
+}
+
+# Output comprehensive information
+output "debug_ou_info" {
+  value = {
+    id          = data.ad_ou.debug_ou.id
+    dn          = data.ad_ou.debug_ou.dn
+    guid        = data.ad_ou.debug_ou.guid
+    description = data.ad_ou.debug_ou.description
+    protected   = data.ad_ou.debug_ou.protected
+    child_count = data.ad_ou.debug_ou.child_count
+    children    = data.ad_ou.debug_ou.children
+  }
+}
+```
+
+### Validation Examples
+
+```terraform
+# Validate OU structure before using
+data "ad_ou" "validated_ou" {
+  name = "Validated OU"
+  path = "DC=example,DC=com"
+  
+  lifecycle {
+    postcondition {
+      condition     = self.protected == true
+      error_message = "OU must be protected for this configuration."
+    }
+  }
+}
+
+# Use with confidence after validation
+resource "ad_group" "validated_group" {
+  name      = "Validated Group"
+  container = data.ad_ou.validated_ou.dn
+  # ... other attributes
+  
+  depends_on = [data.ad_ou.validated_ou]
+}
+```
+
+{{ .SchemaMarkdown | trimspace }}
