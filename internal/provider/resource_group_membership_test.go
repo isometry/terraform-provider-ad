@@ -159,7 +159,7 @@ func TestAccGroupMembershipResource_empty(t *testing.T) {
 	})
 }
 
-// testAccGroupMembershipImportStateIdFunc returns the group GUID for import testing
+// testAccGroupMembershipImportStateIdFunc returns the group GUID for import testing.
 func testAccGroupMembershipImportStateIdFunc(s *terraform.State) (string, error) {
 	rs, ok := s.RootModule().Resources["ad_group_membership.test"]
 	if !ok {
@@ -297,7 +297,7 @@ resource "ad_group_membership" "test" {
 `, testAccGroupMembershipResourceConfig_prerequisite())
 }
 
-// Prerequisite configuration that creates a test group
+// Prerequisite configuration that creates a test group.
 func testAccGroupMembershipResourceConfig_prerequisite() string {
 	return `
 data "ad_domain" "test" {}

@@ -12,7 +12,7 @@ import (
 	"github.com/go-ldap/ldap/v3"
 )
 
-// MockGroupMembershipClient implements Client interface for membership testing
+// MockGroupMembershipClient implements Client interface for membership testing.
 type MockGroupMembershipClient struct {
 	groups       map[string]*MockGroup
 	groupsByDN   map[string]*MockGroup
@@ -20,7 +20,7 @@ type MockGroupMembershipClient struct {
 	operationLog []string               // Track operations for testing
 }
 
-// MockGroup represents a group with membership
+// MockGroup represents a group with membership.
 type MockGroup struct {
 	ObjectGUID        string
 	DistinguishedName string
@@ -29,7 +29,7 @@ type MockGroup struct {
 	Members           []string // Member DNs
 }
 
-// MockObject represents any AD object for member resolution
+// MockObject represents any AD object for member resolution.
 type MockObject struct {
 	DN                string
 	ObjectGUID        string
@@ -82,7 +82,7 @@ func (m *MockGroupMembershipClient) AddMockObject(dn, guid, sid, upn, sam string
 	}
 }
 
-// Implement Client interface methods
+// Implement Client interface methods.
 func (m *MockGroupMembershipClient) Connect(ctx context.Context) error {
 	return nil
 }
@@ -310,8 +310,8 @@ func (m *MockGroupMembershipClient) ClearOperationLog() {
 	m.operationLog = make([]string, 0)
 }
 
-// Test helper to create a test membership manager
-func createTestMembershipManager(t *testing.T) (*GroupMembershipManager, *MockGroupMembershipClient) {
+// Test helper to create a test membership manager.
+func createTestMembershipManager(_ *testing.T) (*GroupMembershipManager, *MockGroupMembershipClient) {
 	client := NewMockGroupMembershipClient()
 	baseDN := "DC=example,DC=com"
 
@@ -959,7 +959,10 @@ func TestClearNormalizationCache(t *testing.T) {
 
 	// Verify cache is cleared by checking stats
 	stats := gmm.normalizer.CacheStats()
-	totalEntries := stats["total_entries"].(int)
+	totalEntries, ok := stats["total_entries"].(int)
+	if !ok {
+		t.Fatalf("Expected total_entries to be an int, got %T", stats["total_entries"])
+	}
 
 	if totalEntries != 0 {
 		t.Errorf("Expected cache to be empty after clear, got %d entries", totalEntries)
@@ -1002,7 +1005,7 @@ func TestSetBaseDN(t *testing.T) {
 	}
 }
 
-// Benchmark tests for performance validation
+// Benchmark tests for performance validation.
 func BenchmarkNormalizeLargeSet(b *testing.B) {
 	client := NewMockGroupMembershipClient()
 	baseDN := "DC=example,DC=com"

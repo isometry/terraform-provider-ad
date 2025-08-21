@@ -37,14 +37,14 @@ func (gc GroupCategory) String() string {
 	return string(gc)
 }
 
-// Active Directory group type bit flags
+// Active Directory group type bit flags.
 const (
-	// Group scope flags (mutually exclusive)
+	// Group scope flags (mutually exclusive).
 	GroupTypeFlagGlobal      int32 = 0x00000002 // ADS_GROUP_TYPE_GLOBAL_GROUP
 	GroupTypeFlagDomainLocal int32 = 0x00000004 // ADS_GROUP_TYPE_DOMAIN_LOCAL_GROUP
 	GroupTypeFlagUniversal   int32 = 0x00000008 // ADS_GROUP_TYPE_UNIVERSAL_GROUP
 
-	// Group category flag
+	// Group category flag.
 	GroupTypeFlagSecurity int32 = -2147483648 // ADS_GROUP_TYPE_SECURITY_ENABLED (0x80000000 as signed int32)
 )
 
@@ -813,7 +813,34 @@ func (gm *GroupManager) ListGroupsByContainer(ctx context.Context, containerDN s
 	}
 
 	filter := "(objectClass=group)"
-	return gm.SearchGroups(ctx, filter, nil)
+	attributes := []string{
+		"objectGUID", "distinguishedName", "objectSid", "cn", "sAMAccountName",
+		"description", "groupType", "member", "memberOf",
+	}
+
+	searchReq := &SearchRequest{
+		BaseDN:     containerDN,
+		Scope:      ScopeWholeSubtree,
+		Filter:     filter,
+		Attributes: attributes,
+		TimeLimit:  gm.timeout,
+	}
+
+	result, err := gm.client.Search(ctx, searchReq)
+	if err != nil {
+		return nil, WrapError("list_groups_by_container", err)
+	}
+
+	groups := make([]*Group, 0, len(result.Entries))
+	for _, entry := range result.Entries {
+		group, err := gm.entryToGroup(entry)
+		if err != nil {
+			continue // Skip malformed entries
+		}
+		groups = append(groups, group)
+	}
+
+	return groups, nil
 }
 
 // GetGroupStats returns statistics about groups in the directory.

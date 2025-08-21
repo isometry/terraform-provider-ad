@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// MockGroupClient implements the Client interface for testing group operations
+// MockGroupClient implements the Client interface for testing group operations.
 type MockGroupClient struct {
 	mock.Mock
 }
@@ -40,7 +40,12 @@ func (m *MockGroupClient) BindWithConfig(ctx context.Context) error {
 
 func (m *MockGroupClient) Search(ctx context.Context, req *SearchRequest) (*SearchResult, error) {
 	args := m.Called(ctx, req)
-	return args.Get(0).(*SearchResult), args.Error(1)
+	if result := args.Get(0); result != nil {
+		if searchResult, ok := result.(*SearchResult); ok {
+			return searchResult, args.Error(1)
+		}
+	}
+	return nil, args.Error(1)
 }
 
 func (m *MockGroupClient) Add(ctx context.Context, req *AddRequest) error {
@@ -65,12 +70,22 @@ func (m *MockGroupClient) Ping(ctx context.Context) error {
 
 func (m *MockGroupClient) Stats() PoolStats {
 	args := m.Called()
-	return args.Get(0).(PoolStats)
+	if result := args.Get(0); result != nil {
+		if stats, ok := result.(PoolStats); ok {
+			return stats
+		}
+	}
+	return PoolStats{}
 }
 
 func (m *MockGroupClient) SearchWithPaging(ctx context.Context, req *SearchRequest) (*SearchResult, error) {
 	args := m.Called(ctx, req)
-	return args.Get(0).(*SearchResult), args.Error(1)
+	if result := args.Get(0); result != nil {
+		if searchResult, ok := result.(*SearchResult); ok {
+			return searchResult, args.Error(1)
+		}
+	}
+	return nil, args.Error(1)
 }
 
 func (m *MockGroupClient) GetBaseDN(ctx context.Context) (string, error) {
@@ -78,7 +93,7 @@ func (m *MockGroupClient) GetBaseDN(ctx context.Context) (string, error) {
 	return args.String(0), args.Error(1)
 }
 
-// Helper function to create a mock LDAP entry for a group
+// Helper function to create a mock LDAP entry for a group.
 func createMockGroupEntry(name, guid, dn string, groupType int32) *ldap.Entry {
 	guidHandler := NewGUIDHandler()
 	guidBytes, _ := guidHandler.StringToGUIDBytes(guid)
@@ -100,7 +115,7 @@ func createMockGroupEntry(name, guid, dn string, groupType int32) *ldap.Entry {
 	return entry
 }
 
-// Helper function to create a test GroupManager with mock client
+// Helper function to create a test GroupManager with mock client.
 func createTestGroupManager() (*GroupManager, *MockGroupClient) {
 	mockClient := &MockGroupClient{}
 	baseDN := "DC=test,DC=local"
@@ -978,7 +993,7 @@ func TestSetTimeout(t *testing.T) {
 	assert.Equal(t, newTimeout, gm.normalizer.timeout)
 }
 
-// Test error scenarios
+// Test error scenarios.
 func TestCreateGroupLDAPError(t *testing.T) {
 	gm, mockClient := createTestGroupManager()
 	ctx := context.Background()

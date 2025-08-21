@@ -722,7 +722,7 @@ func TestGUIDHandler_ParseGUIDFromDN(t *testing.T) {
 	}
 }
 
-// Benchmark tests for performance validation
+// Benchmark tests for performance validation.
 func BenchmarkGUIDHandler_StringToGUIDBytes(b *testing.B) {
 	handler := NewGUIDHandler()
 	guid := "12345678-1234-1234-1234-123456789012"
@@ -765,7 +765,7 @@ func BenchmarkGUIDHandler_NormalizeGUID(b *testing.B) {
 	}
 }
 
-// Test for Active Directory specific GUID byte encoding accuracy
+// Test for Active Directory specific GUID byte encoding accuracy.
 func TestActiveDirectoryGUIDEncoding(t *testing.T) {
 	handler := NewGUIDHandler()
 

@@ -41,18 +41,18 @@ func (i IdentifierType) String() string {
 	}
 }
 
-// Regular expressions for identifier format detection
+// Regular expressions for identifier format detection.
 var (
-	// DN format: CN=User,OU=Users,DC=example,DC=com
+	// DN format: CN=User,OU=Users,DC=example,DC=com.
 	dnRegex = regexp.MustCompile(`^(?i)(CN|OU|DC|O|C|STREET|L|ST|POSTALCODE)=.+`)
 
-	// SID format: S-1-5-21-domain-rid or S-1-5-32-alias
+	// SID format: S-1-5-21-domain-rid or S-1-5-32-alias.
 	sidRegex = regexp.MustCompile(`^S-1-\d+(-\d+)*$`)
 
-	// UPN format: user@domain.com
+	// UPN format: user@domain.com.
 	upnRegex = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
-	// SAM format: DOMAIN\username or just username
+	// SAM format: DOMAIN\username or just username.
 	samRegex = regexp.MustCompile(`^([^\\@\s]+\\)?[^\\@\s]+$`)
 )
 

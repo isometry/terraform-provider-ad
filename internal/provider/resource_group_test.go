@@ -348,7 +348,7 @@ func TestAccGroupResource_disappears(t *testing.T) {
 	})
 }
 
-// Helper functions for test configurations
+// Helper functions for test configurations.
 func testAccGroupResourceConfig_basic(name, samName string) string {
 	return fmt.Sprintf(`
 resource "ad_group" "test" {
@@ -382,7 +382,7 @@ resource "ad_group" "test" {
 `, name, samName, scope, category)
 }
 
-// Helper functions for import testing
+// Helper functions for import testing.
 func testAccGroupImportStateIdFunc(s *terraform.State) (string, error) {
 	rs, ok := s.RootModule().Resources["ad_group.test"]
 	if !ok {
@@ -401,7 +401,7 @@ func testAccGroupImportStateIdFuncDN(s *terraform.State) (string, error) {
 	return rs.Primary.Attributes["distinguished_name"], nil
 }
 
-// Helper functions for existence and destroy testing
+// Helper functions for existence and destroy testing.
 func testAccCheckGroupExists(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Implement group existence check

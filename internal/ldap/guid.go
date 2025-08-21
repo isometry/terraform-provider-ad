@@ -18,16 +18,16 @@ func NewGUIDHandler() *GUIDHandler {
 	return &GUIDHandler{}
 }
 
-// Active Directory GUID format patterns
+// Active Directory GUID format patterns.
 var (
-	// Hyphenated GUID format: 12345678-1234-1234-1234-123456789012
+	// Hyphenated GUID format: 12345678-1234-1234-1234-123456789012.
 	hyphenatedGUIDRegex = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-	// Compact GUID format: 123456781234123412341234567890123
+	// Compact GUID format: 123456781234123412341234567890123.
 	compactGUIDRegex = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
 )
 
-// Constants for GUID byte array length
+// Constants for GUID byte array length.
 const (
 	GUIDBytesLength   = 16 // GUID is always 16 bytes
 	GUIDStringLength  = 36 // Hyphenated GUID string length
@@ -77,7 +77,7 @@ func (g *GUIDHandler) NormalizeGUID(guidString string) (string, error) {
 // - First 4 bytes (Data1): little-endian
 // - Next 2 bytes (Data2): little-endian
 // - Next 2 bytes (Data3): little-endian
-// - Last 8 bytes (Data4): big-endian
+// - Last 8 bytes (Data4): big-endian.
 func (g *GUIDHandler) StringToGUIDBytes(guidString string) ([]byte, error) {
 	normalizedGUID, err := g.NormalizeGUID(guidString)
 	if err != nil {

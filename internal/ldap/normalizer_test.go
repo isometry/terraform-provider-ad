@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// MockClient implements the Client interface for testing
+// MockClient implements the Client interface for testing.
 type MockClient struct {
 	mock.Mock
 }
@@ -40,7 +40,12 @@ func (m *MockClient) BindWithConfig(ctx context.Context) error {
 
 func (m *MockClient) Search(ctx context.Context, req *SearchRequest) (*SearchResult, error) {
 	args := m.Called(ctx, req)
-	return args.Get(0).(*SearchResult), args.Error(1)
+	if result := args.Get(0); result != nil {
+		if searchResult, ok := result.(*SearchResult); ok {
+			return searchResult, args.Error(1)
+		}
+	}
+	return nil, args.Error(1)
 }
 
 func (m *MockClient) Add(ctx context.Context, req *AddRequest) error {
@@ -65,12 +70,22 @@ func (m *MockClient) Ping(ctx context.Context) error {
 
 func (m *MockClient) Stats() PoolStats {
 	args := m.Called()
-	return args.Get(0).(PoolStats)
+	if result := args.Get(0); result != nil {
+		if stats, ok := result.(PoolStats); ok {
+			return stats
+		}
+	}
+	return PoolStats{}
 }
 
 func (m *MockClient) SearchWithPaging(ctx context.Context, req *SearchRequest) (*SearchResult, error) {
 	args := m.Called(ctx, req)
-	return args.Get(0).(*SearchResult), args.Error(1)
+	if result := args.Get(0); result != nil {
+		if searchResult, ok := result.(*SearchResult); ok {
+			return searchResult, args.Error(1)
+		}
+	}
+	return nil, args.Error(1)
 }
 
 func (m *MockClient) GetBaseDN(ctx context.Context) (string, error) {
@@ -746,7 +761,7 @@ func TestMemberNormalizer_ErrorHandling(t *testing.T) {
 	}
 }
 
-// Benchmark tests for performance validation
+// Benchmark tests for performance validation.
 func BenchmarkMemberNormalizer_DetectIdentifierType(b *testing.B) {
 	mockClient := &MockClient{}
 	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")

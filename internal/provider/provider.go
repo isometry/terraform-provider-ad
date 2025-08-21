@@ -427,6 +427,7 @@ func (p *ActiveDirectoryProvider) EphemeralResources(ctx context.Context) []func
 
 func (p *ActiveDirectoryProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
+		NewGroupDataSource,
 		NewExampleDataSource,
 	}
 }

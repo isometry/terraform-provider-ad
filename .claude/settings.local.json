@@ -17,7 +17,8 @@
       "Bash(go mod:*)",
       "Bash(go vet:*)",
       "Bash(go list:*)",
-      "Bash(gofmt:*)"
+      "Bash(gofmt:*)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": []
