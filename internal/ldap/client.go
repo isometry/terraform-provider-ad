@@ -425,17 +425,20 @@ func (c *client) isRetryableError(err error) bool {
 	if ldap.IsErrorWithCode(err, ldap.LDAPResultBusy) ||
 		ldap.IsErrorWithCode(err, ldap.LDAPResultUnavailable) ||
 		ldap.IsErrorWithCode(err, ldap.LDAPResultUnwillingToPerform) ||
-		ldap.IsErrorWithCode(err, ldap.LDAPResultServerDown) {
+		ldap.IsErrorWithCode(err, ldap.LDAPResultServerDown) ||
+		ldap.IsErrorWithCode(err, ldap.LDAPResultOperationsError) {
 		return true
 	}
 
-	// Check for network-related errors
+	// Check for network-related errors and authentication errors
 	errStr := strings.ToLower(err.Error())
 	if strings.Contains(errStr, "connection") ||
 		strings.Contains(errStr, "timeout") ||
 		strings.Contains(errStr, "network") ||
 		strings.Contains(errStr, "broken pipe") ||
-		strings.Contains(errStr, "connection reset") {
+		strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "successful bind must be completed") ||
+		strings.Contains(errStr, "bind must be completed") {
 		return true
 	}
 

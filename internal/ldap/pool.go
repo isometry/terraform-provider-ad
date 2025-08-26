@@ -114,6 +114,14 @@ func (p *connectionPool) Get(ctx context.Context) (*PooledConnection, error) {
 	select {
 	case conn := <-p.connections:
 		if p.isConnectionHealthy(conn) {
+			// Check if authentication is still valid or if we need to re-authenticate
+			if p.config.HasAuthentication() && p.needsReAuthentication(conn) {
+				if err := p.authenticateConnection(conn); err != nil {
+					// Re-authentication failed, close connection and create new one
+					p.closeConnection(conn)
+					break
+				}
+			}
 			conn.lastUsed = time.Now()
 			atomic.AddInt64(&p.activeConns, 1)
 			return conn, nil
@@ -189,14 +197,76 @@ func (p *connectionPool) createSingleConnection(_ context.Context, server *Serve
 	conn.SetTimeout(p.config.Timeout)
 
 	pooledConn := &PooledConnection{
-		conn:         conn,
-		lastUsed:     time.Now(),
-		healthy:      true,
-		serverInfo:   server,
-		returnToPool: p.returnConnection,
+		conn:          conn,
+		lastUsed:      time.Now(),
+		healthy:       true,
+		authenticated: false,
+		authTime:      time.Time{},
+		serverInfo:    server,
+		returnToPool:  p.returnConnection,
+	}
+
+	// Authenticate the connection immediately if authentication is configured
+	if p.config.HasAuthentication() {
+		if err := p.authenticateConnection(pooledConn); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("failed to authenticate connection to %s: %w", url, err)
+		}
 	}
 
 	return pooledConn, nil
+}
+
+// authenticateConnection authenticates a pooled connection using the configured method.
+func (p *connectionPool) authenticateConnection(pooledConn *PooledConnection) error {
+	if pooledConn == nil || pooledConn.conn == nil {
+		return fmt.Errorf("connection is nil")
+	}
+
+	authMethod := p.config.GetAuthMethod()
+	var err error
+
+	switch authMethod {
+	case AuthMethodSimpleBind:
+		if p.config.Username == "" {
+			return fmt.Errorf("username is required for simple bind authentication")
+		}
+		err = pooledConn.conn.Bind(p.config.Username, p.config.Password)
+	case AuthMethodKerberos:
+		return fmt.Errorf("kerberos authentication not yet implemented")
+	case AuthMethodExternal:
+		err = pooledConn.conn.Bind("", "")
+	default:
+		return fmt.Errorf("unsupported authentication method: %s", authMethod.String())
+	}
+
+	if err != nil {
+		pooledConn.authenticated = false
+		pooledConn.authTime = time.Time{}
+		return err
+	}
+
+	// Mark connection as authenticated
+	pooledConn.authenticated = true
+	pooledConn.authTime = time.Now()
+	return nil
+}
+
+// needsReAuthentication determines if a connection needs to be re-authenticated.
+func (p *connectionPool) needsReAuthentication(conn *PooledConnection) bool {
+	if conn == nil {
+		return true
+	}
+
+	// If connection was never authenticated, it needs authentication
+	if !conn.authenticated {
+		return true
+	}
+
+	// If authentication is too old (5 minutes), re-authenticate
+	authAge := time.Since(conn.authTime)
+	maxAuthAge := 5 * time.Minute
+	return authAge > maxAuthAge
 }
 
 // returnConnection returns a connection to the pool.
@@ -241,6 +311,11 @@ func (p *connectionPool) isConnectionHealthy(conn *PooledConnection) bool {
 		return false
 	}
 
+	// If authentication is configured but connection has never been authenticated, consider unhealthy
+	if p.config.HasAuthentication() && !conn.authenticated {
+		return false
+	}
+
 	return true
 }
 
@@ -249,6 +324,8 @@ func (p *connectionPool) closeConnection(conn *PooledConnection) {
 	if conn != nil && conn.conn != nil {
 		conn.conn.Close()
 		conn.healthy = false
+		conn.authenticated = false
+		conn.authTime = time.Time{}
 	}
 }
 
@@ -354,10 +431,17 @@ func (p *connectionPool) performHealthCheck() {
 	}
 }
 
-// testConnection tests if a connection is working.
+// testConnection tests if a connection is working and properly authenticated.
 func (p *connectionPool) testConnection(_ context.Context, conn *PooledConnection) bool {
 	if conn == nil || conn.conn == nil {
 		return false
+	}
+
+	// Check if connection needs re-authentication
+	if p.config.HasAuthentication() && p.needsReAuthentication(conn) {
+		if err := p.authenticateConnection(conn); err != nil {
+			return false
+		}
 	}
 
 	// Perform a simple operation to test the connection
@@ -373,7 +457,14 @@ func (p *connectionPool) testConnection(_ context.Context, conn *PooledConnectio
 	)
 
 	_, err := conn.conn.Search(searchReq)
-	return err == nil
+	if err != nil {
+		// If search fails, mark connection as unauthenticated
+		conn.authenticated = false
+		conn.authTime = time.Time{}
+		return false
+	}
+
+	return true
 }
 
 // validateConfig validates the connection configuration.

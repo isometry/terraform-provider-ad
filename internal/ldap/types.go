@@ -66,11 +66,13 @@ func DefaultConfig() *ConnectionConfig {
 
 // PooledConnection represents a connection in the pool.
 type PooledConnection struct {
-	conn         *ldap.Conn
-	lastUsed     time.Time
-	healthy      bool
-	serverInfo   *ServerInfo
-	returnToPool func(*PooledConnection)
+	conn          *ldap.Conn
+	lastUsed      time.Time
+	healthy       bool
+	authenticated bool      // Track if connection is authenticated
+	authTime      time.Time // When authentication occurred
+	serverInfo    *ServerInfo
+	returnToPool  func(*PooledConnection)
 }
 
 // ServerInfo contains information about an LDAP server.
