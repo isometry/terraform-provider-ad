@@ -93,6 +93,11 @@ func (m *MockClient) GetBaseDN(ctx context.Context) (string, error) {
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockClient) ModifyDN(ctx context.Context, req *ModifyDNRequest) error {
+	args := m.Called(ctx, req)
+	return args.Error(0)
+}
+
 func TestIdentifierType_String(t *testing.T) {
 	tests := []struct {
 		idType   IdentifierType

@@ -68,7 +68,7 @@ type UserFilterModel struct {
 type UserDataModel struct {
 	// Core identity
 	ID                types.String `tfsdk:"id"`                  // objectGUID
-	DistinguishedName types.String `tfsdk:"distinguished_name"`  // full DN
+	DistinguishedName types.String `tfsdk:"dn"`                  // full DN
 	UserPrincipalName types.String `tfsdk:"user_principal_name"` // UPN (user@domain.com)
 	SAMAccountName    types.String `tfsdk:"sam_account_name"`    // pre-Windows 2000 name
 	DisplayName       types.String `tfsdk:"display_name"`        // display name
@@ -133,7 +133,7 @@ func (d *UsersDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 							MarkdownDescription: "The objectGUID of the user.",
 							Computed:            true,
 						},
-						"distinguished_name": schema.StringAttribute{
+						"dn": schema.StringAttribute{
 							MarkdownDescription: "The full Distinguished Name of the user.",
 							Computed:            true,
 						},
@@ -407,7 +407,7 @@ func (d *UsersDataSource) mapUsersToModel(ctx context.Context, users []*ldapclie
 	userObjectType := types.ObjectType{
 		AttrTypes: map[string]attr.Type{
 			"id":                  types.StringType,
-			"distinguished_name":  types.StringType,
+			"dn":                  types.StringType,
 			"user_principal_name": types.StringType,
 			"sam_account_name":    types.StringType,
 			"display_name":        types.StringType,
@@ -436,7 +436,7 @@ func (d *UsersDataSource) mapUsersToModel(ctx context.Context, users []*ldapclie
 
 		userAttrs := map[string]attr.Value{
 			"id":                  types.StringValue(user.ObjectGUID),
-			"distinguished_name":  types.StringValue(user.DistinguishedName),
+			"dn":                  types.StringValue(user.DistinguishedName),
 			"user_principal_name": types.StringValue(user.UserPrincipalName),
 			"sam_account_name":    types.StringValue(user.SAMAccountName),
 			"display_name":        types.StringValue(user.DisplayName),

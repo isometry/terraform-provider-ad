@@ -86,9 +86,15 @@ func (gmm *GroupMembershipManager) GetGroupMembers(ctx context.Context, groupGUI
 		return nil, WrapError("get_group_members", err)
 	}
 
+	// Normalize all member DN cases to ensure uppercase attribute types
+	normalizedDNs, err := NormalizeDNCaseBatch(memberDNs)
+	if err != nil {
+		return nil, WrapError("normalize_member_dns", err)
+	}
+
 	// Sort for consistent ordering
-	sort.Strings(memberDNs)
-	return memberDNs, nil
+	sort.Strings(normalizedDNs)
+	return normalizedDNs, nil
 }
 
 // AddGroupMembers adds new members to a group using batch operations.

@@ -19,7 +19,7 @@ func TestAccGroupDataSource_ByID(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("data.ad_group.test", "id"),
 					resource.TestCheckResourceAttrSet("data.ad_group.test", "display_name"),
-					resource.TestCheckResourceAttrSet("data.ad_group.test", "distinguished_name"),
+					resource.TestCheckResourceAttrSet("data.ad_group.test", "dn"),
 					resource.TestCheckResourceAttrSet("data.ad_group.test", "scope"),
 					resource.TestCheckResourceAttrSet("data.ad_group.test", "category"),
 					resource.TestCheckResourceAttrSet("data.ad_group.test", "group_type"),
@@ -47,7 +47,7 @@ func TestAccGroupDataSource_ByDN(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("data.ad_group.test", "id"),
 					resource.TestCheckResourceAttrSet("data.ad_group.test", "display_name"),
-					resource.TestCheckResourceAttrSet("data.ad_group.test", "distinguished_name"),
+					resource.TestCheckResourceAttrSet("data.ad_group.test", "dn"),
 					resource.TestCheckResourceAttr("data.ad_group.test", "display_name", "TestGroup"),
 					resource.TestCheckResourceAttr("data.ad_group.test", "scope", "Global"),
 					resource.TestCheckResourceAttr("data.ad_group.test", "category", "Security"),
@@ -68,7 +68,7 @@ func TestAccGroupDataSource_ByName(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("data.ad_group.test", "id"),
 					resource.TestCheckResourceAttrSet("data.ad_group.test", "display_name"),
-					resource.TestCheckResourceAttrSet("data.ad_group.test", "distinguished_name"),
+					resource.TestCheckResourceAttrSet("data.ad_group.test", "dn"),
 					resource.TestCheckResourceAttr("data.ad_group.test", "display_name", "TestGroup"),
 					resource.TestCheckResourceAttr("data.ad_group.test", "scope", "Global"),
 					resource.TestCheckResourceAttr("data.ad_group.test", "category", "Security"),
@@ -89,7 +89,7 @@ func TestAccGroupDataSource_BySAMAccountName(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("data.ad_group.test", "id"),
 					resource.TestCheckResourceAttrSet("data.ad_group.test", "display_name"),
-					resource.TestCheckResourceAttrSet("data.ad_group.test", "distinguished_name"),
+					resource.TestCheckResourceAttrSet("data.ad_group.test", "dn"),
 					resource.TestCheckResourceAttr("data.ad_group.test", "display_name", "TestGroup"),
 					resource.TestCheckResourceAttr("data.ad_group.test", "scope", "Global"),
 					resource.TestCheckResourceAttr("data.ad_group.test", "category", "Security"),
@@ -213,7 +213,7 @@ resource "ad_group" "test" {
 }
 
 data "ad_group" "test" {
-  dn = ad_group.test.distinguished_name
+  dn = ad_group.test.dn
 }
 `, testAccProviderConfig())
 }
@@ -284,7 +284,7 @@ resource "ad_group" "member" {
 # Add the member group to the test group
 resource "ad_group_membership" "test" {
   group_id = ad_group.test.id
-  members  = [ad_group.member.distinguished_name]
+  members  = [ad_group.member.dn]
 }
 
 # Read the group with members

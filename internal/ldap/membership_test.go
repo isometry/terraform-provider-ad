@@ -196,6 +196,15 @@ func (m *MockGroupMembershipClient) Modify(ctx context.Context, req *ModifyReque
 	return nil
 }
 
+func (m *MockGroupMembershipClient) ModifyDN(ctx context.Context, req *ModifyDNRequest) error {
+	operation := fmt.Sprintf("ModifyDN: %s -> %s (superior: %s)", req.DN, req.NewRDN, req.NewSuperior)
+	m.operationLog = append(m.operationLog, operation)
+
+	// This is a mock - just simulate success for now
+	// In a real implementation this would move the group in AD
+	return nil
+}
+
 func (m *MockGroupMembershipClient) handleGroupGUIDSearch(req *SearchRequest) (*SearchResult, error) {
 	// Extract GUID from filter (simplified)
 	if strings.Contains(req.Filter, "objectGUID") {

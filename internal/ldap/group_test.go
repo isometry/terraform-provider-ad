@@ -59,6 +59,11 @@ func (m *MockGroupClient) Modify(ctx context.Context, req *ModifyRequest) error 
 	return args.Error(0)
 }
 
+func (m *MockGroupClient) ModifyDN(ctx context.Context, req *ModifyDNRequest) error {
+	args := m.Called(ctx, req)
+	return args.Error(0)
+}
+
 func (m *MockGroupClient) Delete(ctx context.Context, dn string) error {
 	args := m.Called(ctx, dn)
 	return args.Error(0)
@@ -1783,5 +1788,395 @@ func TestAddMembersConflictHandling(t *testing.T) {
 
 	// Assertions - should succeed even with conflicts (member already exists)
 	assert.NoError(t, err)
+	mockClient.AssertExpectations(t)
+}
+
+func TestMoveGroup(t *testing.T) {
+	gm, mockClient := createTestGroupManager()
+	ctx := context.Background()
+
+	testGUID := "12345678-1234-1234-1234-123456789012"
+	currentDN := "CN=TestGroup,CN=Users,DC=test,DC=local"
+	newContainerDN := "OU=NewOU,DC=test,DC=local"
+	expectedNewDN := "CN=TestGroup,OU=NewOU,DC=test,DC=local"
+
+	// Create initial group entry
+	initialEntry := createMockGroupEntry("TestGroup", testGUID, currentDN, CalculateGroupType(GroupScopeGlobal, GroupCategorySecurity))
+	initialSearchResult := &SearchResult{
+		Entries: []*ldap.Entry{initialEntry},
+		Total:   1,
+	}
+
+	// Mock initial group retrieval
+	mockClient.On("Search", ctx, mock.MatchedBy(func(searchReq *SearchRequest) bool {
+		return searchReq.BaseDN == "DC=test,DC=local" && searchReq.Scope == ScopeWholeSubtree
+	})).Return(initialSearchResult, nil).Once()
+
+	// Mock ModifyDN operation
+	mockClient.On("ModifyDN", ctx, mock.MatchedBy(func(modifyDNReq *ModifyDNRequest) bool {
+		return modifyDNReq.DN == currentDN &&
+			modifyDNReq.NewRDN == "cn=TestGroup" && // DN parsing normalizes to lowercase
+			modifyDNReq.DeleteOldRDN == true &&
+			modifyDNReq.NewSuperior == newContainerDN
+	})).Return(nil)
+
+	// Create moved group entry
+	movedEntry := createMockGroupEntry("TestGroup", testGUID, expectedNewDN, CalculateGroupType(GroupScopeGlobal, GroupCategorySecurity))
+	movedSearchResult := &SearchResult{
+		Entries: []*ldap.Entry{movedEntry},
+		Total:   1,
+	}
+
+	// Mock group retrieval after move
+	mockClient.On("Search", ctx, mock.MatchedBy(func(searchReq *SearchRequest) bool {
+		return searchReq.BaseDN == "DC=test,DC=local" && searchReq.Scope == ScopeWholeSubtree
+	})).Return(movedSearchResult, nil).Once()
+
+	// Execute test
+	group, err := gm.MoveGroup(ctx, testGUID, newContainerDN)
+
+	// Assertions
+	require.NoError(t, err)
+	assert.NotNil(t, group)
+	assert.Equal(t, testGUID, group.ObjectGUID)
+	assert.Equal(t, expectedNewDN, group.DistinguishedName)
+	// Container DN is normalized with lowercase attribute names but preserved values
+	assert.Equal(t, "ou=NewOU,dc=test,dc=local", group.Container)
+
+	mockClient.AssertExpectations(t)
+}
+
+func TestMoveGroupNotFound(t *testing.T) {
+	gm, mockClient := createTestGroupManager()
+	ctx := context.Background()
+
+	testGUID := "12345678-1234-1234-1234-123456789012"
+	newContainerDN := "OU=NewOU,DC=test,DC=local"
+
+	// Mock empty search result (group not found)
+	emptySearchResult := &SearchResult{
+		Entries: []*ldap.Entry{},
+		Total:   0,
+	}
+
+	mockClient.On("Search", ctx, mock.AnythingOfType("*ldap.SearchRequest")).Return(emptySearchResult, nil)
+
+	// Execute test
+	group, err := gm.MoveGroup(ctx, testGUID, newContainerDN)
+
+	// Assertions
+	assert.Error(t, err)
+	assert.Nil(t, group)
+	assert.Contains(t, err.Error(), "not found")
+
+	mockClient.AssertExpectations(t)
+}
+
+func TestMoveGroupInvalidGUID(t *testing.T) {
+	gm, _ := createTestGroupManager()
+	ctx := context.Background()
+
+	newContainerDN := "OU=NewOU,DC=test,DC=local"
+
+	// Test with invalid GUID
+	group, err := gm.MoveGroup(ctx, "invalid-guid", newContainerDN)
+
+	assert.Error(t, err)
+	assert.Nil(t, group)
+	assert.Contains(t, err.Error(), "invalid GUID format")
+}
+
+func TestMoveGroupInvalidContainer(t *testing.T) {
+	gm, _ := createTestGroupManager()
+	ctx := context.Background()
+
+	testGUID := "12345678-1234-1234-1234-123456789012"
+
+	// Test with empty container
+	group, err := gm.MoveGroup(ctx, testGUID, "")
+	assert.Error(t, err)
+	assert.Nil(t, group)
+	assert.Contains(t, err.Error(), "new container DN cannot be empty")
+}
+
+func TestMoveGroupToSameContainer(t *testing.T) {
+	gm, mockClient := createTestGroupManager()
+	ctx := context.Background()
+
+	testGUID := "12345678-1234-1234-1234-123456789012"
+	currentDN := "CN=TestGroup,CN=Users,DC=test,DC=local"
+	sameContainerDN := "CN=Users,DC=test,DC=local" // Same container
+
+	// Create group entry
+	groupEntry := createMockGroupEntry("TestGroup", testGUID, currentDN, CalculateGroupType(GroupScopeGlobal, GroupCategorySecurity))
+	searchResult := &SearchResult{
+		Entries: []*ldap.Entry{groupEntry},
+		Total:   1,
+	}
+
+	// Mock group retrieval
+	mockClient.On("Search", ctx, mock.AnythingOfType("*ldap.SearchRequest")).Return(searchResult, nil)
+
+	// Execute test
+	group, err := gm.MoveGroup(ctx, testGUID, sameContainerDN)
+
+	// Assertions - should succeed without calling ModifyDN
+	require.NoError(t, err)
+	assert.NotNil(t, group)
+	assert.Equal(t, testGUID, group.ObjectGUID)
+	assert.Equal(t, currentDN, group.DistinguishedName)
+
+	// Verify ModifyDN was not called
+	mockClient.AssertNotCalled(t, "ModifyDN", mock.Anything, mock.Anything)
+	mockClient.AssertExpectations(t)
+}
+
+func TestMoveGroupLDAPError(t *testing.T) {
+	gm, mockClient := createTestGroupManager()
+	ctx := context.Background()
+
+	testGUID := "12345678-1234-1234-1234-123456789012"
+	currentDN := "CN=TestGroup,CN=Users,DC=test,DC=local"
+	newContainerDN := "OU=NewOU,DC=test,DC=local"
+
+	// Create group entry
+	groupEntry := createMockGroupEntry("TestGroup", testGUID, currentDN, CalculateGroupType(GroupScopeGlobal, GroupCategorySecurity))
+	searchResult := &SearchResult{
+		Entries: []*ldap.Entry{groupEntry},
+		Total:   1,
+	}
+
+	// Mock group retrieval
+	mockClient.On("Search", ctx, mock.AnythingOfType("*ldap.SearchRequest")).Return(searchResult, nil)
+
+	// Mock ModifyDN failure
+	ldapErr := &ldap.Error{
+		ResultCode: ldap.LDAPResultInsufficientAccessRights,
+		Err:        fmt.Errorf("insufficient access rights"),
+	}
+	mockClient.On("ModifyDN", ctx, mock.AnythingOfType("*ldap.ModifyDNRequest")).Return(ldapErr)
+
+	// Execute test
+	group, err := gm.MoveGroup(ctx, testGUID, newContainerDN)
+
+	// Assertions
+	assert.Error(t, err)
+	assert.Nil(t, group)
+	assert.Contains(t, err.Error(), "move_group")
+
+	mockClient.AssertExpectations(t)
+}
+
+func TestMoveGroupPreservesMembers(t *testing.T) {
+	gm, mockClient := createTestGroupManager()
+	ctx := context.Background()
+
+	testGUID := "12345678-1234-1234-1234-123456789012"
+	currentDN := "CN=TestGroup,CN=Users,DC=test,DC=local"
+	newContainerDN := "OU=NewOU,DC=test,DC=local"
+	expectedNewDN := "CN=TestGroup,OU=NewOU,DC=test,DC=local"
+	memberDN := "CN=TestUser,CN=Users,DC=test,DC=local"
+
+	// Create initial group entry with members
+	initialEntry := createMockGroupEntry("TestGroup", testGUID, currentDN, CalculateGroupType(GroupScopeGlobal, GroupCategorySecurity))
+	initialEntry.Attributes = append(initialEntry.Attributes, &ldap.EntryAttribute{
+		Name:   "member",
+		Values: []string{memberDN},
+	})
+	initialSearchResult := &SearchResult{
+		Entries: []*ldap.Entry{initialEntry},
+		Total:   1,
+	}
+
+	// Mock initial group retrieval
+	mockClient.On("Search", ctx, mock.MatchedBy(func(searchReq *SearchRequest) bool {
+		return searchReq.BaseDN == "DC=test,DC=local" && searchReq.Scope == ScopeWholeSubtree
+	})).Return(initialSearchResult, nil).Once()
+
+	// Mock ModifyDN operation
+	mockClient.On("ModifyDN", ctx, mock.MatchedBy(func(modifyDNReq *ModifyDNRequest) bool {
+		return modifyDNReq.DN == currentDN &&
+			modifyDNReq.NewRDN == "cn=TestGroup" && // DN parsing normalizes to lowercase
+			modifyDNReq.DeleteOldRDN == true &&
+			modifyDNReq.NewSuperior == newContainerDN
+	})).Return(nil)
+
+	// Create moved group entry with preserved members
+	movedEntry := createMockGroupEntry("TestGroup", testGUID, expectedNewDN, CalculateGroupType(GroupScopeGlobal, GroupCategorySecurity))
+	movedEntry.Attributes = append(movedEntry.Attributes, &ldap.EntryAttribute{
+		Name:   "member",
+		Values: []string{memberDN},
+	})
+	movedSearchResult := &SearchResult{
+		Entries: []*ldap.Entry{movedEntry},
+		Total:   1,
+	}
+
+	// Mock group retrieval after move
+	mockClient.On("Search", ctx, mock.MatchedBy(func(searchReq *SearchRequest) bool {
+		return searchReq.BaseDN == "DC=test,DC=local" && searchReq.Scope == ScopeWholeSubtree
+	})).Return(movedSearchResult, nil).Once()
+
+	// Execute test
+	group, err := gm.MoveGroup(ctx, testGUID, newContainerDN)
+
+	// Assertions
+	require.NoError(t, err)
+	assert.NotNil(t, group)
+	assert.Equal(t, testGUID, group.ObjectGUID)
+	assert.Equal(t, expectedNewDN, group.DistinguishedName)
+	assert.Len(t, group.MemberDNs, 1)
+	assert.Contains(t, group.MemberDNs, memberDN)
+
+	mockClient.AssertExpectations(t)
+}
+
+func TestUpdateGroupWithContainer(t *testing.T) {
+	gm, mockClient := createTestGroupManager()
+	ctx := context.Background()
+
+	testGUID := "12345678-1234-1234-1234-123456789012"
+	currentDN := "CN=TestGroup,CN=Users,DC=test,DC=local"
+	newContainerDN := "OU=NewOU,DC=test,DC=local"
+	expectedNewDN := "CN=TestGroup,OU=NewOU,DC=test,DC=local"
+
+	// Create initial group entry
+	initialEntry := createMockGroupEntry("TestGroup", testGUID, currentDN, CalculateGroupType(GroupScopeGlobal, GroupCategorySecurity))
+	initialSearchResult := &SearchResult{
+		Entries: []*ldap.Entry{initialEntry},
+		Total:   1,
+	}
+
+	// Mock initial group retrieval (called by UpdateGroup)
+	mockClient.On("Search", ctx, mock.MatchedBy(func(searchReq *SearchRequest) bool {
+		return searchReq.BaseDN == "DC=test,DC=local" && searchReq.Scope == ScopeWholeSubtree
+	})).Return(initialSearchResult, nil).Once()
+
+	// Mock group retrieval before move (called by MoveGroup)
+	mockClient.On("Search", ctx, mock.MatchedBy(func(searchReq *SearchRequest) bool {
+		return searchReq.BaseDN == "DC=test,DC=local" && searchReq.Scope == ScopeWholeSubtree
+	})).Return(initialSearchResult, nil).Once()
+
+	// Mock ModifyDN operation (called by MoveGroup)
+	mockClient.On("ModifyDN", ctx, mock.AnythingOfType("*ldap.ModifyDNRequest")).Return(nil)
+
+	// Create moved group entry
+	movedEntry := createMockGroupEntry("TestGroup", testGUID, expectedNewDN, CalculateGroupType(GroupScopeGlobal, GroupCategorySecurity))
+	movedSearchResult := &SearchResult{
+		Entries: []*ldap.Entry{movedEntry},
+		Total:   1,
+	}
+
+	// Mock group retrieval after move
+	mockClient.On("Search", ctx, mock.MatchedBy(func(searchReq *SearchRequest) bool {
+		return searchReq.BaseDN == "DC=test,DC=local" && searchReq.Scope == ScopeWholeSubtree
+	})).Return(movedSearchResult, nil).Once()
+
+	// Update request with container change
+	updateReq := &UpdateGroupRequest{
+		Container: &newContainerDN,
+	}
+
+	// Execute test
+	group, err := gm.UpdateGroup(ctx, testGUID, updateReq)
+
+	// Assertions
+	require.NoError(t, err)
+	assert.NotNil(t, group)
+	assert.Equal(t, testGUID, group.ObjectGUID)
+	assert.Equal(t, expectedNewDN, group.DistinguishedName)
+	// Container DN is normalized with lowercase attribute names but preserved values
+	assert.Equal(t, "ou=NewOU,dc=test,dc=local", group.Container)
+
+	// Verify ModifyDN was called (not Modify)
+	mockClient.AssertNotCalled(t, "Modify", mock.Anything, mock.Anything)
+	mockClient.AssertExpectations(t)
+}
+
+func TestUpdateGroupWithContainerAndOtherChanges(t *testing.T) {
+	gm, mockClient := createTestGroupManager()
+	ctx := context.Background()
+
+	testGUID := "12345678-1234-1234-1234-123456789012"
+	currentDN := "CN=TestGroup,CN=Users,DC=test,DC=local"
+	newContainerDN := "OU=NewOU,DC=test,DC=local"
+	expectedNewDN := "CN=TestGroup,OU=NewOU,DC=test,DC=local"
+	newDescription := "Updated description"
+
+	// Create initial group entry
+	initialEntry := createMockGroupEntry("TestGroup", testGUID, currentDN, CalculateGroupType(GroupScopeGlobal, GroupCategorySecurity))
+	initialSearchResult := &SearchResult{
+		Entries: []*ldap.Entry{initialEntry},
+		Total:   1,
+	}
+
+	// Mock initial group retrieval (called by UpdateGroup)
+	mockClient.On("Search", ctx, mock.MatchedBy(func(searchReq *SearchRequest) bool {
+		return searchReq.BaseDN == "DC=test,DC=local" && searchReq.Scope == ScopeWholeSubtree
+	})).Return(initialSearchResult, nil).Once()
+
+	// Mock group retrieval before move (called by MoveGroup)
+	mockClient.On("Search", ctx, mock.MatchedBy(func(searchReq *SearchRequest) bool {
+		return searchReq.BaseDN == "DC=test,DC=local" && searchReq.Scope == ScopeWholeSubtree
+	})).Return(initialSearchResult, nil).Once()
+
+	// Mock ModifyDN operation (called by MoveGroup)
+	mockClient.On("ModifyDN", ctx, mock.AnythingOfType("*ldap.ModifyDNRequest")).Return(nil)
+
+	// Create moved group entry for retrieval after move
+	movedEntry := createMockGroupEntry("TestGroup", testGUID, expectedNewDN, CalculateGroupType(GroupScopeGlobal, GroupCategorySecurity))
+	movedSearchResult := &SearchResult{
+		Entries: []*ldap.Entry{movedEntry},
+		Total:   1,
+	}
+
+	// Mock group retrieval after move (for MoveGroup call)
+	mockClient.On("Search", ctx, mock.MatchedBy(func(searchReq *SearchRequest) bool {
+		return searchReq.BaseDN == "DC=test,DC=local" && searchReq.Scope == ScopeWholeSubtree
+	})).Return(movedSearchResult, nil).Once()
+
+	// Mock modification of other attributes
+	mockClient.On("Modify", ctx, mock.MatchedBy(func(modReq *ModifyRequest) bool {
+		return modReq.DN == expectedNewDN &&
+			modReq.ReplaceAttributes["description"][0] == newDescription
+	})).Return(nil)
+
+	// Create final group entry with updated description
+	finalEntry := createMockGroupEntry("TestGroup", testGUID, expectedNewDN, CalculateGroupType(GroupScopeGlobal, GroupCategorySecurity))
+	// Update description in the entry
+	for _, attr := range finalEntry.Attributes {
+		if attr.Name == "description" {
+			attr.Values = []string{newDescription}
+			break
+		}
+	}
+	finalSearchResult := &SearchResult{
+		Entries: []*ldap.Entry{finalEntry},
+		Total:   1,
+	}
+
+	// Mock final group retrieval
+	mockClient.On("Search", ctx, mock.MatchedBy(func(searchReq *SearchRequest) bool {
+		return searchReq.BaseDN == "DC=test,DC=local" && searchReq.Scope == ScopeWholeSubtree
+	})).Return(finalSearchResult, nil).Once()
+
+	// Update request with both container and description changes
+	updateReq := &UpdateGroupRequest{
+		Container:   &newContainerDN,
+		Description: &newDescription,
+	}
+
+	// Execute test
+	group, err := gm.UpdateGroup(ctx, testGUID, updateReq)
+
+	// Assertions
+	require.NoError(t, err)
+	assert.NotNil(t, group)
+	assert.Equal(t, testGUID, group.ObjectGUID)
+	assert.Equal(t, expectedNewDN, group.DistinguishedName)
+	// Container DN is normalized with lowercase attribute names but preserved values
+	assert.Equal(t, "ou=NewOU,dc=test,dc=local", group.Container)
+	assert.Equal(t, newDescription, group.Description)
+
 	mockClient.AssertExpectations(t)
 }

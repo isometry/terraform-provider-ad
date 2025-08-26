@@ -62,16 +62,19 @@ func (d *OUDataSource) Schema(ctx context.Context, req datasource.SchemaRequest,
 				MarkdownDescription: "The objectGUID of the OU to retrieve. This is the most reliable lookup method " +
 					"as objectGUIDs are immutable and unique. Format: `550e8400-e29b-41d4-a716-446655440000`",
 				Optional: true,
+				Computed: true,
 			},
 			"dn": schema.StringAttribute{
 				MarkdownDescription: "The Distinguished Name of the OU to retrieve. " +
 					"Example: `OU=IT,OU=Departments,DC=example,DC=com`",
 				Optional: true,
+				Computed: true,
 			},
 			"name": schema.StringAttribute{
 				MarkdownDescription: "The name of the OU to retrieve. When using this lookup method, " +
 					"the `path` attribute must also be specified to identify the parent container. Example: `IT`",
 				Optional: true,
+				Computed: true,
 			},
 			"path": schema.StringAttribute{
 				MarkdownDescription: "The parent container DN where the OU is located. Required when using the `name` " +
@@ -253,6 +256,33 @@ func (d *OUDataSource) mapOUToModel(ctx context.Context, ou *ldapclient.OU, data
 	// Set the ID to objectGUID for state tracking
 	data.ID = types.StringValue(ou.ObjectGUID)
 
+	// Normalize DN case to ensure uppercase attribute types
+	normalizedDN, err := ldapclient.NormalizeDNCase(ou.DistinguishedName)
+	if err != nil {
+		// Log error but use original DN as fallback
+		tflog.Warn(ctx, "Failed to normalize OU DN case", map[string]any{
+			"original_dn": ou.DistinguishedName,
+			"error":       err.Error(),
+		})
+		normalizedDN = ou.DistinguishedName
+	}
+	data.DN = types.StringValue(normalizedDN)
+
+	// Set name from OU data
+	data.Name = types.StringValue(ou.Name)
+
+	// Normalize path (parent) DN case
+	normalizedPath, err := ldapclient.NormalizeDNCase(ou.Parent)
+	if err != nil {
+		// Log error but use original path as fallback
+		tflog.Warn(ctx, "Failed to normalize path DN case", map[string]any{
+			"original_path": ou.Parent,
+			"error":         err.Error(),
+		})
+		normalizedPath = ou.Parent
+	}
+	data.Path = types.StringValue(normalizedPath)
+
 	// Core OU attributes
 	data.Description = types.StringValue(ou.Description)
 	data.Protected = types.BoolValue(ou.Protected)
@@ -276,7 +306,17 @@ func (d *OUDataSource) mapOUToModel(ctx context.Context, ou *ldapclient.OU, data
 	if len(children) > 0 {
 		childElements := make([]attr.Value, len(children))
 		for i, child := range children {
-			childElements[i] = types.StringValue(child.DistinguishedName)
+			// Normalize child DN case
+			normalizedChildDN, err := ldapclient.NormalizeDNCase(child.DistinguishedName)
+			if err != nil {
+				// Log error but use original DN as fallback
+				tflog.Warn(ctx, "Failed to normalize child OU DN case", map[string]any{
+					"original_child_dn": child.DistinguishedName,
+					"error":             err.Error(),
+				})
+				normalizedChildDN = child.DistinguishedName
+			}
+			childElements[i] = types.StringValue(normalizedChildDN)
 		}
 
 		childList, childDiags := types.ListValue(types.StringType, childElements)

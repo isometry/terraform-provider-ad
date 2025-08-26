@@ -122,6 +122,47 @@ func TestAccGroupMembershipResource_mixedIdentifiers(t *testing.T) {
 	})
 }
 
+func TestAccGroupMembershipResource_dnCaseNormalization(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create with lowercase DN
+			{
+				Config: testAccGroupMembershipResourceConfig_lowercaseDN(),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "1"),
+					// Should be normalized to uppercase attribute types
+					resource.TestCheckTypeSetElemAttr("ad_group_membership.test", "members.*", "CN=testuser1,OU=TestUsers,DC=test,DC=local"),
+				),
+			},
+			// Update with mixed case DN (same member) - should be no-op
+			{
+				Config:   testAccGroupMembershipResourceConfig_mixedCaseDN(),
+				PlanOnly: true,
+				// This should not show any changes because DN normalization should recognize they're the same
+				ExpectNonEmptyPlan: false,
+			},
+			// Apply with mixed case DN to verify normalization
+			{
+				Config: testAccGroupMembershipResourceConfig_mixedCaseDN(),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "1"),
+					// State should still contain the normalized DN with uppercase attribute types
+					resource.TestCheckTypeSetElemAttr("ad_group_membership.test", "members.*", "CN=testuser1,OU=TestUsers,DC=test,DC=local"),
+				),
+			},
+			// Change from uppercase to lowercase (same member) - should be no-op
+			{
+				Config:   testAccGroupMembershipResourceConfig_lowercaseDN(),
+				PlanOnly: true,
+				// This should not show any changes due to DN case normalization
+				ExpectNonEmptyPlan: false,
+			},
+		},
+	})
+}
+
 func TestAccGroupMembershipResource_largeSet(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
@@ -264,6 +305,32 @@ resource "ad_group_membership" "test" {
     "CN=testuser1,OU=TestUsers,DC=test,DC=local",  # DN format
     "testuser2@test.local",                        # UPN format
     "TEST\\testuser3"                              # SAM format
+  ]
+}
+`, testAccGroupMembershipResourceConfig_prerequisite())
+}
+
+func testAccGroupMembershipResourceConfig_lowercaseDN() string {
+	return fmt.Sprintf(`
+%s
+
+resource "ad_group_membership" "test" {
+  group_id = ad_group.test.id
+  members = [
+    "cn=testuser1,ou=TestUsers,dc=test,dc=local"  # Lowercase DN format
+  ]
+}
+`, testAccGroupMembershipResourceConfig_prerequisite())
+}
+
+func testAccGroupMembershipResourceConfig_mixedCaseDN() string {
+	return fmt.Sprintf(`
+%s
+
+resource "ad_group_membership" "test" {
+  group_id = ad_group.test.id
+  members = [
+    "Cn=testuser1,Ou=TestUsers,Dc=test,Dc=local"  # Mixed case DN format
   ]
 }
 `, testAccGroupMembershipResourceConfig_prerequisite())

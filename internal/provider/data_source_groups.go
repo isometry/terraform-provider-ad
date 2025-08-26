@@ -55,17 +55,17 @@ type GroupFilterModel struct {
 
 // GroupDataModel describes a single group in the result set.
 type GroupDataModel struct {
-	ID                types.String `tfsdk:"id"`                 // objectGUID
-	Name              types.String `tfsdk:"name"`               // cn attribute
-	DisplayName       types.String `tfsdk:"display_name"`       // displayName (same as cn)
-	Description       types.String `tfsdk:"description"`        // description attribute
-	DistinguishedName types.String `tfsdk:"distinguished_name"` // full DN
-	SAMAccountName    types.String `tfsdk:"sam_account_name"`   // pre-Windows 2000 name
-	Scope             types.String `tfsdk:"scope"`              // global, universal, domainlocal
-	Category          types.String `tfsdk:"category"`           // security, distribution
-	GroupType         types.Int64  `tfsdk:"group_type"`         // raw AD group type
-	SID               types.String `tfsdk:"sid"`                // security identifier
-	MemberCount       types.Int64  `tfsdk:"member_count"`       // number of members
+	ID                types.String `tfsdk:"id"`               // objectGUID
+	Name              types.String `tfsdk:"name"`             // cn attribute
+	DisplayName       types.String `tfsdk:"display_name"`     // displayName (same as cn)
+	Description       types.String `tfsdk:"description"`      // description attribute
+	DistinguishedName types.String `tfsdk:"dn"`               // full DN
+	SAMAccountName    types.String `tfsdk:"sam_account_name"` // pre-Windows 2000 name
+	Scope             types.String `tfsdk:"scope"`            // global, universal, domainlocal
+	Category          types.String `tfsdk:"category"`         // security, distribution
+	GroupType         types.Int64  `tfsdk:"group_type"`       // raw AD group type
+	SID               types.String `tfsdk:"sid"`              // security identifier
+	MemberCount       types.Int64  `tfsdk:"member_count"`     // number of members
 }
 
 func (d *GroupsDataSource) Metadata(ctx context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -122,7 +122,7 @@ func (d *GroupsDataSource) Schema(ctx context.Context, req datasource.SchemaRequ
 							MarkdownDescription: "The description of the group.",
 							Computed:            true,
 						},
-						"distinguished_name": schema.StringAttribute{
+						"dn": schema.StringAttribute{
 							MarkdownDescription: "The full Distinguished Name of the group.",
 							Computed:            true,
 						},
@@ -336,17 +336,17 @@ func (d *GroupsDataSource) mapGroupsToModel(ctx context.Context, groups []*ldapc
 	// Define the object type for group elements
 	groupObjectType := types.ObjectType{
 		AttrTypes: map[string]attr.Type{
-			"id":                 types.StringType,
-			"name":               types.StringType,
-			"display_name":       types.StringType,
-			"description":        types.StringType,
-			"distinguished_name": types.StringType,
-			"sam_account_name":   types.StringType,
-			"scope":              types.StringType,
-			"category":           types.StringType,
-			"group_type":         types.Int64Type,
-			"sid":                types.StringType,
-			"member_count":       types.Int64Type,
+			"id":               types.StringType,
+			"name":             types.StringType,
+			"display_name":     types.StringType,
+			"description":      types.StringType,
+			"dn":               types.StringType,
+			"sam_account_name": types.StringType,
+			"scope":            types.StringType,
+			"category":         types.StringType,
+			"group_type":       types.Int64Type,
+			"sid":              types.StringType,
+			"member_count":     types.Int64Type,
 		},
 	}
 
@@ -354,17 +354,17 @@ func (d *GroupsDataSource) mapGroupsToModel(ctx context.Context, groups []*ldapc
 	groupElements := make([]attr.Value, len(groups))
 	for i, group := range groups {
 		groupAttrs := map[string]attr.Value{
-			"id":                 types.StringValue(group.ObjectGUID),
-			"name":               types.StringValue(group.Name),
-			"display_name":       types.StringValue(group.Name), // Display name is same as name
-			"description":        types.StringValue(group.Description),
-			"distinguished_name": types.StringValue(group.DistinguishedName),
-			"sam_account_name":   types.StringValue(group.SAMAccountName),
-			"scope":              types.StringValue(string(group.Scope)),
-			"category":           types.StringValue(string(group.Category)),
-			"group_type":         types.Int64Value(int64(group.GroupType)),
-			"sid":                types.StringValue(group.ObjectSid),
-			"member_count":       types.Int64Value(int64(len(group.MemberDNs))),
+			"id":               types.StringValue(group.ObjectGUID),
+			"name":             types.StringValue(group.Name),
+			"display_name":     types.StringValue(group.Name), // Display name is same as name
+			"description":      types.StringValue(group.Description),
+			"dn":               types.StringValue(group.DistinguishedName),
+			"sam_account_name": types.StringValue(group.SAMAccountName),
+			"scope":            types.StringValue(string(group.Scope)),
+			"category":         types.StringValue(string(group.Category)),
+			"group_type":       types.Int64Value(int64(group.GroupType)),
+			"sid":              types.StringValue(group.ObjectSid),
+			"member_count":     types.Int64Value(int64(len(group.MemberDNs))),
 		}
 
 		groupObj, objDiags := types.ObjectValue(groupObjectType.AttrTypes, groupAttrs)

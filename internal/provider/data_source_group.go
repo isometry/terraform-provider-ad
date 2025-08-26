@@ -33,22 +33,21 @@ type GroupDataSource struct {
 // GroupDataSourceModel describes the data source data model with multiple lookup methods.
 type GroupDataSourceModel struct {
 	// Lookup methods (mutually exclusive)
-	ID             types.String `tfsdk:"id"`               // objectGUID lookup
-	DN             types.String `tfsdk:"dn"`               // Distinguished Name lookup
-	Name           types.String `tfsdk:"name"`             // Common name lookup (requires container)
-	SAMAccountName types.String `tfsdk:"sam_account_name"` // SAM account name lookup
+	ID                types.String `tfsdk:"id"`               // objectGUID lookup
+	DistinguishedName types.String `tfsdk:"dn"`               // Distinguished Name lookup
+	Name              types.String `tfsdk:"name"`             // Common name lookup (requires container)
+	SAMAccountName    types.String `tfsdk:"sam_account_name"` // SAM account name lookup
 
 	// Optional container for name-based lookups
 	Container types.String `tfsdk:"container"` // Container DN for name lookup
 
 	// Group attributes (all computed)
-	DisplayName       types.String `tfsdk:"display_name"`       // Display name (computed from cn)
-	Description       types.String `tfsdk:"description"`        // Description
-	Scope             types.String `tfsdk:"scope"`              // Global/Universal/DomainLocal
-	Category          types.String `tfsdk:"category"`           // Security/Distribution
-	GroupType         types.Int64  `tfsdk:"group_type"`         // Raw AD group type
-	DistinguishedName types.String `tfsdk:"distinguished_name"` // Full DN
-	SID               types.String `tfsdk:"sid"`                // Security Identifier
+	DisplayName types.String `tfsdk:"display_name"` // Display name (computed from cn)
+	Description types.String `tfsdk:"description"`  // Description
+	Scope       types.String `tfsdk:"scope"`        // Global/Universal/DomainLocal
+	Category    types.String `tfsdk:"category"`     // Security/Distribution
+	GroupType   types.Int64  `tfsdk:"group_type"`   // Raw AD group type
+	SID         types.String `tfsdk:"sid"`          // Security Identifier
 
 	// Member information
 	Members     types.Set   `tfsdk:"members"`      // Set of member DNs
@@ -70,21 +69,25 @@ func (d *GroupDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 				MarkdownDescription: "The objectGUID of the group to retrieve. This is the most reliable lookup method " +
 					"as objectGUIDs are immutable and unique. Format: `550e8400-e29b-41d4-a716-446655440000`",
 				Optional: true,
+				Computed: true,
 			},
 			"dn": schema.StringAttribute{
 				MarkdownDescription: "The Distinguished Name of the group to retrieve. " +
 					"Example: `CN=Domain Admins,CN=Users,DC=example,DC=com`",
 				Optional: true,
+				Computed: true,
 			},
 			"name": schema.StringAttribute{
 				MarkdownDescription: "The common name (cn) of the group to retrieve. When using this lookup method, " +
 					"the `container` attribute must also be specified to avoid ambiguity. Example: `Domain Admins`",
 				Optional: true,
+				Computed: true,
 			},
 			"sam_account_name": schema.StringAttribute{
 				MarkdownDescription: "The SAM account name (pre-Windows 2000 name) of the group to retrieve. " +
 					"This performs a domain-wide search. Example: `Domain Admins`",
 				Optional: true,
+				Computed: true,
 			},
 
 			// Optional container for name-based lookups
@@ -113,10 +116,6 @@ func (d *GroupDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 			},
 			"group_type": schema.Int64Attribute{
 				MarkdownDescription: "The raw Active Directory groupType value as an integer.",
-				Computed:            true,
-			},
-			"distinguished_name": schema.StringAttribute{
-				MarkdownDescription: "The full Distinguished Name of the group.",
 				Computed:            true,
 			},
 			"sid": schema.StringAttribute{
@@ -246,8 +245,8 @@ func (d *GroupDataSource) retrieveGroup(ctx context.Context, data *GroupDataSour
 	}
 
 	// DN lookup
-	if !data.DN.IsNull() && data.DN.ValueString() != "" {
-		dn := data.DN.ValueString()
+	if !data.DistinguishedName.IsNull() && data.DistinguishedName.ValueString() != "" {
+		dn := data.DistinguishedName.ValueString()
 		tflog.Debug(ctx, "Looking up group by DN", map[string]any{
 			"dn": dn,
 		})
@@ -306,24 +305,48 @@ func (d *GroupDataSource) mapGroupToModel(ctx context.Context, group *ldapclient
 	// Set the ID to objectGUID for state tracking
 	data.ID = types.StringValue(group.ObjectGUID)
 
+	// Populate lookup fields that can be referenced by other configurations
+	data.Name = types.StringValue(group.Name)
+	data.SAMAccountName = types.StringValue(group.SAMAccountName)
+
 	// Core group attributes
 	data.DisplayName = types.StringValue(group.Name)
 	data.Description = types.StringValue(group.Description)
 	data.Scope = types.StringValue(string(group.Scope))
 	data.Category = types.StringValue(string(group.Category))
 	data.GroupType = types.Int64Value(int64(group.GroupType))
-	data.DistinguishedName = types.StringValue(group.DistinguishedName)
+	// Normalize DN case to ensure uppercase attribute types
+	normalizedDN, err := ldapclient.NormalizeDNCase(group.DistinguishedName)
+	if err != nil {
+		// Log error but use original DN as fallback
+		tflog.Warn(ctx, "Failed to normalize group DN case", map[string]any{
+			"original_dn": group.DistinguishedName,
+			"error":       err.Error(),
+		})
+		normalizedDN = group.DistinguishedName
+	}
+	data.DistinguishedName = types.StringValue(normalizedDN)
 	data.SID = types.StringValue(group.ObjectSid)
 
 	// Members information
 	memberCount := int64(len(group.MemberDNs))
 	data.MemberCount = types.Int64Value(memberCount)
 
-	// Convert member DNs to a Set
+	// Convert member DNs to a Set, normalizing DN case
 	if len(group.MemberDNs) > 0 {
 		memberElements := make([]attr.Value, len(group.MemberDNs))
 		for i, memberDN := range group.MemberDNs {
-			memberElements[i] = types.StringValue(memberDN)
+			// Normalize member DN case
+			normalizedMemberDN, err := ldapclient.NormalizeDNCase(memberDN)
+			if err != nil {
+				// Log error but use original DN as fallback
+				tflog.Warn(ctx, "Failed to normalize member DN case", map[string]any{
+					"original_member_dn": memberDN,
+					"error":              err.Error(),
+				})
+				normalizedMemberDN = memberDN
+			}
+			memberElements[i] = types.StringValue(normalizedMemberDN)
 		}
 
 		memberSet, memberDiags := types.SetValue(types.StringType, memberElements)

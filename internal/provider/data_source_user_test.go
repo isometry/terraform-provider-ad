@@ -20,7 +20,7 @@ func TestAccUserDataSource(t *testing.T) {
 					resource.TestCheckResourceAttr("data.ad_user.test", "user_principal_name", "testuser@example.com"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "id"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "object_guid"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "distinguished_name"),
+					resource.TestCheckResourceAttrSet("data.ad_user.test", "dn"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "sam_account_name"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "display_name"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "when_created"),
@@ -40,7 +40,7 @@ func TestAccUserDataSource_byDN(t *testing.T) {
 			{
 				Config: testAccUserDataSourceConfig_byDN("CN=Test User,CN=Users,DC=example,DC=com"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("data.ad_user.test", "distinguished_name", "CN=Test User,CN=Users,DC=example,DC=com"),
+					resource.TestCheckResourceAttr("data.ad_user.test", "dn", "CN=Test User,CN=Users,DC=example,DC=com"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "id"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "object_guid"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "user_principal_name"),
@@ -62,7 +62,7 @@ func TestAccUserDataSource_byGUID(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("data.ad_user.test", "object_guid", "550e8400-e29b-41d4-a716-446655440000"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "id"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "distinguished_name"),
+					resource.TestCheckResourceAttrSet("data.ad_user.test", "dn"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "user_principal_name"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "sam_account_name"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "display_name"),
@@ -83,7 +83,7 @@ func TestAccUserDataSource_bySAM(t *testing.T) {
 					resource.TestCheckResourceAttr("data.ad_user.test", "sam_account_name", "testuser"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "id"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "object_guid"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "distinguished_name"),
+					resource.TestCheckResourceAttrSet("data.ad_user.test", "dn"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "user_principal_name"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "display_name"),
 				),
@@ -103,7 +103,7 @@ func TestAccUserDataSource_bySID(t *testing.T) {
 					resource.TestCheckResourceAttr("data.ad_user.test", "object_sid", "S-1-5-21-123456789-123456789-123456789-1001"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "id"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "object_guid"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "distinguished_name"),
+					resource.TestCheckResourceAttrSet("data.ad_user.test", "dn"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "user_principal_name"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "sam_account_name"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "display_name"),
@@ -125,7 +125,7 @@ func TestAccUserDataSource_allAttributes(t *testing.T) {
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "id"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "object_guid"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "object_sid"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "distinguished_name"),
+					resource.TestCheckResourceAttrSet("data.ad_user.test", "dn"),
 					resource.TestCheckResourceAttr("data.ad_user.test", "user_principal_name", "fulluser@example.com"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "sam_account_name"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "display_name"),
@@ -194,7 +194,7 @@ data "ad_user" "test" {
 func testAccUserDataSourceConfig_byDN(dn string) string {
 	return fmt.Sprintf(`
 data "ad_user" "test" {
-  distinguished_name = %[1]q
+  dn = %[1]q
 }
 `, dn)
 }

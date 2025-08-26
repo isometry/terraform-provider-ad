@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	customtypes "github.com/isometry/terraform-provider-ad/internal/provider/types"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -35,14 +36,14 @@ type OUResource struct {
 
 // OUResourceModel describes the resource data model.
 type OUResourceModel struct {
-	ID          types.String `tfsdk:"id"`          // objectGUID (computed)
-	Name        types.String `tfsdk:"name"`        // Required - OU name
-	Path        types.String `tfsdk:"path"`        // Required - Parent container DN
-	Description types.String `tfsdk:"description"` // Optional - OU description
-	Protected   types.Bool   `tfsdk:"protected"`   // Optional+Computed+Default: false
+	ID          types.String              `tfsdk:"id"`          // objectGUID (computed)
+	Name        types.String              `tfsdk:"name"`        // Required - OU name
+	Path        customtypes.DNStringValue `tfsdk:"path"`        // Required - Parent container DN
+	Description types.String              `tfsdk:"description"` // Optional - OU description
+	Protected   types.Bool                `tfsdk:"protected"`   // Optional+Computed+Default: false
 	// Computed attributes
-	DN   types.String `tfsdk:"dn"`   // Computed - Full Distinguished Name
-	GUID types.String `tfsdk:"guid"` // Computed - GUID string (same as ID)
+	DN   customtypes.DNStringValue `tfsdk:"dn"`   // Computed - Full Distinguished Name
+	GUID types.String              `tfsdk:"guid"` // Computed - GUID string (same as ID)
 }
 
 func (r *OUResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -79,16 +80,7 @@ func (r *OUResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 			"path": schema.StringAttribute{
 				MarkdownDescription: "The distinguished name of the parent container where the OU will be created (e.g., `dc=example,dc=com` or `ou=Parent,dc=example,dc=com`).",
 				Required:            true,
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(1),
-					stringvalidator.RegexMatches(
-						regexp.MustCompile(`(?i)^(cn|ou|dc)=.+`),
-						"Path must be a valid distinguished name starting with CN=, OU=, or DC=",
-					),
-				},
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
+				CustomType:          customtypes.DNStringType{},
 			},
 			"description": schema.StringAttribute{
 				MarkdownDescription: "A description for the organizational unit. This is optional and can be used to provide additional context about the OU's purpose.",
@@ -106,9 +98,7 @@ func (r *OUResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 			"dn": schema.StringAttribute{
 				MarkdownDescription: "The distinguished name of the OU. This is automatically generated based on the name and path.",
 				Computed:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				CustomType:          customtypes.DNStringType{},
 			},
 			"guid": schema.StringAttribute{
 				MarkdownDescription: "The objectGUID of the OU in string format. This is the same value as the `id` attribute.",
@@ -166,10 +156,20 @@ func (r *OUResource) Create(ctx context.Context, req resource.CreateRequest, res
 		return
 	}
 
+	// Normalize parent DN case before creating
+	normalizedParentDN, err := ldapclient.NormalizeDNCase(data.Path.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Invalid Parent DN",
+			fmt.Sprintf("Could not normalize parent DN case: %s", err.Error()),
+		)
+		return
+	}
+
 	// Convert Terraform model to LDAP create request
 	createReq := &ldapclient.CreateOURequest{
 		Name:      data.Name.ValueString(),
-		ParentDN:  data.Path.ValueString(),
+		ParentDN:  normalizedParentDN,
 		Protected: data.Protected.ValueBool(),
 	}
 
@@ -437,12 +437,32 @@ func (r *OUResource) ImportState(ctx context.Context, req resource.ImportStateRe
 func (r *OUResource) updateModelFromOU(model *OUResourceModel, ou *ldapclient.OU) {
 	model.ID = types.StringValue(ou.ObjectGUID)
 	model.Name = types.StringValue(ou.Name)
-	model.DN = types.StringValue(ou.DistinguishedName)
 	model.GUID = types.StringValue(ou.ObjectGUID) // Same as ID
 	model.Protected = types.BoolValue(ou.Protected)
 
-	// Extract path from DN (parent container)
-	model.Path = types.StringValue(ou.Parent)
+	// Normalize DN case to ensure uppercase attribute types
+	normalizedDN, err := ldapclient.NormalizeDNCase(ou.DistinguishedName)
+	if err != nil {
+		// Log error but use original DN as fallback
+		tflog.Warn(context.Background(), "Failed to normalize OU DN case", map[string]any{
+			"original_dn": ou.DistinguishedName,
+			"error":       err.Error(),
+		})
+		normalizedDN = ou.DistinguishedName
+	}
+	model.DN = customtypes.DNString(normalizedDN)
+
+	// Normalize parent path DN case
+	normalizedParent, err := ldapclient.NormalizeDNCase(ou.Parent)
+	if err != nil {
+		// Log error but use original parent as fallback
+		tflog.Warn(context.Background(), "Failed to normalize parent DN case", map[string]any{
+			"original_parent": ou.Parent,
+			"error":           err.Error(),
+		})
+		normalizedParent = ou.Parent
+	}
+	model.Path = customtypes.DNString(normalizedParent)
 
 	// Handle optional description
 	if ou.Description != "" {

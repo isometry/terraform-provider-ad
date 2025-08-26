@@ -115,6 +115,7 @@ type UpdateGroupRequest struct {
 	MailNickname *string        `json:"mailNickname,omitempty"` // Optional: New mail nickname
 	Scope        *GroupScope    `json:"scope,omitempty"`        // Optional: New scope (limited conversions)
 	Category     *GroupCategory `json:"category,omitempty"`     // Optional: New category
+	Container    *string        `json:"container,omitempty"`    // Optional: New container DN (triggers move)
 }
 
 // GroupManager handles Active Directory group operations.
@@ -472,9 +473,31 @@ func (gm *GroupManager) UpdateGroup(ctx context.Context, guid string, req *Updat
 		}
 	}
 
+	// Handle container change (requires move operation)
+	var movedGroup *Group
+	if req.Container != nil && !strings.EqualFold(*req.Container, currentGroup.Container) {
+		// Move the group to the new container
+		var err error
+		movedGroup, err = gm.MoveGroup(ctx, guid, *req.Container)
+		if err != nil {
+			return nil, WrapError("move_group", err)
+		}
+	}
+
 	if !hasChanges {
-		// No changes needed, return current group
+		// No attribute changes needed
+		if movedGroup != nil {
+			// But we did move the group, so return the moved group
+			return movedGroup, nil
+		}
+		// No changes at all, return current group
 		return currentGroup, nil
+	}
+
+	// Update the DN for the modify request if the group was moved
+	if movedGroup != nil {
+		// Update the DN for the modify request since the group was moved
+		modReq.DN = movedGroup.DistinguishedName
 	}
 
 	// Apply modifications
@@ -482,13 +505,71 @@ func (gm *GroupManager) UpdateGroup(ctx context.Context, guid string, req *Updat
 		return nil, WrapError("modify_group", err)
 	}
 
-	// Retrieve updated group
+	// Retrieve final updated group
 	updatedGroup, err := gm.GetGroup(ctx, guid)
 	if err != nil {
 		return nil, WrapError("retrieve_updated_group", err)
 	}
 
 	return updatedGroup, nil
+}
+
+// MoveGroup moves a group to a different organizational unit.
+func (gm *GroupManager) MoveGroup(ctx context.Context, groupGUID string, newContainerDN string) (*Group, error) {
+	if groupGUID == "" {
+		return nil, fmt.Errorf("group GUID cannot be empty")
+	}
+
+	if newContainerDN == "" {
+		return nil, fmt.Errorf("new container DN cannot be empty")
+	}
+
+	// Get the current group to obtain its DN and CN
+	group, err := gm.GetGroup(ctx, groupGUID)
+	if err != nil {
+		return nil, WrapError("get_group_for_move", err)
+	}
+
+	// Check if already in the target container
+	if strings.EqualFold(group.Container, newContainerDN) {
+		// Already in the target location, no move needed
+		return group, nil
+	}
+
+	// Parse the current DN to extract the RDN (CN=GroupName)
+	parsedDN, err := ldap.ParseDN(group.DistinguishedName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse group DN: %w", err)
+	}
+
+	if len(parsedDN.RDNs) == 0 {
+		return nil, fmt.Errorf("invalid DN structure")
+	}
+
+	// Get the RDN (first component, e.g., "CN=GroupName")
+	rdn := parsedDN.RDNs[0].String()
+
+	// Create the ModifyDN request
+	modifyDNReq := &ModifyDNRequest{
+		DN:           group.DistinguishedName,
+		NewRDN:       rdn,
+		DeleteOldRDN: true,
+		NewSuperior:  newContainerDN,
+	}
+
+	// Execute the move operation
+	if err := gm.client.ModifyDN(ctx, modifyDNReq); err != nil {
+		return nil, WrapError("move_group", err)
+	}
+
+	// Retrieve the group from its new location to get updated DN
+	// The objectGUID remains the same, so we can still use it
+	movedGroup, err := gm.GetGroup(ctx, groupGUID)
+	if err != nil {
+		return nil, WrapError("get_moved_group", err)
+	}
+
+	return movedGroup, nil
 }
 
 // DeleteGroup deletes a group by its objectGUID.

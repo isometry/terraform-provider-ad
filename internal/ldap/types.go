@@ -124,6 +124,7 @@ type Client interface {
 	SearchWithPaging(ctx context.Context, req *SearchRequest) (*SearchResult, error)
 	Add(ctx context.Context, req *AddRequest) error
 	Modify(ctx context.Context, req *ModifyRequest) error
+	ModifyDN(ctx context.Context, req *ModifyDNRequest) error
 	Delete(ctx context.Context, dn string) error
 
 	// Health and statistics
@@ -164,6 +165,14 @@ type ModifyRequest struct {
 	AddAttributes     map[string][]string
 	ReplaceAttributes map[string][]string
 	DeleteAttributes  []string
+}
+
+// ModifyDNRequest encapsulates LDAP modify DN (move/rename) parameters.
+type ModifyDNRequest struct {
+	DN           string // Current DN of the object to move/rename
+	NewRDN       string // New relative DN (e.g., "CN=NewName")
+	DeleteOldRDN bool   // Whether to delete the old RDN
+	NewSuperior  string // New parent DN (empty for rename-only operations)
 }
 
 // SearchScope defines LDAP search scope.

@@ -99,6 +99,11 @@ func (m *MockUserClient) GetBaseDN(ctx context.Context) (string, error) {
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockUserClient) ModifyDN(ctx context.Context, req *ModifyDNRequest) error {
+	args := m.Called(ctx, req)
+	return args.Error(0)
+}
+
 // createMockUserEntry creates a mock LDAP entry for testing user operations.
 func createMockUserEntry() *ldap.Entry {
 	entry := &ldap.Entry{

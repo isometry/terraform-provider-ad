@@ -21,7 +21,9 @@
       "Bash(grep:*)",
       "WebFetch(domain:golangci-lint.run)",
       "Bash(mkdir:*)",
-      "Bash(terraform validate:*)"
+      "Bash(terraform validate:*)",
+      "WebFetch(domain:developer.hashicorp.com)",
+      "Bash(go fmt:*)"
     ],
     "deny": [],
     "ask": []

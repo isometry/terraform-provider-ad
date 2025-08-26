@@ -94,6 +94,11 @@ func (m *MockOUClient) GetBaseDN(ctx context.Context) (string, error) {
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockOUClient) ModifyDN(ctx context.Context, req *ModifyDNRequest) error {
+	args := m.Called(ctx, req)
+	return args.Error(0)
+}
+
 func TestOUManager_BuildOUDN(t *testing.T) {
 	client := &MockOUClient{}
 	manager := NewOUManager(client, "dc=example,dc=com")

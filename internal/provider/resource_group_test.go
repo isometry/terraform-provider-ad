@@ -2,6 +2,7 @@ package provider
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -22,7 +23,7 @@ func TestAccGroupResource_basic(t *testing.T) {
 					resource.TestCheckResourceAttr("ad_group.test", "scope", "Global"),
 					resource.TestCheckResourceAttr("ad_group.test", "category", "Security"),
 					resource.TestCheckResourceAttrSet("ad_group.test", "id"),
-					resource.TestCheckResourceAttrSet("ad_group.test", "distinguished_name"),
+					resource.TestCheckResourceAttrSet("ad_group.test", "dn"),
 					resource.TestCheckResourceAttrSet("ad_group.test", "sid"),
 					resource.TestCheckResourceAttrSet("ad_group.test", "group_type"),
 				),
@@ -410,7 +411,7 @@ func testAccGroupImportStateIdFuncDN(s *terraform.State) (string, error) {
 		return "", fmt.Errorf("not found: %s", "ad_group.test")
 	}
 
-	return rs.Primary.Attributes["distinguished_name"], nil
+	return rs.Primary.Attributes["dn"], nil
 }
 
 // Helper functions for existence and destroy testing.
@@ -424,6 +425,180 @@ func testAccCheckGroupDestroy(s *terraform.State) error {
 
 func testAccCheckGroupDisappears(resourceName string) resource.TestCheckFunc {
 	return TestCheckGroupDisappears(resourceName)
+}
+
+func TestAccGroupResource_containerMove(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create group in default container
+			{
+				Config: testAccGroupResourceConfig_basic("tf-test-container-move", "TFTestContainerMove"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-container-move"),
+					resource.TestCheckResourceAttr("ad_group.test", "sam_account_name", "TFTestContainerMove"),
+					resource.TestCheckResourceAttrSet("ad_group.test", "id"),
+					resource.TestCheckResourceAttrSet("ad_group.test", "dn"),
+					// Verify GUID remains the same throughout
+					testAccStoreGroupGUID("ad_group.test"),
+				),
+			},
+			// Move to different container
+			{
+				Config: testAccGroupResourceConfig_withContainer("tf-test-container-move", "TFTestContainerMove", "CN=Users"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-container-move"),
+					resource.TestCheckResourceAttr("ad_group.test", "sam_account_name", "TFTestContainerMove"),
+					// Verify GUID is preserved after move
+					testAccCheckGroupGUIDUnchanged("ad_group.test"),
+					// Verify DN has changed to reflect new container
+					resource.TestCheckResourceAttrWith("ad_group.test", "dn", func(value string) error {
+						if !strings.Contains(value, "CN=Users") {
+							return fmt.Errorf("expected DN to contain CN=Users, got: %s", value)
+						}
+						return nil
+					}),
+				),
+			},
+			// Move back to original container
+			{
+				Config: testAccGroupResourceConfig_basic("tf-test-container-move", "TFTestContainerMove"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-container-move"),
+					resource.TestCheckResourceAttr("ad_group.test", "sam_account_name", "TFTestContainerMove"),
+					// Verify GUID is still preserved after second move
+					testAccCheckGroupGUIDUnchanged("ad_group.test"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccGroupResource_containerMoveWithOtherChanges(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create group with description
+			{
+				Config: testAccGroupResourceConfig_withDescription("tf-test-move-desc", "TFTestMoveDesc", "Original description"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-move-desc"),
+					resource.TestCheckResourceAttr("ad_group.test", "description", "Original description"),
+					testAccStoreGroupGUID("ad_group.test"),
+				),
+			},
+			// Move container and update description simultaneously
+			{
+				Config: testAccGroupResourceConfig_withContainerAndDescription("tf-test-move-desc", "TFTestMoveDesc", "CN=Users", "Updated description after move"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-move-desc"),
+					resource.TestCheckResourceAttr("ad_group.test", "description", "Updated description after move"),
+					// Verify GUID is preserved
+					testAccCheckGroupGUIDUnchanged("ad_group.test"),
+					// Verify DN reflects new container
+					resource.TestCheckResourceAttrWith("ad_group.test", "dn", func(value string) error {
+						if !strings.Contains(value, "CN=Users") {
+							return fmt.Errorf("expected DN to contain CN=Users, got: %s", value)
+						}
+						return nil
+					}),
+				),
+			},
+		},
+	})
+}
+
+func TestAccGroupResource_containerMoveNoChange(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create group
+			{
+				Config: testAccGroupResourceConfig_basic("tf-test-move-nochange", "TFTestMoveNoChange"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-move-nochange"),
+					testAccStoreGroupGUID("ad_group.test"),
+				),
+			},
+			// Apply same configuration (no actual move)
+			{
+				Config: testAccGroupResourceConfig_basic("tf-test-move-nochange", "TFTestMoveNoChange"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-move-nochange"),
+					// Verify GUID remains unchanged (no recreation occurred)
+					testAccCheckGroupGUIDUnchanged("ad_group.test"),
+				),
+			},
+		},
+	})
+}
+
+// Additional test configuration helpers for container moves.
+func testAccGroupResourceConfig_withContainer(name, samName, container string) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+resource "ad_group" "test" {
+  name             = %[1]q
+  sam_account_name = %[2]q
+  container        = "%[3]s,${data.ad_domain.test.distinguished_name}"
+}
+`, TestProviderConfig(), TestDomainDataSource(), name, samName, container)
+}
+
+func testAccGroupResourceConfig_withContainerAndDescription(name, samName, container, description string) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+resource "ad_group" "test" {
+  name             = %[1]q
+  sam_account_name = %[2]q
+  container        = "%[3]s,${data.ad_domain.test.distinguished_name}"
+  description      = %[4]q
+}
+`, TestProviderConfig(), TestDomainDataSource(), name, samName, container, description)
+}
+
+// Test helper to store the initial GUID for comparison.
+var storedGUID string
+
+func testAccStoreGroupGUID(resourceName string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[resourceName]
+		if !ok {
+			return fmt.Errorf("not found: %s", resourceName)
+		}
+
+		storedGUID = rs.Primary.Attributes["id"]
+		if storedGUID == "" {
+			return fmt.Errorf("group ID (GUID) is empty")
+		}
+
+		return nil
+	}
+}
+
+func testAccCheckGroupGUIDUnchanged(resourceName string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[resourceName]
+		if !ok {
+			return fmt.Errorf("not found: %s", resourceName)
+		}
+
+		currentGUID := rs.Primary.Attributes["id"]
+		if currentGUID != storedGUID {
+			return fmt.Errorf("group GUID changed: expected %s, got %s", storedGUID, currentGUID)
+		}
+
+		return nil
+	}
 }
 
 // Note: testAccPreCheck is defined in provider_test.go

@@ -187,10 +187,16 @@ func (m *MemberNormalizer) NormalizeToDN(identifier string) (string, error) {
 		return "", fmt.Errorf("failed to normalize identifier '%s' (type: %s): %w", identifier, idType.String(), err)
 	}
 
-	// Cache the result
-	m.cacheDN(identifier, dn)
+	// Apply DN case normalization to ensure uppercase attribute types
+	normalizedDN, err := NormalizeDNCase(dn)
+	if err != nil {
+		return "", fmt.Errorf("failed to normalize DN case for '%s': %w", dn, err)
+	}
 
-	return dn, nil
+	// Cache the result
+	m.cacheDN(identifier, normalizedDN)
+
+	return normalizedDN, nil
 }
 
 // NormalizeToDNBatch normalizes multiple identifiers in a single operation for better performance.
@@ -233,9 +239,15 @@ func (m *MemberNormalizer) validateDN(dn string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
 	defer cancel()
 
+	// Normalize DN case before searching to ensure consistent format
+	normalizedSearchDN, err := NormalizeDNCase(dn)
+	if err != nil {
+		return "", fmt.Errorf("failed to normalize DN case for search: %w", err)
+	}
+
 	// Perform a base object search to verify the DN exists
 	searchReq := &SearchRequest{
-		BaseDN:     dn,
+		BaseDN:     normalizedSearchDN,
 		Scope:      ScopeBaseObject,
 		Filter:     "(objectClass=*)",
 		Attributes: []string{"distinguishedName"},
@@ -249,16 +261,22 @@ func (m *MemberNormalizer) validateDN(dn string) (string, error) {
 	}
 
 	if len(result.Entries) == 0 {
-		return "", fmt.Errorf("DN not found: %s", dn)
+		return "", fmt.Errorf("DN not found: %s", normalizedSearchDN)
 	}
 
-	// Return the canonical DN from the server
+	// Return the canonical DN from the server, normalized to uppercase attribute types
 	canonicalDN := result.Entries[0].GetAttributeValue("distinguishedName")
 	if canonicalDN == "" {
-		return dn, nil // Fallback to input DN if canonical not available
+		return normalizedSearchDN, nil // Fallback to normalized input DN if canonical not available
 	}
 
-	return canonicalDN, nil
+	// Normalize the canonical DN from AD (should already be uppercase, but ensure consistency)
+	normalizedCanonicalDN, err := NormalizeDNCase(canonicalDN)
+	if err != nil {
+		return "", fmt.Errorf("failed to normalize canonical DN case: %w", err)
+	}
+
+	return normalizedCanonicalDN, nil
 }
 
 // resolveGUIDToDN resolves a GUID to its Distinguished Name.
@@ -288,7 +306,13 @@ func (m *MemberNormalizer) resolveGUIDToDN(guid string) (string, error) {
 		return "", fmt.Errorf("DN not found for GUID %s", guid)
 	}
 
-	return dn, nil
+	// Normalize DN case to ensure uppercase attribute types
+	normalizedDN, err := NormalizeDNCase(dn)
+	if err != nil {
+		return "", fmt.Errorf("failed to normalize DN case for GUID %s: %w", guid, err)
+	}
+
+	return normalizedDN, nil
 }
 
 // resolveSIDToDN resolves a Security Identifier to its Distinguished Name.
@@ -320,7 +344,13 @@ func (m *MemberNormalizer) resolveSIDToDN(sid string) (string, error) {
 		return "", fmt.Errorf("DN not found for SID %s", sid)
 	}
 
-	return dn, nil
+	// Normalize DN case to ensure uppercase attribute types
+	normalizedDN, err := NormalizeDNCase(dn)
+	if err != nil {
+		return "", fmt.Errorf("failed to normalize DN case for SID %s: %w", sid, err)
+	}
+
+	return normalizedDN, nil
 }
 
 // resolveUPNToDN resolves a User Principal Name to its Distinguished Name.
@@ -352,7 +382,13 @@ func (m *MemberNormalizer) resolveUPNToDN(upn string) (string, error) {
 		return "", fmt.Errorf("DN not found for UPN %s", upn)
 	}
 
-	return dn, nil
+	// Normalize DN case to ensure uppercase attribute types
+	normalizedDN, err := NormalizeDNCase(dn)
+	if err != nil {
+		return "", fmt.Errorf("failed to normalize DN case for UPN %s: %w", upn, err)
+	}
+
+	return normalizedDN, nil
 }
 
 // resolveSAMToDN resolves a SAM Account Name to its Distinguished Name.
@@ -393,7 +429,13 @@ func (m *MemberNormalizer) resolveSAMToDN(sam string) (string, error) {
 		return "", fmt.Errorf("DN not found for SAM %s", sam)
 	}
 
-	return dn, nil
+	// Normalize DN case to ensure uppercase attribute types
+	normalizedDN, err := NormalizeDNCase(dn)
+	if err != nil {
+		return "", fmt.Errorf("failed to normalize DN case for SAM %s: %w", sam, err)
+	}
+
+	return normalizedDN, nil
 }
 
 // getCachedDN retrieves a DN from cache if available and not expired.

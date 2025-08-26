@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	customtypes "github.com/isometry/terraform-provider-ad/internal/provider/types"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -36,17 +37,17 @@ type GroupResource struct {
 
 // GroupResourceModel describes the resource data model.
 type GroupResourceModel struct {
-	ID             types.String `tfsdk:"id"`               // objectGUID (computed)
-	Name           types.String `tfsdk:"name"`             // Required - cn attribute
-	SAMAccountName types.String `tfsdk:"sam_account_name"` // Required - sAMAccountName
-	Container      types.String `tfsdk:"container"`        // Required - parent container DN
-	Scope          types.String `tfsdk:"scope"`            // Optional+Computed+Default: "Global"
-	Category       types.String `tfsdk:"category"`         // Optional+Computed+Default: "Security"
-	Description    types.String `tfsdk:"description"`      // Optional
+	ID             types.String              `tfsdk:"id"`               // objectGUID (computed)
+	Name           types.String              `tfsdk:"name"`             // Required - cn attribute
+	SAMAccountName types.String              `tfsdk:"sam_account_name"` // Required - sAMAccountName
+	Container      customtypes.DNStringValue `tfsdk:"container"`        // Required - parent container DN
+	Scope          types.String              `tfsdk:"scope"`            // Optional+Computed+Default: "Global"
+	Category       types.String              `tfsdk:"category"`         // Optional+Computed+Default: "Security"
+	Description    types.String              `tfsdk:"description"`      // Optional
 	// Computed attributes
-	DistinguishedName types.String `tfsdk:"distinguished_name"` // Computed
-	SID               types.String `tfsdk:"sid"`                // Computed
-	GroupType         types.Int64  `tfsdk:"group_type"`         // Computed
+	DistinguishedName customtypes.DNStringValue `tfsdk:"dn"`         // Computed
+	SID               types.String              `tfsdk:"sid"`        // Computed
+	GroupType         types.Int64               `tfsdk:"group_type"` // Computed
 }
 
 func (r *GroupResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -94,16 +95,7 @@ func (r *GroupResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			"container": schema.StringAttribute{
 				MarkdownDescription: "The distinguished name of the container or organizational unit where the group will be created (e.g., `ou=Groups,dc=example,dc=com`).",
 				Required:            true,
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(1),
-					stringvalidator.RegexMatches(
-						regexp.MustCompile(`(?i)^(cn|ou|dc)=.+`),
-						"Container must be a valid distinguished name starting with CN=, OU=, or DC=",
-					),
-				},
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
+				CustomType:          customtypes.DNStringType{},
 			},
 			"scope": schema.StringAttribute{
 				MarkdownDescription: "The scope of the group. Valid values are `Global`, `Universal`, or `DomainLocal`. Defaults to `Global`.",
@@ -130,12 +122,10 @@ func (r *GroupResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 					stringvalidator.LengthAtMost(1024),
 				},
 			},
-			"distinguished_name": schema.StringAttribute{
+			"dn": schema.StringAttribute{
 				MarkdownDescription: "The distinguished name of the group. This is automatically generated based on the name and container.",
 				Computed:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				CustomType:          customtypes.DNStringType{},
 			},
 			"sid": schema.StringAttribute{
 				MarkdownDescription: "The Security Identifier (SID) of the group. This is automatically assigned by Active Directory.",
@@ -348,6 +338,13 @@ func (r *GroupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		hasChanges = true
 	}
 
+	// Check for container changes (triggers group move)
+	if !data.Container.Equal(currentData.Container) {
+		container := data.Container.ValueString()
+		updateReq.Container = &container
+		hasChanges = true
+	}
+
 	if !hasChanges {
 		tflog.Debug(ctx, "No changes detected for AD group")
 		// No changes needed, just return current state
@@ -479,12 +476,34 @@ func (r *GroupResource) updateModelFromGroup(model *GroupResourceModel, group *l
 	model.ID = types.StringValue(group.ObjectGUID)
 	model.Name = types.StringValue(group.Name)
 	model.SAMAccountName = types.StringValue(group.SAMAccountName)
-	model.Container = types.StringValue(group.Container)
 	model.Scope = types.StringValue(string(group.Scope))
 	model.Category = types.StringValue(string(group.Category))
-	model.DistinguishedName = types.StringValue(group.DistinguishedName)
 	model.SID = types.StringValue(group.ObjectSid)
 	model.GroupType = types.Int64Value(int64(group.GroupType))
+
+	// Normalize DN case to ensure uppercase attribute types
+	normalizedDN, err := ldapclient.NormalizeDNCase(group.DistinguishedName)
+	if err != nil {
+		// Log error but use original DN as fallback
+		tflog.Warn(context.Background(), "Failed to normalize group DN case", map[string]any{
+			"original_dn": group.DistinguishedName,
+			"error":       err.Error(),
+		})
+		normalizedDN = group.DistinguishedName
+	}
+	model.DistinguishedName = customtypes.DNString(normalizedDN)
+
+	// Normalize container DN case
+	normalizedContainer, err := ldapclient.NormalizeDNCase(group.Container)
+	if err != nil {
+		// Log error but use original container as fallback
+		tflog.Warn(context.Background(), "Failed to normalize container DN case", map[string]any{
+			"original_container": group.Container,
+			"error":              err.Error(),
+		})
+		normalizedContainer = group.Container
+	}
+	model.Container = customtypes.DNString(normalizedContainer)
 
 	// Handle optional description
 	if group.Description != "" {

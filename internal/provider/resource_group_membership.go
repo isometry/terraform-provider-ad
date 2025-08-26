@@ -5,17 +5,16 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	customtypes "github.com/isometry/terraform-provider-ad/internal/provider/types"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -33,9 +32,9 @@ type GroupMembershipResource struct {
 
 // GroupMembershipResourceModel describes the resource data model.
 type GroupMembershipResourceModel struct {
-	ID      types.String `tfsdk:"id"`       // Group objectGUID (same as group_id)
-	GroupID types.String `tfsdk:"group_id"` // Group objectGUID (required)
-	Members types.Set    `tfsdk:"members"`  // Set of member identifiers (required)
+	ID      types.String                 `tfsdk:"id"`       // Group objectGUID (same as group_id)
+	GroupID types.String                 `tfsdk:"group_id"` // Group objectGUID (required)
+	Members customtypes.DNStringSetValue `tfsdk:"members"`  // Set of member identifiers (required)
 }
 
 func (r *GroupMembershipResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -75,11 +74,7 @@ func (r *GroupMembershipResource) Schema(ctx context.Context, req resource.Schem
 					"**Note**: This resource manages the complete membership set - members not listed here will be removed from the group.",
 				Required:    true,
 				ElementType: types.StringType,
-				Validators: []validator.Set{
-					setvalidator.SizeBetween(0, 10000), // Reasonable Active Directory limits (0 allows empty for testing)
-				},
-				// Plan modifiers will be added dynamically in Configure()
-				// since they need access to the LDAP client
+				CustomType:  customtypes.DNStringSetType{},
 			},
 		},
 	}
@@ -418,9 +413,9 @@ func (r *GroupMembershipResource) ImportState(ctx context.Context, req resource.
 	data.ID = types.StringValue(groupGUID)
 	data.GroupID = types.StringValue(groupGUID)
 
-	// Convert current members to a set
+	// Convert current members to a custom DN set
 	if len(currentMembers) > 0 {
-		membersSet, diags := types.SetValueFrom(ctx, types.StringType, currentMembers)
+		membersSet, diags := customtypes.DNStringSet(ctx, currentMembers)
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {
 			return
@@ -428,7 +423,7 @@ func (r *GroupMembershipResource) ImportState(ctx context.Context, req resource.
 		data.Members = membersSet
 	} else {
 		// Empty membership
-		emptySet, diags := types.SetValueFrom(ctx, types.StringType, []string{})
+		emptySet, diags := customtypes.DNStringSet(ctx, []string{})
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {
 			return
@@ -457,10 +452,10 @@ func (r *GroupMembershipResource) refreshMembershipState(ctx context.Context, me
 		return fmt.Errorf("could not get current group members: %w", err)
 	}
 
-	// Convert to Terraform set
-	membersSet, diags := types.SetValueFrom(ctx, types.StringType, currentMembers)
+	// Convert to custom DN set
+	membersSet, diags := customtypes.DNStringSet(ctx, currentMembers)
 	if diags.HasError() {
-		return fmt.Errorf("could not create members set: %v", diags.Errors())
+		return fmt.Errorf("could not create members DN set: %v", diags.Errors())
 	}
 
 	model.Members = membersSet

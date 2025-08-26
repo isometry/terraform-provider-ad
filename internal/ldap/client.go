@@ -294,6 +294,34 @@ func (c *client) Modify(ctx context.Context, req *ModifyRequest) error {
 	})
 }
 
+// ModifyDN moves or renames an LDAP entry.
+func (c *client) ModifyDN(ctx context.Context, req *ModifyDNRequest) error {
+	if req == nil {
+		return fmt.Errorf("modify DN request cannot be nil")
+	}
+
+	if req.DN == "" {
+		return fmt.Errorf("DN cannot be empty")
+	}
+
+	if req.NewRDN == "" {
+		return fmt.Errorf("new RDN cannot be empty")
+	}
+
+	conn, err := c.pool.Get(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer conn.Close()
+
+	// Convert our ModifyDNRequest to go-ldap ModifyDNRequest
+	ldapReq := ldap.NewModifyDNRequest(req.DN, req.NewRDN, req.DeleteOldRDN, req.NewSuperior)
+
+	return c.withRetry(ctx, func() error {
+		return conn.Conn().ModifyDN(ldapReq)
+	})
+}
+
 // Delete removes an LDAP entry.
 func (c *client) Delete(ctx context.Context, dn string) error {
 	if dn == "" {

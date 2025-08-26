@@ -35,7 +35,7 @@ type UserDataSource struct {
 type UserDataSourceModel struct {
 	// Lookup methods (mutually exclusive)
 	ID                types.String `tfsdk:"id"`                  // objectGUID lookup
-	DistinguishedName types.String `tfsdk:"distinguished_name"`  // Distinguished Name lookup
+	DistinguishedName types.String `tfsdk:"dn"`                  // Distinguished Name lookup
 	UserPrincipalName types.String `tfsdk:"user_principal_name"` // UPN lookup (user@domain.com)
 	SAMAccountName    types.String `tfsdk:"sam_account_name"`    // SAM account name lookup
 	SID               types.String `tfsdk:"sid"`                 // Security Identifier lookup
@@ -120,26 +120,31 @@ func (d *UserDataSource) Schema(ctx context.Context, req datasource.SchemaReques
 				MarkdownDescription: "The objectGUID of the user to retrieve. This is the most reliable lookup method " +
 					"as objectGUIDs are immutable and unique. Format: `550e8400-e29b-41d4-a716-446655440000`",
 				Optional: true,
+				Computed: true,
 			},
-			"distinguished_name": schema.StringAttribute{
+			"dn": schema.StringAttribute{
 				MarkdownDescription: "The Distinguished Name of the user to retrieve. " +
 					"Example: `CN=John Doe,CN=Users,DC=example,DC=com`",
 				Optional: true,
+				Computed: true,
 			},
 			"user_principal_name": schema.StringAttribute{
 				MarkdownDescription: "The User Principal Name (UPN) of the user to retrieve. " +
 					"Example: `john.doe@example.com`",
 				Optional: true,
+				Computed: true,
 			},
 			"sam_account_name": schema.StringAttribute{
 				MarkdownDescription: "The SAM account name (pre-Windows 2000 name) of the user to retrieve. " +
 					"This performs a domain-wide search. Example: `jdoe`",
 				Optional: true,
+				Computed: true,
 			},
 			"sid": schema.StringAttribute{
 				MarkdownDescription: "The Security Identifier (SID) of the user to retrieve. " +
 					"Example: `S-1-5-21-123456789-123456789-123456789-1001`",
 				Optional: true,
+				Computed: true,
 			},
 
 			// Core identity attributes (all computed)
@@ -360,7 +365,7 @@ func (d *UserDataSource) ConfigValidators(ctx context.Context) []datasource.Conf
 		// Exactly one lookup method must be specified
 		datasourcevalidator.ExactlyOneOf(
 			path.MatchRoot("id"),
-			path.MatchRoot("distinguished_name"),
+			path.MatchRoot("dn"),
 			path.MatchRoot("user_principal_name"),
 			path.MatchRoot("sam_account_name"),
 			path.MatchRoot("sid"),
@@ -497,12 +502,15 @@ func (d *UserDataSource) mapUserToModel(ctx context.Context, user *ldapclient.Us
 	// Set the ID to objectGUID for state tracking
 	data.ID = types.StringValue(user.ObjectGUID)
 
-	// Core identity attributes
-	data.ObjectGUID = types.StringValue(user.ObjectGUID)
+	// Populate lookup fields that can be referenced by other configurations
 	data.DistinguishedName = types.StringValue(user.DistinguishedName)
-	data.ObjectSid = types.StringValue(user.ObjectSid)
 	data.SAMAccountName = types.StringValue(user.SAMAccountName)
 	data.UserPrincipalName = types.StringValue(user.UserPrincipalName)
+	data.SID = types.StringValue(user.ObjectSid)
+
+	// Core identity attributes (additional computed fields)
+	data.ObjectGUID = types.StringValue(user.ObjectGUID)
+	data.ObjectSid = types.StringValue(user.ObjectSid)
 	data.DisplayName = types.StringValue(user.DisplayName)
 	data.GivenName = types.StringValue(user.GivenName)
 	data.Surname = types.StringValue(user.Surname)
