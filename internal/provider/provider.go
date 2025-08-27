@@ -52,6 +52,8 @@ type ActiveDirectoryProviderModel struct {
 	KerberosRealm  types.String `tfsdk:"kerberos_realm"`
 	KerberosKeytab types.String `tfsdk:"kerberos_keytab"`
 	KerberosConfig types.String `tfsdk:"kerberos_config"`
+	KerberosCCache types.String `tfsdk:"kerberos_ccache"`
+	KerberosSPN    types.String `tfsdk:"kerberos_spn"`
 
 	// TLS settings
 	UseTLS            types.Bool   `tfsdk:"use_tls"`
@@ -133,6 +135,19 @@ func (p *ActiveDirectoryProvider) Schema(ctx context.Context, req provider.Schem
 			"kerberos_config": schema.StringAttribute{
 				MarkdownDescription: "Path to Kerberos configuration file. Defaults to system default. " +
 					"Can be set via the `AD_KERBEROS_CONFIG` environment variable.",
+				Optional: true,
+			},
+			"kerberos_ccache": schema.StringAttribute{
+				MarkdownDescription: "Path to Kerberos credential cache file for authentication. " +
+					"When specified, existing Kerberos tickets will be used for authentication. " +
+					"Can be set via the `AD_KERBEROS_CCACHE` environment variable.",
+				Optional: true,
+			},
+			"kerberos_spn": schema.StringAttribute{
+				MarkdownDescription: "Override Service Principal Name (SPN) for Kerberos authentication. " +
+					"Use when connecting to a domain controller by IP address where the SPN doesn't match the IP. " +
+					"Format: `ldap/<hostname>` (e.g., `ldap/dc1.example.com`). " +
+					"Can be set via the `AD_KERBEROS_SPN` environment variable.",
 				Optional: true,
 			},
 
@@ -225,11 +240,6 @@ func (p *ActiveDirectoryProvider) ConfigValidators(ctx context.Context) []provid
 			path.MatchRoot("tls_ca_cert_file"),
 			path.MatchRoot("tls_ca_cert"),
 		),
-		// If using Kerberos, realm is required with keytab
-		providervalidator.RequiredTogether(
-			path.MatchRoot("kerberos_keytab"),
-			path.MatchRoot("kerberos_realm"),
-		),
 	}
 }
 
@@ -309,17 +319,19 @@ func (p *ActiveDirectoryProvider) buildLDAPConfig(data *ActiveDirectoryProviderM
 	kerberosRealm := p.getStringValue(data.KerberosRealm, "AD_KERBEROS_REALM")
 	kerberosKeytab := p.getStringValue(data.KerberosKeytab, "AD_KERBEROS_KEYTAB")
 	kerberosConfig := p.getStringValue(data.KerberosConfig, "AD_KERBEROS_CONFIG")
+	kerberosCCache := p.getStringValue(data.KerberosCCache, "AD_KERBEROS_CCACHE")
+	kerberosSPN := p.getStringValue(data.KerberosSPN, "AD_KERBEROS_SPN")
 
 	// Check that we have some form of authentication
 	hasPasswordAuth := username != "" && password != ""
-	hasKerberosAuth := kerberosRealm != "" && kerberosKeytab != ""
+	hasKerberosAuth := kerberosRealm != ""
 
 	if !hasPasswordAuth && !hasKerberosAuth {
 		diags.AddError(
 			"Missing Authentication Configuration",
 			"Either username/password authentication or Kerberos authentication must be configured. "+
 				"For username/password: provide 'username' and 'password' attributes or set AD_USERNAME and AD_PASSWORD environment variables. "+
-				"For Kerberos: provide 'kerberos_realm' and 'kerberos_keytab' attributes or set AD_KERBEROS_REALM and AD_KERBEROS_KEYTAB environment variables.",
+				"For Kerberos: provide 'kerberos_realm' and optionally 'username'/'password' (for password auth), 'kerberos_keytab' (for keytab auth), or 'kerberos_ccache' (for credential cache auth).",
 		)
 		return config
 	}
@@ -330,6 +342,8 @@ func (p *ActiveDirectoryProvider) buildLDAPConfig(data *ActiveDirectoryProviderM
 	config.KerberosRealm = kerberosRealm
 	config.KerberosKeytab = kerberosKeytab
 	config.KerberosConfig = kerberosConfig
+	config.KerberosCCache = kerberosCCache
+	config.KerberosSPN = kerberosSPN
 
 	// TLS settings
 	if useTLS := p.getBoolValue(data.UseTLS, "AD_USE_TLS", true); !useTLS {

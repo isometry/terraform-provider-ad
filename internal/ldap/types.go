@@ -22,6 +22,8 @@ type ConnectionConfig struct {
 	KerberosRealm  string // Kerberos realm for GSSAPI authentication
 	KerberosKeytab string // Path to Kerberos keytab file
 	KerberosConfig string // Path to Kerberos config file (krb5.conf)
+	KerberosCCache string // Path to Kerberos credential cache file
+	KerberosSPN    string // Override Service Principal Name for Kerberos authentication
 
 	// TLS settings
 	TLSConfig         *tls.Config // Custom TLS configuration
