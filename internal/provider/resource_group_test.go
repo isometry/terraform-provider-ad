@@ -451,7 +451,7 @@ func TestAccGroupResource_containerMove(t *testing.T) {
 					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-container-move"),
 					resource.TestCheckResourceAttr("ad_group.test", "sam_account_name", "TFTestContainerMove"),
 					// Verify GUID is preserved after move
-					testAccCheckGroupGUIDUnchanged("ad_group.test"),
+					testAccCheckGroupGUIDUnchanged(),
 					// Verify DN has changed to reflect new container
 					resource.TestCheckResourceAttrWith("ad_group.test", "dn", func(value string) error {
 						if !strings.Contains(value, "CN=Users") {
@@ -468,7 +468,7 @@ func TestAccGroupResource_containerMove(t *testing.T) {
 					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-container-move"),
 					resource.TestCheckResourceAttr("ad_group.test", "sam_account_name", "TFTestContainerMove"),
 					// Verify GUID is still preserved after second move
-					testAccCheckGroupGUIDUnchanged("ad_group.test"),
+					testAccCheckGroupGUIDUnchanged(),
 				),
 			},
 		},
@@ -496,7 +496,7 @@ func TestAccGroupResource_containerMoveWithOtherChanges(t *testing.T) {
 					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-move-desc"),
 					resource.TestCheckResourceAttr("ad_group.test", "description", "Updated description after move"),
 					// Verify GUID is preserved
-					testAccCheckGroupGUIDUnchanged("ad_group.test"),
+					testAccCheckGroupGUIDUnchanged(),
 					// Verify DN reflects new container
 					resource.TestCheckResourceAttrWith("ad_group.test", "dn", func(value string) error {
 						if !strings.Contains(value, "CN=Users") {
@@ -529,7 +529,7 @@ func TestAccGroupResource_containerMoveNoChange(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-move-nochange"),
 					// Verify GUID remains unchanged (no recreation occurred)
-					testAccCheckGroupGUIDUnchanged("ad_group.test"),
+					testAccCheckGroupGUIDUnchanged(),
 				),
 			},
 		},
@@ -585,7 +585,8 @@ func testAccStoreGroupGUID(resourceName string) resource.TestCheckFunc {
 	}
 }
 
-func testAccCheckGroupGUIDUnchanged(resourceName string) resource.TestCheckFunc {
+func testAccCheckGroupGUIDUnchanged() resource.TestCheckFunc {
+	const resourceName = "ad_group.test"
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {

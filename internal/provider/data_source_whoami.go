@@ -104,6 +104,20 @@ func (d *WhoAmIDataSource) Configure(ctx context.Context, req datasource.Configu
 func (d *WhoAmIDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
 	var data WhoAmIDataSourceModel
 
+	// Set up entry/exit logging
+	logCompletion := ldapclient.LogDataSourceOperation(ctx, "ad_whoami", "read", nil)
+	defer func() {
+		var err error
+		if resp.Diagnostics.HasError() {
+			// Get first error for logging
+			for _, diag := range resp.Diagnostics.Errors() {
+				err = fmt.Errorf("%s: %s", diag.Summary(), diag.Detail())
+				break
+			}
+		}
+		logCompletion(err)
+	}()
+
 	// The WhoAmI data source doesn't require any input configuration
 	// Read Terraform configuration data into the model (should be empty)
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)

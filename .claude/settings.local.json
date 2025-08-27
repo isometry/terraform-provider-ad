@@ -3,6 +3,7 @@
     "allow": [
       "mcp__gopls__go_search",
       "mcp__gopls__go_workspace",
+      "mcp__gopls__go_package_api",
       "mcp__context7__resolve-library-id",
       "mcp__context7__get-library-docs",
       "Bash(git clone:*)",

@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/datasourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -10,10 +11,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -41,17 +44,28 @@ type GroupDataSourceModel struct {
 	// Optional container for name-based lookups
 	Container types.String `tfsdk:"container"` // Container DN for name lookup
 
+	// Member flattening option
+	FlattenMembers types.Bool `tfsdk:"flatten_members"` // If true, return flattened list of users only
+
 	// Group attributes (all computed)
 	DisplayName types.String `tfsdk:"display_name"` // Display name (computed from cn)
 	Description types.String `tfsdk:"description"`  // Description
 	Scope       types.String `tfsdk:"scope"`        // Global/Universal/DomainLocal
 	Category    types.String `tfsdk:"category"`     // Security/Distribution
-	GroupType   types.Int64  `tfsdk:"group_type"`   // Raw AD group type
 	SID         types.String `tfsdk:"sid"`          // Security Identifier
 
 	// Member information
 	Members     types.Set   `tfsdk:"members"`      // Set of member DNs
 	MemberCount types.Int64 `tfsdk:"member_count"` // Total member count
+	MemberOf    types.Set   `tfsdk:"member_of"`    // Set of group DNs this group is a member of
+
+	// Email information
+	Mail         types.String `tfsdk:"mail"`          // Email address for distribution groups
+	MailNickname types.String `tfsdk:"mail_nickname"` // Exchange mail nickname
+
+	// Timestamps
+	WhenCreated types.String `tfsdk:"when_created"` // When the group was created
+	WhenChanged types.String `tfsdk:"when_changed"` // When the group was last modified
 }
 
 func (d *GroupDataSource) Metadata(ctx context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -95,6 +109,17 @@ func (d *GroupDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 				MarkdownDescription: "The container DN where the group is located. Required when using the `name` " +
 					"lookup method. Example: `CN=Users,DC=example,DC=com`",
 				Optional: true,
+				Validators: []validator.String{
+					validators.IsValidDN(),
+				},
+			},
+
+			// Member flattening option
+			"flatten_members": schema.BoolAttribute{
+				MarkdownDescription: "If set to true, returns a flattened list of users only (excludes groups) from " +
+					"recursive group membership. This traverses nested group membership to return all user members. " +
+					"When false or unset, the `members` attribute contains direct members only (users and groups).",
+				Optional: true,
 			},
 
 			// Group attributes (all computed)
@@ -114,10 +139,6 @@ func (d *GroupDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 				MarkdownDescription: "The category of the group. Valid values: `Security`, `Distribution`.",
 				Computed:            true,
 			},
-			"group_type": schema.Int64Attribute{
-				MarkdownDescription: "The raw Active Directory groupType value as an integer.",
-				Computed:            true,
-			},
 			"sid": schema.StringAttribute{
 				MarkdownDescription: "The Security Identifier (SID) of the group.",
 				Computed:            true,
@@ -131,6 +152,31 @@ func (d *GroupDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 			},
 			"member_count": schema.Int64Attribute{
 				MarkdownDescription: "The total number of members in the group.",
+				Computed:            true,
+			},
+			"member_of": schema.SetAttribute{
+				MarkdownDescription: "A set of Distinguished Names of groups that this group is a member of. This represents nested group membership.",
+				ElementType:         types.StringType,
+				Computed:            true,
+			},
+
+			// Email information
+			"mail": schema.StringAttribute{
+				MarkdownDescription: "The email address for distribution groups.",
+				Computed:            true,
+			},
+			"mail_nickname": schema.StringAttribute{
+				MarkdownDescription: "The Exchange mail nickname for distribution groups.",
+				Computed:            true,
+			},
+
+			// Timestamps
+			"when_created": schema.StringAttribute{
+				MarkdownDescription: "The timestamp when the group was created (RFC3339 format).",
+				Computed:            true,
+			},
+			"when_changed": schema.StringAttribute{
+				MarkdownDescription: "The timestamp when the group was last modified (RFC3339 format).",
 				Computed:            true,
 			},
 		},
@@ -314,7 +360,6 @@ func (d *GroupDataSource) mapGroupToModel(ctx context.Context, group *ldapclient
 	data.Description = types.StringValue(group.Description)
 	data.Scope = types.StringValue(string(group.Scope))
 	data.Category = types.StringValue(string(group.Category))
-	data.GroupType = types.Int64Value(int64(group.GroupType))
 	// Normalize DN case to ensure uppercase attribute types
 	normalizedDN, err := ldapclient.NormalizeDNCase(group.DistinguishedName)
 	if err != nil {
@@ -329,13 +374,35 @@ func (d *GroupDataSource) mapGroupToModel(ctx context.Context, group *ldapclient
 	data.SID = types.StringValue(group.ObjectSid)
 
 	// Members information
-	memberCount := int64(len(group.MemberDNs))
+	var memberDNs []string
+	var memberCount int64
+
+	// Check if we should flatten members to users only
+	if !data.FlattenMembers.IsNull() && data.FlattenMembers.ValueBool() {
+		// Get flattened user members
+		flattenedUsers, err := d.groupManager.GetFlattenedUserMembers(ctx, group.ObjectGUID)
+		if err != nil {
+			tflog.Warn(ctx, "Failed to get flattened user members", map[string]any{
+				"group_guid": group.ObjectGUID,
+				"error":      err.Error(),
+			})
+			// Fall back to regular members
+			memberDNs = group.MemberDNs
+		} else {
+			memberDNs = flattenedUsers
+		}
+	} else {
+		// Use regular direct members
+		memberDNs = group.MemberDNs
+	}
+
+	memberCount = int64(len(memberDNs))
 	data.MemberCount = types.Int64Value(memberCount)
 
 	// Convert member DNs to a Set, normalizing DN case
-	if len(group.MemberDNs) > 0 {
-		memberElements := make([]attr.Value, len(group.MemberDNs))
-		for i, memberDN := range group.MemberDNs {
+	if len(memberDNs) > 0 {
+		memberElements := make([]attr.Value, len(memberDNs))
+		for i, memberDN := range memberDNs {
 			// Normalize member DN case
 			normalizedMemberDN, err := ldapclient.NormalizeDNCase(memberDN)
 			if err != nil {
@@ -363,11 +430,60 @@ func (d *GroupDataSource) mapGroupToModel(ctx context.Context, group *ldapclient
 		}
 	}
 
+	// Convert memberOf DNs to a Set, normalizing DN case
+	if len(group.MemberOf) > 0 {
+		memberOfElements := make([]attr.Value, len(group.MemberOf))
+		for i, memberOfDN := range group.MemberOf {
+			// Normalize member of DN case
+			normalizedMemberOfDN, err := ldapclient.NormalizeDNCase(memberOfDN)
+			if err != nil {
+				// Log error but use original DN as fallback
+				tflog.Warn(ctx, "Failed to normalize member of DN case", map[string]any{
+					"original_member_of_dn": memberOfDN,
+					"error":                 err.Error(),
+				})
+				normalizedMemberOfDN = memberOfDN
+			}
+			memberOfElements[i] = types.StringValue(normalizedMemberOfDN)
+		}
+
+		memberOfSet, memberOfDiags := types.SetValue(types.StringType, memberOfElements)
+		diags.Append(memberOfDiags...)
+		if !memberOfDiags.HasError() {
+			data.MemberOf = memberOfSet
+		}
+	} else {
+		// Empty set for no member of
+		emptySet, memberOfDiags := types.SetValue(types.StringType, []attr.Value{})
+		diags.Append(memberOfDiags...)
+		if !memberOfDiags.HasError() {
+			data.MemberOf = emptySet
+		}
+	}
+
+	// Email information
+	data.Mail = types.StringValue(group.Mail)
+	data.MailNickname = types.StringValue(group.MailNickname)
+
+	// Timestamps
+	if !group.WhenCreated.IsZero() {
+		data.WhenCreated = types.StringValue(group.WhenCreated.Format(time.RFC3339))
+	} else {
+		data.WhenCreated = types.StringNull()
+	}
+
+	if !group.WhenChanged.IsZero() {
+		data.WhenChanged = types.StringValue(group.WhenChanged.Format(time.RFC3339))
+	} else {
+		data.WhenChanged = types.StringNull()
+	}
+
 	tflog.Trace(ctx, "Mapped group data to model", map[string]any{
-		"group_guid":   group.ObjectGUID,
-		"group_name":   group.Name,
-		"member_count": memberCount,
-		"scope":        group.Scope,
-		"category":     group.Category,
+		"group_guid":      group.ObjectGUID,
+		"group_name":      group.Name,
+		"member_count":    memberCount,
+		"member_of_count": len(group.MemberOf),
+		"scope":           group.Scope,
+		"category":        group.Category,
 	})
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/providervalidator"
@@ -19,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
 )
@@ -251,15 +253,28 @@ func (p *ActiveDirectoryProvider) Configure(ctx context.Context, req provider.Co
 		return
 	}
 
+	// Configure logging subsystems and set up provider context
+	ctx = p.configureLogging(ctx)
+
+	// Log provider initialization
+	tflog.Info(ctx, "Configuring Active Directory provider", map[string]any{
+		"version": p.version,
+	})
+
 	// Build configuration from provider config and environment variables
 	config := p.buildLDAPConfig(&data, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	// Create LDAP client
-	client, err := ldapclient.NewClient(config)
+	// Create LDAP client with logging context
+	start := time.Now()
+	client, err := ldapclient.NewClientWithContext(ctx, config)
 	if err != nil {
+		tflog.Error(ctx, "Failed to create LDAP client", map[string]any{
+			"error":       err.Error(),
+			"duration_ms": time.Since(start).Milliseconds(),
+		})
 		resp.Diagnostics.AddError(
 			"Unable to Create LDAP Client",
 			"An unexpected error occurred when creating the LDAP client. "+
@@ -269,8 +284,17 @@ func (p *ActiveDirectoryProvider) Configure(ctx context.Context, req provider.Co
 		return
 	}
 
+	tflog.Debug(ctx, "LDAP client created successfully", map[string]any{
+		"duration_ms": time.Since(start).Milliseconds(),
+	})
+
 	// Test connection
+	start = time.Now()
 	if err := client.Connect(ctx); err != nil {
+		tflog.Error(ctx, "Connection test failed", map[string]any{
+			"error":       err.Error(),
+			"duration_ms": time.Since(start).Milliseconds(),
+		})
 		resp.Diagnostics.AddError(
 			"Unable to Connect to Active Directory",
 			"The provider could not establish a connection to Active Directory. "+
@@ -280,8 +304,17 @@ func (p *ActiveDirectoryProvider) Configure(ctx context.Context, req provider.Co
 		return
 	}
 
+	tflog.Info(ctx, "Connection established successfully", map[string]any{
+		"duration_ms": time.Since(start).Milliseconds(),
+	})
+
 	// Test authentication
+	start = time.Now()
 	if err := client.BindWithConfig(ctx); err != nil {
+		tflog.Error(ctx, "Authentication test failed", map[string]any{
+			"error":       err.Error(),
+			"duration_ms": time.Since(start).Milliseconds(),
+		})
 		resp.Diagnostics.AddError(
 			"Authentication Failed",
 			"The provider could not authenticate with Active Directory. "+
@@ -291,9 +324,88 @@ func (p *ActiveDirectoryProvider) Configure(ctx context.Context, req provider.Co
 		return
 	}
 
+	tflog.Info(ctx, "Authentication successful", map[string]any{
+		"duration_ms": time.Since(start).Milliseconds(),
+	})
+
+	tflog.Info(ctx, "Active Directory provider configured successfully")
+
 	// Make client available to resources and data sources
 	resp.DataSourceData = client
 	resp.ResourceData = client
+}
+
+// configureLogging sets up logging configuration and subsystems based on environment variables.
+func (p *ActiveDirectoryProvider) configureLogging(ctx context.Context) context.Context {
+	// Custom log level from TF_AD_LOG
+	logLevel := strings.ToLower(os.Getenv("TF_AD_LOG"))
+
+	// Add persistent fields for all logs
+	ctx = tflog.SetField(ctx, "provider", "ad")
+	ctx = tflog.SetField(ctx, "provider_version", p.version)
+
+	// Configure subsystems with fallback to TF_AD_LOG if subsystem-specific level not set
+	// First check for subsystem-specific level, then fall back to TF_AD_LOG
+	ldapLevel := os.Getenv("TF_AD_LOG_LDAP")
+	if ldapLevel == "" {
+		ldapLevel = logLevel
+	}
+	kerberosLevel := os.Getenv("TF_AD_LOG_KERBEROS")
+	if kerberosLevel == "" {
+		kerberosLevel = logLevel
+	}
+	poolLevel := os.Getenv("TF_AD_LOG_POOL")
+	if poolLevel == "" {
+		poolLevel = logLevel
+	}
+	providerLevel := os.Getenv("TF_AD_LOG_PROVIDER")
+	if providerLevel == "" {
+		providerLevel = logLevel
+	}
+
+	// Set up subsystems with the determined levels
+	if ldapLevel != "" {
+		os.Setenv("TF_AD_LOG_LDAP_EFFECTIVE", ldapLevel)
+		ctx = tflog.NewSubsystem(ctx, "ldap", tflog.WithLevelFromEnv("TF_AD_LOG_LDAP_EFFECTIVE"))
+	} else {
+		ctx = tflog.NewSubsystem(ctx, "ldap")
+	}
+
+	if kerberosLevel != "" {
+		os.Setenv("TF_AD_LOG_KERBEROS_EFFECTIVE", kerberosLevel)
+		ctx = tflog.NewSubsystem(ctx, "kerberos", tflog.WithLevelFromEnv("TF_AD_LOG_KERBEROS_EFFECTIVE"))
+	} else {
+		ctx = tflog.NewSubsystem(ctx, "kerberos")
+	}
+
+	if poolLevel != "" {
+		os.Setenv("TF_AD_LOG_POOL_EFFECTIVE", poolLevel)
+		ctx = tflog.NewSubsystem(ctx, "pool", tflog.WithLevelFromEnv("TF_AD_LOG_POOL_EFFECTIVE"))
+	} else {
+		ctx = tflog.NewSubsystem(ctx, "pool")
+	}
+
+	if providerLevel != "" {
+		os.Setenv("TF_AD_LOG_PROVIDER_EFFECTIVE", providerLevel)
+		ctx = tflog.NewSubsystem(ctx, "provider", tflog.WithLevelFromEnv("TF_AD_LOG_PROVIDER_EFFECTIVE"))
+	} else {
+		ctx = tflog.NewSubsystem(ctx, "provider")
+	}
+
+	// Log the logging configuration itself
+	tflog.Debug(ctx, "Logging configuration initialized", map[string]any{
+		"primary_log_level":        logLevel,
+		"effective_ldap_level":     ldapLevel,
+		"effective_kerberos_level": kerberosLevel,
+		"effective_pool_level":     poolLevel,
+		"effective_provider_level": providerLevel,
+		"ldap_log_level":           os.Getenv("TF_AD_LOG_LDAP"),
+		"kerberos_log_level":       os.Getenv("TF_AD_LOG_KERBEROS"),
+		"pool_log_level":           os.Getenv("TF_AD_LOG_POOL"),
+		"provider_log_level":       os.Getenv("TF_AD_LOG_PROVIDER"),
+	})
+
+	return ctx
 }
 
 // buildLDAPConfig constructs the LDAP client configuration from provider config and environment variables.

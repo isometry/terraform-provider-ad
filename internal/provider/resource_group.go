@@ -20,6 +20,7 @@ import (
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
 	customtypes "github.com/isometry/terraform-provider-ad/internal/provider/types"
+	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -96,6 +97,9 @@ func (r *GroupResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				MarkdownDescription: "The distinguished name of the container or organizational unit where the group will be created (e.g., `ou=Groups,dc=example,dc=com`).",
 				Required:            true,
 				CustomType:          customtypes.DNStringType{},
+				Validators: []validator.String{
+					validators.IsValidDN(),
+				},
 			},
 			"scope": schema.StringAttribute{
 				MarkdownDescription: "The scope of the group. Valid values are `Global`, `Universal`, or `DomainLocal`. Defaults to `Global`.",
@@ -174,6 +178,25 @@ func (r *GroupResource) Create(ctx context.Context, req resource.CreateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// Set up entry/exit logging
+	fields := map[string]any{
+		"name":             data.Name.ValueString(),
+		"sam_account_name": data.SAMAccountName.ValueString(),
+		"container":        data.Container.ValueString(),
+	}
+	logCompletion := ldapclient.LogResourceOperation(ctx, "ad_group", "create", fields)
+	defer func() {
+		var err error
+		if resp.Diagnostics.HasError() {
+			// Get first error for logging
+			for _, diag := range resp.Diagnostics.Errors() {
+				err = fmt.Errorf("%s: %s", diag.Summary(), diag.Detail())
+				break
+			}
+		}
+		logCompletion(err)
+	}()
 
 	tflog.Debug(ctx, "Creating AD group", map[string]any{
 		"name":             data.Name.ValueString(),

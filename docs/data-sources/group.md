@@ -424,6 +424,7 @@ output "debug_group_info" {
 
 - `container` (String) The container DN where the group is located. Required when using the `name` lookup method. Example: `CN=Users,DC=example,DC=com`
 - `dn` (String) The Distinguished Name of the group to retrieve. Example: `CN=Domain Admins,CN=Users,DC=example,DC=com`
+- `flatten_members` (Boolean) If set to true, returns a flattened list of users only (excludes groups) from recursive group membership. This traverses nested group membership to return all user members. When false or unset, the `members` attribute contains direct members only (users and groups).
 - `id` (String) The objectGUID of the group to retrieve. This is the most reliable lookup method as objectGUIDs are immutable and unique. Format: `550e8400-e29b-41d4-a716-446655440000`
 - `name` (String) The common name (cn) of the group to retrieve. When using this lookup method, the `container` attribute must also be specified to avoid ambiguity. Example: `Domain Admins`
 - `sam_account_name` (String) The SAM account name (pre-Windows 2000 name) of the group to retrieve. This performs a domain-wide search. Example: `Domain Admins`
@@ -433,8 +434,12 @@ output "debug_group_info" {
 - `category` (String) The category of the group. Valid values: `Security`, `Distribution`.
 - `description` (String) The description of the group.
 - `display_name` (String) The display name of the group (equivalent to common name).
-- `group_type` (Number) The raw Active Directory groupType value as an integer.
+- `mail` (String) The email address for distribution groups.
+- `mail_nickname` (String) The Exchange mail nickname for distribution groups.
 - `member_count` (Number) The total number of members in the group.
+- `member_of` (Set of String) A set of Distinguished Names of groups that this group is a member of. This represents nested group membership.
 - `members` (Set of String) A set of Distinguished Names of all group members. Includes users, groups, and other objects.
 - `scope` (String) The scope of the group. Valid values: `Global`, `Universal`, `DomainLocal`.
 - `sid` (String) The Security Identifier (SID) of the group.
+- `when_changed` (String) The timestamp when the group was last modified (RFC3339 format).
+- `when_created` (String) The timestamp when the group was created (RFC3339 format).

@@ -45,6 +45,8 @@ type UserSearchFilter struct {
 	// Organizational filters
 	Department string `json:"department,omitempty"` // Department name
 	Title      string `json:"title,omitempty"`      // Job title
+	Company    string `json:"company,omitempty"`    // Company name (exact match)
+	Office     string `json:"office,omitempty"`     // Office location (exact match)
 	Manager    string `json:"manager,omitempty"`    // Manager DN, GUID, UPN, or SAM
 
 	// Status filters
@@ -56,6 +58,10 @@ type UserSearchFilter struct {
 
 	// Location filter
 	Container string `json:"container,omitempty"` // Specific OU to search, empty for base DN
+
+	// Group membership filters (supports nested groups via LDAP_MATCHING_RULE_IN_CHAIN)
+	MemberOf    string `json:"memberOf,omitempty"`    // Filter users who are members of specified group (DN)
+	NotMemberOf string `json:"notMemberOf,omitempty"` // Filter users who are NOT members of specified group (DN)
 }
 
 // User represents an Active Directory user with comprehensive attributes.
@@ -136,6 +142,7 @@ type User struct {
 type UserReader struct {
 	client      Client
 	guidHandler *GUIDHandler
+	sidHandler  *SIDHandler
 	normalizer  *MemberNormalizer
 	baseDN      string
 	timeout     time.Duration
@@ -146,6 +153,7 @@ func NewUserReader(client Client, baseDN string) *UserReader {
 	return &UserReader{
 		client:      client,
 		guidHandler: NewGUIDHandler(),
+		sidHandler:  NewSIDHandler(),
 		normalizer:  NewMemberNormalizer(client, baseDN),
 		baseDN:      baseDN,
 		timeout:     30 * time.Second,
@@ -506,7 +514,7 @@ func (ur *UserReader) entryToUser(entry *ldap.Entry) (*User, error) {
 
 	// Core identification
 	user.DistinguishedName = entry.DN
-	user.ObjectSid = entry.GetAttributeValue("objectSid")
+	user.ObjectSid = ur.sidHandler.ExtractSIDSafe(entry)
 	user.SAMAccountName = entry.GetAttributeValue("sAMAccountName")
 	user.UserPrincipalName = entry.GetAttributeValue("userPrincipalName")
 	user.CommonName = entry.GetAttributeValue("cn")
@@ -740,6 +748,12 @@ func (ur *UserReader) buildLDAPFilter(filter *UserSearchFilter) (string, error) 
 		}
 		filterParts = append(filterParts, fmt.Sprintf("(manager=%s)", ldap.EscapeFilter(managerDN)))
 	}
+	if filter.Company != "" {
+		filterParts = append(filterParts, fmt.Sprintf("(company=%s)", ldap.EscapeFilter(filter.Company)))
+	}
+	if filter.Office != "" {
+		filterParts = append(filterParts, fmt.Sprintf("(physicalDeliveryOfficeName=%s)", ldap.EscapeFilter(filter.Office)))
+	}
 
 	// Status filters
 	if filter.Enabled != nil {
@@ -765,6 +779,16 @@ func (ur *UserReader) buildLDAPFilter(filter *UserSearchFilter) (string, error) 
 	if filter.EmailDomain != "" {
 		// Users with email addresses in specific domain
 		filterParts = append(filterParts, fmt.Sprintf("(mail=*@%s)", ldap.EscapeFilter(filter.EmailDomain)))
+	}
+
+	// Group membership filters (supports nested groups via LDAP_MATCHING_RULE_IN_CHAIN)
+	if filter.MemberOf != "" {
+		// Users who are members of the specified group (including nested)
+		filterParts = append(filterParts, fmt.Sprintf("(memberOf:1.2.840.113556.1.4.1941:=%s)", ldap.EscapeFilter(filter.MemberOf)))
+	}
+	if filter.NotMemberOf != "" {
+		// Users who are NOT members of the specified group (including nested)
+		filterParts = append(filterParts, fmt.Sprintf("(!(memberOf:1.2.840.113556.1.4.1941:=%s))", ldap.EscapeFilter(filter.NotMemberOf)))
 	}
 
 	// Combine all filter parts

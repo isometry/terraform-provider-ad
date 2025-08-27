@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/datasourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -11,10 +12,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -42,9 +45,13 @@ type OUDataSourceModel struct {
 	// Computed outputs
 	Description types.String `tfsdk:"description"` // OU description
 	Protected   types.Bool   `tfsdk:"protected"`   // Protection status
-	GUID        types.String `tfsdk:"guid"`        // objectGUID string
 	Children    types.List   `tfsdk:"children"`    // Child OU DNs
 	ChildCount  types.Int64  `tfsdk:"child_count"` // Number of children
+	Parent      types.String `tfsdk:"parent"`      // Parent container DN
+
+	// Timestamps
+	WhenCreated types.String `tfsdk:"when_created"` // When the OU was created
+	WhenChanged types.String `tfsdk:"when_changed"` // When the OU was last modified
 }
 
 func (d *OUDataSource) Metadata(ctx context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -80,6 +87,9 @@ func (d *OUDataSource) Schema(ctx context.Context, req datasource.SchemaRequest,
 				MarkdownDescription: "The parent container DN where the OU is located. Required when using the `name` " +
 					"lookup method. Example: `OU=Departments,DC=example,DC=com`",
 				Optional: true,
+				Validators: []validator.String{
+					validators.IsValidDN(),
+				},
 			},
 
 			// Computed outputs
@@ -91,10 +101,6 @@ func (d *OUDataSource) Schema(ctx context.Context, req datasource.SchemaRequest,
 				MarkdownDescription: "Whether the OU is protected from accidental deletion.",
 				Computed:            true,
 			},
-			"guid": schema.StringAttribute{
-				MarkdownDescription: "The objectGUID of the OU in string format.",
-				Computed:            true,
-			},
 			"children": schema.ListAttribute{
 				MarkdownDescription: "A list of Distinguished Names of all immediate child OUs.",
 				ElementType:         types.StringType,
@@ -102,6 +108,20 @@ func (d *OUDataSource) Schema(ctx context.Context, req datasource.SchemaRequest,
 			},
 			"child_count": schema.Int64Attribute{
 				MarkdownDescription: "The total number of immediate child OUs.",
+				Computed:            true,
+			},
+			"parent": schema.StringAttribute{
+				MarkdownDescription: "The parent container DN of the OU.",
+				Computed:            true,
+			},
+
+			// Timestamps
+			"when_created": schema.StringAttribute{
+				MarkdownDescription: "The timestamp when the OU was created (RFC3339 format).",
+				Computed:            true,
+			},
+			"when_changed": schema.StringAttribute{
+				MarkdownDescription: "The timestamp when the OU was last modified (RFC3339 format).",
 				Computed:            true,
 			},
 		},
@@ -286,7 +306,7 @@ func (d *OUDataSource) mapOUToModel(ctx context.Context, ou *ldapclient.OU, data
 	// Core OU attributes
 	data.Description = types.StringValue(ou.Description)
 	data.Protected = types.BoolValue(ou.Protected)
-	data.GUID = types.StringValue(ou.ObjectGUID) // Same as ID
+	data.Parent = types.StringValue(normalizedPath) // Already normalized above
 
 	// Get child OUs
 	children, err := d.ouManager.GetOUChildren(ctx, ou.DistinguishedName)
@@ -331,6 +351,19 @@ func (d *OUDataSource) mapOUToModel(ctx context.Context, ou *ldapclient.OU, data
 		if !childDiags.HasError() {
 			data.Children = emptyList
 		}
+	}
+
+	// Timestamps
+	if !ou.WhenCreated.IsZero() {
+		data.WhenCreated = types.StringValue(ou.WhenCreated.Format(time.RFC3339))
+	} else {
+		data.WhenCreated = types.StringNull()
+	}
+
+	if !ou.WhenChanged.IsZero() {
+		data.WhenChanged = types.StringValue(ou.WhenChanged.Format(time.RFC3339))
+	} else {
+		data.WhenChanged = types.StringNull()
 	}
 
 	tflog.Trace(ctx, "Mapped OU data to model", map[string]any{

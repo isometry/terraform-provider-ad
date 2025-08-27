@@ -19,6 +19,7 @@ import (
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
 	customtypes "github.com/isometry/terraform-provider-ad/internal/provider/types"
+	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -81,6 +82,9 @@ func (r *OUResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				MarkdownDescription: "The distinguished name of the parent container where the OU will be created (e.g., `dc=example,dc=com` or `ou=Parent,dc=example,dc=com`).",
 				Required:            true,
 				CustomType:          customtypes.DNStringType{},
+				Validators: []validator.String{
+					validators.IsValidDN(),
+				},
 			},
 			"description": schema.StringAttribute{
 				MarkdownDescription: "A description for the organizational unit. This is optional and can be used to provide additional context about the OU's purpose.",

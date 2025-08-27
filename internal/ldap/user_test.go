@@ -533,17 +533,17 @@ func TestUserReader_SearchUsersWithFilter_NameFilters(t *testing.T) {
 		{
 			name:           "Name prefix filter",
 			filter:         &UserSearchFilter{NamePrefix: "John"},
-			expectedFilter: "(displayName=John*)",
+			expectedFilter: "(cn=John*)",
 		},
 		{
 			name:           "Name suffix filter",
 			filter:         &UserSearchFilter{NameSuffix: "Doe"},
-			expectedFilter: "(displayName=*Doe)",
+			expectedFilter: "(cn=*Doe)",
 		},
 		{
 			name:           "Name contains filter",
 			filter:         &UserSearchFilter{NameContains: "oh"},
-			expectedFilter: "(displayName=*oh*)",
+			expectedFilter: "(cn=*oh*)",
 		},
 	}
 

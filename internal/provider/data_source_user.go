@@ -570,11 +570,21 @@ func (d *UserDataSource) mapUserToModel(ctx context.Context, user *ldapclient.Us
 	// Group memberships
 	data.PrimaryGroup = types.StringValue(user.PrimaryGroup)
 
-	// Convert member DNs to a List
+	// Convert member DNs to a List, normalizing DN case
 	if len(user.MemberOf) > 0 {
 		memberElements := make([]attr.Value, len(user.MemberOf))
 		for i, memberDN := range user.MemberOf {
-			memberElements[i] = types.StringValue(memberDN)
+			// Normalize member DN case
+			normalizedMemberDN, err := ldapclient.NormalizeDNCase(memberDN)
+			if err != nil {
+				// Log error but use original DN as fallback
+				tflog.Warn(ctx, "Failed to normalize member DN case", map[string]any{
+					"original_member_dn": memberDN,
+					"error":              err.Error(),
+				})
+				normalizedMemberDN = memberDN
+			}
+			memberElements[i] = types.StringValue(normalizedMemberDN)
 		}
 
 		memberList, memberDiags := types.ListValue(types.StringType, memberElements)

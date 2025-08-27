@@ -201,6 +201,20 @@ const (
 	ScopeWholeSubtree
 )
 
+// String returns the string representation of the SearchScope.
+func (s SearchScope) String() string {
+	switch s {
+	case ScopeBaseObject:
+		return "base"
+	case ScopeSingleLevel:
+		return "one"
+	case ScopeWholeSubtree:
+		return "sub"
+	default:
+		return "unknown"
+	}
+}
+
 // DerefAliases defines alias dereferencing behavior.
 type DerefAliases int
 

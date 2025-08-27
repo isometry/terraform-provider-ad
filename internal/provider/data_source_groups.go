@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -51,6 +52,10 @@ type GroupFilterModel struct {
 	Category     types.String `tfsdk:"category"`      // security, distribution
 	Scope        types.String `tfsdk:"scope"`         // global, domainlocal, universal
 	HasMembers   types.Bool   `tfsdk:"has_members"`   // true=groups with members, false=empty groups
+
+	// Group membership filters (supports nested groups via LDAP_MATCHING_RULE_IN_CHAIN)
+	MemberOf  types.String `tfsdk:"member_of"`  // Filter groups that are members of specified group (DN)
+	HasMember types.String `tfsdk:"has_member"` // Filter groups that contain specified member (DN)
 }
 
 // GroupDataModel describes a single group in the result set.
@@ -83,6 +88,9 @@ func (d *GroupsDataSource) Schema(ctx context.Context, req datasource.SchemaRequ
 				MarkdownDescription: "The DN of the container to search within. If not specified, searches from the base DN. " +
 					"Example: `OU=Groups,DC=example,DC=com`",
 				Optional: true,
+				Validators: []validator.String{
+					validators.IsValidDN(),
+				},
 			},
 			"scope": schema.StringAttribute{
 				MarkdownDescription: "The search scope to use. Valid values: `base`, `onelevel`, `subtree`. Defaults to `subtree`.",
@@ -190,6 +198,24 @@ func (d *GroupsDataSource) Schema(ctx context.Context, req datasource.SchemaRequ
 							"`false` returns only empty groups. If not specified, returns all groups.",
 						Optional: true,
 					},
+					"member_of": schema.StringAttribute{
+						MarkdownDescription: "Filter groups that are members of the specified group " +
+							"(Distinguished Name). Includes nested group membership. " +
+							"Example: `CN=Parent Group,CN=Groups,DC=example,DC=com`",
+						Optional: true,
+						Validators: []validator.String{
+							validators.IsValidDN(),
+						},
+					},
+					"has_member": schema.StringAttribute{
+						MarkdownDescription: "Filter groups that contain the specified member " +
+							"(Distinguished Name). Includes nested group membership. Can be a user or group DN. " +
+							"Example: `CN=User,CN=Users,DC=example,DC=com`",
+						Optional: true,
+						Validators: []validator.String{
+							validators.IsValidDN(),
+						},
+					},
 				},
 			},
 		},
@@ -253,6 +279,8 @@ func (d *GroupsDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		"category":      searchFilter.Category,
 		"scope":         searchFilter.Scope,
 		"has_members":   searchFilter.HasMembers,
+		"member_of":     searchFilter.MemberOf,
+		"has_member":    searchFilter.HasMember,
 	})
 
 	// Perform the search
@@ -325,6 +353,14 @@ func (d *GroupsDataSource) buildSearchFilter(ctx context.Context, data *GroupsDa
 		if !filterModel.HasMembers.IsNull() {
 			hasMembers := filterModel.HasMembers.ValueBool()
 			searchFilter.HasMembers = &hasMembers
+		}
+
+		if !filterModel.MemberOf.IsNull() && filterModel.MemberOf.ValueString() != "" {
+			searchFilter.MemberOf = filterModel.MemberOf.ValueString()
+		}
+
+		if !filterModel.HasMember.IsNull() && filterModel.HasMember.ValueString() != "" {
+			searchFilter.HasMember = filterModel.HasMember.ValueString()
 		}
 	}
 

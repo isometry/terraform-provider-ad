@@ -34,6 +34,9 @@ type connectionPool struct {
 
 // NewConnectionPool creates a new connection pool.
 func NewConnectionPool(config *ConnectionConfig) (ConnectionPool, error) {
+	start := time.Now()
+	fmt.Printf("[DEBUG] Creating new connection pool\n")
+
 	if config == nil {
 		config = DefaultConfig()
 	}
@@ -50,7 +53,7 @@ func NewConnectionPool(config *ConnectionConfig) (ConnectionPool, error) {
 		healthStop:  make(chan struct{}),
 	}
 
-	// Discover servers
+	// Discover servers with timing
 	if err := pool.discoverServers(); err != nil {
 		return nil, fmt.Errorf("server discovery failed: %w", err)
 	}
@@ -60,15 +63,18 @@ func NewConnectionPool(config *ConnectionConfig) (ConnectionPool, error) {
 		pool.startHealthChecker()
 	}
 
+	fmt.Printf("[DEBUG] Connection pool created in %v\n", time.Since(start))
 	return pool, nil
 }
 
 // discoverServers discovers available servers.
 func (p *connectionPool) discoverServers() error {
+	start := time.Now()
 	var servers []*ServerInfo
 
 	// Use configured URLs if provided
 	if len(p.config.LDAPURLs) > 0 {
+		fmt.Printf("[DEBUG] Using configured LDAP URLs: %v\n", p.config.LDAPURLs)
 		for _, url := range p.config.LDAPURLs {
 			server, err := ParseLDAPURL(url)
 			if err != nil {
@@ -76,16 +82,24 @@ func (p *connectionPool) discoverServers() error {
 			}
 			servers = append(servers, server)
 		}
+		fmt.Printf("[DEBUG] Parsed %d servers from URLs in %v\n", len(servers), time.Since(start))
 	} else if p.config.Domain != "" {
 		// Use SRV discovery
+		fmt.Printf("[DEBUG] Starting SRV discovery for domain: %s (timeout: %v)\n", p.config.Domain, p.config.Timeout)
 		ctx, cancel := context.WithTimeout(context.Background(), p.config.Timeout)
 		defer cancel()
 
+		discoveryStart := time.Now()
 		discoveredServers, err := p.discovery.DiscoverServers(ctx, p.config.Domain)
+		discoveryDuration := time.Since(discoveryStart)
+		fmt.Printf("[DEBUG] SRV discovery completed in %v\n", discoveryDuration)
+
 		if err != nil {
+			fmt.Printf("[DEBUG] SRV discovery failed after %v: %v\n", discoveryDuration, err)
 			return fmt.Errorf("SRV discovery failed: %w", err)
 		}
 		servers = discoveredServers
+		fmt.Printf("[DEBUG] SRV discovery found %d servers\n", len(servers))
 	} else {
 		return errors.New("either domain or LDAP URLs must be specified")
 	}
@@ -98,6 +112,7 @@ func (p *connectionPool) discoverServers() error {
 	p.servers = servers
 	p.mu.Unlock()
 
+	fmt.Printf("[DEBUG] Server discovery completed in %v, found %d servers\n", time.Since(start), len(servers))
 	return nil
 }
 

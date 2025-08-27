@@ -96,6 +96,7 @@ func TestProviderDataSources(t *testing.T) {
 		"ad_ou",
 		"ad_user",
 		"ad_users",
+		"ad_whoami",
 	}
 
 	if len(dataSources) != len(expectedDataSources) {

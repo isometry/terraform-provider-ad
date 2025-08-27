@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // SRVDiscovery handles DNS SRV record discovery for domain controllers.
@@ -27,6 +28,9 @@ func NewSRVDiscovery() *SRVDiscovery {
 // 2. _ldap._tcp.<domain> (LDAP+StartTLS - fallback)
 // 3. _gc._tcp.<domain> (Global Catalog - last resort).
 func (d *SRVDiscovery) DiscoverServers(ctx context.Context, domain string) ([]*ServerInfo, error) {
+	start := time.Now()
+	fmt.Printf("[DEBUG] Starting server discovery for domain: %s\n", domain)
+
 	if domain == "" {
 		return nil, fmt.Errorf("domain cannot be empty")
 	}
@@ -44,13 +48,17 @@ func (d *SRVDiscovery) DiscoverServers(ctx context.Context, domain string) ([]*S
 		{"_gc._tcp." + domain, false, "srv"},
 	}
 
-	for _, record := range srvRecords {
+	fmt.Printf("[DEBUG] Will attempt SRV lookups for %d service types\n", len(srvRecords))
+
+	for i, record := range srvRecords {
+		fmt.Printf("[DEBUG] Attempting SRV lookup %d/%d: %s\n", i+1, len(srvRecords), record.service)
 		servers, err := d.lookupSRV(ctx, record.service, record.useTLS, record.source)
 		if err != nil {
-			// Log warning but continue with next service
+			fmt.Printf("[DEBUG] SRV lookup failed for %s, continuing to next service\n", record.service)
 			continue
 		}
 		allServers = append(allServers, servers...)
+		fmt.Printf("[DEBUG] Added %d servers from %s (total: %d)\n", len(servers), record.service, len(allServers))
 
 		// If we found LDAPS servers, prefer them and don't look further
 		if record.useTLS && len(servers) > 0 {
@@ -60,22 +68,33 @@ func (d *SRVDiscovery) DiscoverServers(ctx context.Context, domain string) ([]*S
 
 	if len(allServers) == 0 {
 		// Fallback to standard ports if SRV discovery fails
-		return d.createFallbackServers(domain), nil
+		fallbackServers := d.createFallbackServers(domain)
+		fmt.Printf("[DEBUG] No SRV records found, using fallback servers. Total discovery time: %v\n", time.Since(start))
+		return fallbackServers, nil
 	}
 
 	// Sort servers by priority (lower priority = higher preference)
 	// Within same priority, randomize by weight
 	d.sortServersByPriority(allServers)
 
+	fmt.Printf("[DEBUG] Server discovery completed in %v, returning %d servers\n", time.Since(start), len(allServers))
 	return allServers, nil
 }
 
 // lookupSRV performs SRV record lookup for a specific service.
 func (d *SRVDiscovery) lookupSRV(ctx context.Context, service string, useTLS bool, source string) ([]*ServerInfo, error) {
+	start := time.Now()
+	fmt.Printf("[DEBUG] Looking up SRV records for service: %s\n", service)
+
 	_, srvRecords, err := d.resolver.LookupSRV(ctx, "", "", service)
+	duration := time.Since(start)
+
 	if err != nil {
+		fmt.Printf("[DEBUG] SRV lookup for %s failed after %v: %v\n", service, duration, err)
 		return nil, fmt.Errorf("SRV lookup failed for %s: %w", service, err)
 	}
+
+	fmt.Printf("[DEBUG] SRV lookup for %s completed in %v, found %d records\n", service, duration, len(srvRecords))
 
 	if len(srvRecords) == 0 {
 		return nil, fmt.Errorf("no SRV records found for %s", service)

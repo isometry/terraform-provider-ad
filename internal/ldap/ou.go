@@ -28,7 +28,6 @@ type OU struct {
 	// Core identification
 	ObjectGUID        string `json:"objectGUID"`
 	DistinguishedName string `json:"distinguishedName"`
-	ObjectSid         string `json:"objectSid,omitempty"`
 
 	// OU attributes
 	Name        string `json:"name"`        // ou attribute value
@@ -228,7 +227,7 @@ func (om *OUManager) GetOU(ctx context.Context, guid string) (*OU, error) {
 
 	// Expand attributes to include all OU-relevant fields
 	searchReq.Attributes = []string{
-		"objectGUID", "distinguishedName", "objectSid", "ou", "name",
+		"objectGUID", "distinguishedName", "ou", "name",
 		"description", "ntSecurityDescriptor", "whenCreated", "whenChanged",
 	}
 	searchReq.TimeLimit = om.timeout
@@ -269,7 +268,7 @@ func (om *OUManager) getOUByDN(ctx context.Context, dn string) (*OU, error) {
 		Scope:  ScopeBaseObject,
 		Filter: "(objectClass=organizationalUnit)",
 		Attributes: []string{
-			"objectGUID", "distinguishedName", "objectSid", "ou", "name",
+			"objectGUID", "distinguishedName", "ou", "name",
 			"description", "ntSecurityDescriptor", "whenCreated", "whenChanged",
 		},
 		SizeLimit: 1,
@@ -465,7 +464,7 @@ func (om *OUManager) SearchOUs(ctx context.Context, baseDN string, filter string
 		Scope:  ScopeWholeSubtree,
 		Filter: filter,
 		Attributes: []string{
-			"objectGUID", "distinguishedName", "objectSid", "ou", "name",
+			"objectGUID", "distinguishedName", "ou", "name",
 			"description", "ntSecurityDescriptor", "whenCreated", "whenChanged",
 		},
 		TimeLimit: om.timeout,
@@ -500,7 +499,7 @@ func (om *OUManager) GetOUChildren(ctx context.Context, ouDN string) ([]*OU, err
 		Scope:  ScopeSingleLevel, // Only immediate children
 		Filter: "(objectClass=organizationalUnit)",
 		Attributes: []string{
-			"objectGUID", "distinguishedName", "objectSid", "ou", "name",
+			"objectGUID", "distinguishedName", "ou", "name",
 			"description", "ntSecurityDescriptor", "whenCreated", "whenChanged",
 		},
 		TimeLimit: om.timeout,
@@ -540,7 +539,6 @@ func (om *OUManager) entryToOU(entry *ldap.Entry) (*OU, error) {
 
 	// Basic attributes
 	ou.DistinguishedName = entry.DN
-	ou.ObjectSid = entry.GetAttributeValue("objectSid")
 
 	// OU name - try 'ou' attribute first, then 'name'
 	ou.Name = entry.GetAttributeValue("ou")
@@ -614,7 +612,7 @@ func (om *OUManager) ListOUsByContainer(ctx context.Context, containerDN string)
 
 	filter := "(objectClass=organizationalUnit)"
 	attributes := []string{
-		"objectGUID", "distinguishedName", "objectSid", "ou", "name",
+		"objectGUID", "distinguishedName", "ou", "name",
 		"description", "ntSecurityDescriptor",
 	}
 

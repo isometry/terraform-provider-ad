@@ -8,42 +8,106 @@ import (
 	"time"
 
 	"github.com/go-ldap/ldap/v3"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 // client implements the Client interface.
 type client struct {
-	pool   ConnectionPool
-	config *ConnectionConfig
+	pool       ConnectionPool
+	config     *ConnectionConfig
+	logContext context.Context // Context with configured subsystems for logging
 }
 
 // NewClient creates a new LDAP client with connection pooling.
 func NewClient(config *ConnectionConfig) (Client, error) {
+	return NewClientWithContext(context.Background(), config)
+}
+
+// NewClientWithContext creates a new LDAP client with connection pooling and logging context.
+func NewClientWithContext(ctx context.Context, config *ConnectionConfig) (Client, error) {
 	if config == nil {
 		config = DefaultConfig()
 	}
 
+	// Log client creation attempt
+	tflog.SubsystemDebug(ctx, "ldap", "Creating new LDAP client", map[string]any{
+		"domain":          config.Domain,
+		"ldap_urls_count": len(config.LDAPURLs),
+		"auth_method":     config.GetAuthMethod().String(),
+		"use_tls":         config.UseTLS,
+		"max_connections": config.MaxConnections,
+	})
+
+	start := time.Now()
 	pool, err := NewConnectionPool(config)
 	if err != nil {
+		tflog.SubsystemError(ctx, "ldap", "Failed to create connection pool", map[string]any{
+			"error":       err.Error(),
+			"duration_ms": time.Since(start).Milliseconds(),
+		})
 		return nil, fmt.Errorf("failed to create connection pool: %w", err)
 	}
 
+	tflog.SubsystemInfo(ctx, "ldap", "LDAP client created successfully", map[string]any{
+		"duration_ms": time.Since(start).Milliseconds(),
+		"pool_size":   config.MaxConnections,
+		"auth_method": config.GetAuthMethod().String(),
+	})
+
 	return &client{
-		pool:   pool,
-		config: config,
+		pool:       pool,
+		config:     config,
+		logContext: ctx, // Store the context with configured subsystems
 	}, nil
+}
+
+// getLoggingContext merges the stored logging context with the operation context.
+// This ensures that subsystem loggers are always available while respecting operation context.
+func (c *client) getLoggingContext(ctx context.Context) context.Context {
+	// Always use the stored context which has subsystems configured
+	// This fixes the uninitialized subsystem logger warnings by ensuring
+	// all tflog.SubsystemXXX calls use a context with proper subsystem configuration
+	//
+	// Note: This uses the provider's context which has a longer lifetime but ensures
+	// subsystem loggers work correctly. For most LDAP operations this is acceptable
+	// since they are relatively quick operations.
+	//
+	// The ctx parameter is intentionally unused in this implementation as we always
+	// return the stored context with subsystem configuration.
+	_ = ctx // Mark as intentionally unused
+	return c.logContext
 }
 
 // Connect initializes the client (tests initial connection).
 func (c *client) Connect(ctx context.Context) error {
-	// Test that we can get a connection from the pool
-	conn, err := c.pool.Get(ctx)
-	if err != nil {
-		return fmt.Errorf("connection test failed: %w", err)
-	}
-	defer conn.Close()
+	return LogOperation(ctx, "ldap", "connection_test", map[string]any{
+		"domain": c.config.Domain,
+	}, func() error {
+		// Test that we can get a connection from the pool
+		tflog.SubsystemDebug(ctx, "ldap", "Testing connection pool availability")
 
-	// Perform a basic connectivity test
-	return c.ping(ctx, conn)
+		conn, err := c.pool.Get(ctx)
+		if err != nil {
+			tflog.SubsystemError(ctx, "ldap", "Failed to get connection from pool", map[string]any{
+				"error": err.Error(),
+			})
+			return fmt.Errorf("connection test failed: %w", err)
+		}
+		defer conn.Close()
+
+		tflog.SubsystemDebug(ctx, "ldap", "Connection acquired, performing ping test")
+
+		// Perform a basic connectivity test
+		if err := c.ping(ctx, conn); err != nil {
+			tflog.SubsystemError(ctx, "ldap", "Ping test failed", map[string]any{
+				"error": err.Error(),
+			})
+			return err
+		}
+
+		tflog.SubsystemInfo(ctx, "ldap", "Connection test successful")
+		return nil
+	})
 }
 
 // Close closes the client and all its connections.
@@ -68,55 +132,113 @@ func (c *client) Bind(ctx context.Context, username, password string) error {
 // BindWithConfig performs authentication using the client's configuration.
 func (c *client) BindWithConfig(ctx context.Context) error {
 	if !c.config.HasAuthentication() {
+		tflog.SubsystemError(ctx, "ldap", "No authentication configuration available")
 		return fmt.Errorf("no authentication configuration available")
 	}
 
-	conn, err := c.pool.Get(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get connection: %w", err)
-	}
-	defer conn.Close()
+	authMethod := c.config.GetAuthMethod()
+	return LogOperation(ctx, "ldap", "authentication", map[string]any{
+		"auth_method": authMethod.String(),
+		"username":    c.config.Username,
+	}, func() error {
+		conn, err := c.pool.Get(ctx)
+		if err != nil {
+			tflog.SubsystemError(ctx, "ldap", "Failed to get connection for authentication", map[string]any{
+				"error": err.Error(),
+			})
+			return fmt.Errorf("failed to get connection: %w", err)
+		}
+		defer conn.Close()
 
-	// Perform authentication based on configured method
-	return c.withRetry(ctx, func() error {
-		return c.authenticate(conn.Conn())
+		tflog.SubsystemDebug(ctx, "ldap", "Starting authentication", map[string]any{
+			"auth_method": authMethod.String(),
+		})
+
+		// Perform authentication based on configured method
+		return c.withRetry(ctx, func() error {
+			return c.authenticate(ctx, conn.Conn())
+		})
 	})
 }
 
 // authenticate performs authentication based on the configured method.
-func (c *client) authenticate(conn *ldap.Conn) error {
+func (c *client) authenticate(ctx context.Context, conn *ldap.Conn) error {
 	authMethod := c.config.GetAuthMethod()
+
+	tflog.SubsystemDebug(ctx, "ldap", "Performing authentication", map[string]any{
+		"auth_method": authMethod.String(),
+	})
+
+	start := time.Now()
+	var err error
 
 	switch authMethod {
 	case AuthMethodSimpleBind:
-		return c.authenticateSimple(conn)
+		err = c.authenticateSimple(ctx, conn)
 	case AuthMethodKerberos:
-		return c.authenticateKerberos(conn)
+		err = c.authenticateKerberos(ctx, conn)
 	case AuthMethodExternal:
-		return c.authenticateExternal(conn)
+		err = c.authenticateExternal(ctx, conn)
 	default:
-		return fmt.Errorf("unsupported authentication method: %s", authMethod.String())
+		err = fmt.Errorf("unsupported authentication method: %s", authMethod.String())
 	}
+
+	if err != nil {
+		tflog.SubsystemError(ctx, "ldap", "Authentication failed", map[string]any{
+			"auth_method": authMethod.String(),
+			"error":       err.Error(),
+			"duration_ms": time.Since(start).Milliseconds(),
+		})
+		return err
+	}
+
+	tflog.SubsystemInfo(ctx, "ldap", "Authentication successful", map[string]any{
+		"auth_method": authMethod.String(),
+		"duration_ms": time.Since(start).Milliseconds(),
+	})
+
+	return nil
 }
 
 // authenticateSimple performs simple bind authentication.
-func (c *client) authenticateSimple(conn *ldap.Conn) error {
+func (c *client) authenticateSimple(ctx context.Context, conn *ldap.Conn) error {
 	if c.config.Username == "" {
+		tflog.SubsystemError(ctx, "ldap", "Username is required for simple bind authentication")
 		return fmt.Errorf("username is required for simple bind authentication")
 	}
 
 	// Handle anonymous bind (empty password)
 	password := c.config.Password
-	if password == "" && c.config.Username != "" {
-		// Allow anonymous bind attempt with username only
-		return conn.Bind(c.config.Username, "")
+	isAnonymousBind := password == "" && c.config.Username != ""
+
+	fields := map[string]any{
+		"username":       c.config.Username,
+		"anonymous_bind": isAnonymousBind,
 	}
 
-	return conn.Bind(c.config.Username, password)
+	tflog.SubsystemDebug(ctx, "ldap", "Performing simple bind", fields)
+
+	var err error
+	if isAnonymousBind {
+		// Allow anonymous bind attempt with username only
+		tflog.SubsystemDebug(ctx, "ldap", "Attempting anonymous bind with username")
+		err = conn.Bind(c.config.Username, "")
+	} else {
+		tflog.SubsystemDebug(ctx, "ldap", "Attempting authenticated bind")
+		err = conn.Bind(c.config.Username, password)
+	}
+
+	if err != nil {
+		LogLDAPError(ctx, "ldap", "simple_bind", err, fields)
+		return err
+	}
+
+	tflog.SubsystemDebug(ctx, "ldap", "Simple bind successful", fields)
+	return nil
 }
 
 // authenticateKerberos performs GSSAPI/Kerberos authentication.
-func (c *client) authenticateKerberos(conn *ldap.Conn) error {
+func (c *client) authenticateKerberos(ctx context.Context, conn *ldap.Conn) error {
 	// For client connections, we need to extract server info from the config
 	// Since client doesn't have direct access to ServerInfo like pool does,
 	// we'll create it from the first available server or derive from connection
@@ -143,62 +265,121 @@ func (c *client) authenticateKerberos(conn *ldap.Conn) error {
 		return fmt.Errorf("insufficient connection information for Kerberos authentication")
 	}
 
-	return performKerberosAuth(conn, c.config, serverInfo)
+	return performKerberosAuthWithContext(ctx, conn, c.config, serverInfo)
 }
 
 // authenticateExternal performs external/certificate authentication.
-func (c *client) authenticateExternal(conn *ldap.Conn) error {
+func (c *client) authenticateExternal(ctx context.Context, conn *ldap.Conn) error {
 	// External authentication typically relies on TLS client certificates
 	// The authentication happens at the TLS layer, so we just need to
 	// perform an empty bind to complete the LDAP authentication
+
+	// Use context for timeout handling during the bind operation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		// Proceed with the bind
+	}
+
 	return conn.Bind("", "")
+}
+
+// performSearch is a helper function that performs search operations with comprehensive logging.
+func (c *client) performSearch(ctx context.Context, operation string, fields map[string]any, searchFunc func() (*SearchResult, error)) (*SearchResult, error) {
+	start := time.Now()
+
+	if fields == nil {
+		fields = make(map[string]any)
+	}
+	fields["operation"] = operation
+
+	tflog.SubsystemDebug(ctx, "ldap", "Starting search operation", fields)
+
+	result, err := searchFunc()
+
+	fields["duration_ms"] = time.Since(start).Milliseconds()
+
+	if err != nil {
+		fields["error"] = err.Error()
+		tflog.SubsystemError(ctx, "ldap", "Search operation failed", fields)
+		return nil, err
+	}
+
+	fields["entries_found"] = len(result.Entries)
+	tflog.SubsystemDebug(ctx, "ldap", "Search operation completed successfully", fields)
+
+	return result, nil
 }
 
 // Search performs an LDAP search.
 func (c *client) Search(ctx context.Context, req *SearchRequest) (*SearchResult, error) {
 	if req == nil {
+		tflog.SubsystemError(ctx, "ldap", "Search request cannot be nil")
 		return nil, fmt.Errorf("search request cannot be nil")
 	}
 
-	conn, err := c.pool.Get(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get connection: %w", err)
+	searchFields := map[string]any{
+		"base_dn":    req.BaseDN,
+		"scope":      req.Scope.String(),
+		"filter":     req.Filter,
+		"attributes": req.Attributes,
+		"size_limit": req.SizeLimit,
+		"time_limit": req.TimeLimit.String(),
 	}
-	defer conn.Close()
 
-	// Convert our SearchRequest to go-ldap SearchRequest
-	ldapReq := ldap.NewSearchRequest(
-		req.BaseDN,
-		int(req.Scope),
-		int(req.DerefAliases),
-		req.SizeLimit,
-		int(req.TimeLimit.Seconds()),
-		false, // TypesOnly
-		req.Filter,
-		req.Attributes,
-		nil, // Controls
-	)
+	return c.performSearch(ctx, "search", searchFields, func() (*SearchResult, error) {
+		conn, err := c.pool.Get(ctx)
+		if err != nil {
+			tflog.SubsystemError(ctx, "ldap", "Failed to get connection for search", map[string]any{
+				"error": err.Error(),
+			})
+			return nil, fmt.Errorf("failed to get connection: %w", err)
+		}
+		defer conn.Close()
 
-	var result *ldap.SearchResult
-	err = c.withRetry(ctx, func() error {
-		var searchErr error
-		result, searchErr = conn.Conn().Search(ldapReq)
-		return searchErr
+		// Convert our SearchRequest to go-ldap SearchRequest
+		ldapReq := ldap.NewSearchRequest(
+			req.BaseDN,
+			int(req.Scope),
+			int(req.DerefAliases),
+			req.SizeLimit,
+			int(req.TimeLimit.Seconds()),
+			false, // TypesOnly
+			req.Filter,
+			req.Attributes,
+			nil, // Controls
+		)
+
+		var result *ldap.SearchResult
+		err = c.withRetry(ctx, func() error {
+			var searchErr error
+			result, searchErr = conn.Conn().Search(ldapReq)
+			return searchErr
+		})
+
+		if err != nil {
+			LogLDAPError(ctx, "ldap", "search", err, searchFields)
+			return nil, fmt.Errorf("search failed: %w", err)
+		}
+
+		// Detect if there might be more results available
+		// If we got exactly the size limit, there might be more results
+		hasMore := req.SizeLimit > 0 && len(result.Entries) >= req.SizeLimit
+
+		searchResult := &SearchResult{
+			Entries: result.Entries,
+			Total:   len(result.Entries),
+			HasMore: hasMore,
+		}
+
+		tflog.SubsystemDebug(ctx, "ldap", "Search completed", map[string]any{
+			"entries_found": len(result.Entries),
+			"has_more":      hasMore,
+		})
+
+		return searchResult, nil
 	})
-
-	if err != nil {
-		return nil, fmt.Errorf("search failed: %w", err)
-	}
-
-	// Detect if there might be more results available
-	// If we got exactly the size limit, there might be more results
-	hasMore := req.SizeLimit > 0 && len(result.Entries) >= req.SizeLimit
-
-	return &SearchResult{
-		Entries: result.Entries,
-		Total:   len(result.Entries),
-		HasMore: hasMore,
-	}, nil
 }
 
 // SearchWithPaging performs an LDAP search with automatic pagination.
@@ -207,16 +388,118 @@ func (c *client) SearchWithPaging(ctx context.Context, req *SearchRequest) (*Sea
 		return nil, fmt.Errorf("search request cannot be nil")
 	}
 
+	// Use the logging context
+	logCtx := c.getLoggingContext(ctx)
+
+	start := time.Now()
+	fields := map[string]any{
+		"base_dn":    req.BaseDN,
+		"filter":     req.Filter,
+		"scope":      req.Scope.String(),
+		"attributes": req.Attributes,
+		"time_limit": req.TimeLimit.String(),
+	}
+
+	tflog.SubsystemDebug(logCtx, "ldap", "Starting paged search", fields)
+
 	conn, err := c.pool.Get(ctx)
 	if err != nil {
+		LogLDAPError(logCtx, "ldap", "get_connection", err, fields)
 		return nil, fmt.Errorf("failed to get connection: %w", err)
 	}
 	defer conn.Close()
 
+	tflog.SubsystemTrace(logCtx, "ldap", "Connection acquired for paged search", fields)
+
 	var allEntries []*ldap.Entry
 	pagingControl := ldap.NewControlPaging(1000) // Page size of 1000
+	pageNum := 0
+
+	tflog.SubsystemDebug(logCtx, "ldap", "Beginning paged search loop", map[string]any{
+		"page_size": 1000,
+		"base_dn":   req.BaseDN,
+		"filter":    req.Filter,
+	})
+
+	lastProgressTime := start
+	maxSearchDuration := 30 * time.Minute // Maximum total search time
+	maxPagesPerSearch := 1000             // Maximum pages to prevent runaway searches
 
 	for {
+		// Check for timeout conditions before starting next page
+		currentTime := time.Now()
+		elapsedTotal := currentTime.Sub(start)
+
+		// Check maximum search duration
+		if elapsedTotal > maxSearchDuration {
+			timeoutFields := map[string]any{
+				"operation":       "paged_search_timeout",
+				"base_dn":         req.BaseDN,
+				"filter":          req.Filter,
+				"elapsed_minutes": int(elapsedTotal.Minutes()),
+				"max_minutes":     int(maxSearchDuration.Minutes()),
+				"pages_completed": pageNum - 1,
+				"entries_found":   len(allEntries),
+			}
+			tflog.SubsystemError(logCtx, "ldap", "Paged search exceeded maximum duration, terminating", timeoutFields)
+			return &SearchResult{
+				Entries: allEntries,
+				Total:   len(allEntries),
+				HasMore: true, // Indicate there may be more results
+			}, nil
+		}
+
+		// Check maximum pages per search
+		if pageNum > maxPagesPerSearch {
+			pageTimeoutFields := map[string]any{
+				"operation":       "paged_search_page_limit",
+				"base_dn":         req.BaseDN,
+				"filter":          req.Filter,
+				"pages_completed": pageNum - 1,
+				"max_pages":       maxPagesPerSearch,
+				"entries_found":   len(allEntries),
+			}
+			tflog.SubsystemError(logCtx, "ldap", "Paged search exceeded maximum page limit, terminating", pageTimeoutFields)
+			return &SearchResult{
+				Entries: allEntries,
+				Total:   len(allEntries),
+				HasMore: true, // Indicate there may be more results
+			}, nil
+		}
+
+		// Check if context was cancelled
+		select {
+		case <-ctx.Done():
+			cancelFields := map[string]any{
+				"operation":       "paged_search_cancelled",
+				"base_dn":         req.BaseDN,
+				"filter":          req.Filter,
+				"pages_completed": pageNum - 1,
+				"entries_found":   len(allEntries),
+				"context_error":   ctx.Err().Error(),
+			}
+			tflog.SubsystemWarn(logCtx, "ldap", "Paged search cancelled by context", cancelFields)
+			return &SearchResult{
+				Entries: allEntries,
+				Total:   len(allEntries),
+				HasMore: true, // Indicate there may be more results
+			}, ctx.Err()
+		default:
+			// Continue processing
+		}
+
+		pageNum++
+		pageStart := time.Now()
+
+		pageFields := map[string]any{
+			"page_number":          pageNum,
+			"total_entries_so_far": len(allEntries),
+			"base_dn":              req.BaseDN,
+			"filter":               req.Filter,
+		}
+
+		tflog.SubsystemTrace(logCtx, "ldap", "Starting search page", pageFields)
+
 		ldapReq := ldap.NewSearchRequest(
 			req.BaseDN,
 			int(req.Scope),
@@ -236,23 +519,77 @@ func (c *client) SearchWithPaging(ctx context.Context, req *SearchRequest) (*Sea
 			return searchErr
 		})
 
+		pageDuration := time.Since(pageStart)
+		pageFields["duration_ms"] = pageDuration.Milliseconds()
+
 		if err != nil {
+			pageFields["error"] = err.Error()
+			LogLDAPError(logCtx, "ldap", "paged_search", err, pageFields)
 			return nil, fmt.Errorf("paged search failed: %w", err)
 		}
 
+		entriesInPage := len(result.Entries)
 		allEntries = append(allEntries, result.Entries...)
+
+		pageFields["entries_in_page"] = entriesInPage
+		pageFields["total_entries"] = len(allEntries)
+
+		tflog.SubsystemDebug(logCtx, "ldap", "Completed search page", pageFields)
+
+		// Progress indicator: log every 10 pages or every 10 seconds
+		// Note: currentTime and elapsedTotal are already calculated above
+		showProgress := (pageNum%10 == 0) || (currentTime.Sub(lastProgressTime) >= 10*time.Second)
+
+		if showProgress {
+			progressFields := map[string]any{
+				"operation":            "paged_search_progress",
+				"base_dn":              req.BaseDN,
+				"filter":               req.Filter,
+				"pages_completed":      pageNum,
+				"total_entries":        len(allEntries),
+				"elapsed_seconds":      int(elapsedTotal.Seconds()),
+				"average_page_time_ms": elapsedTotal.Milliseconds() / int64(pageNum),
+				"entries_per_second":   float64(len(allEntries)) / elapsedTotal.Seconds(),
+			}
+			tflog.SubsystemInfo(logCtx, "ldap", "Paged search in progress", progressFields)
+			lastProgressTime = currentTime
+		}
 
 		// Check for more pages
 		pagingResult := ldap.FindControl(result.Controls, ldap.ControlTypePaging)
-		if pagingControl, ok := pagingResult.(*ldap.ControlPaging); ok {
-			if len(pagingControl.Cookie) == 0 {
+		if responseControl, ok := pagingResult.(*ldap.ControlPaging); ok {
+			if len(responseControl.Cookie) == 0 {
+				tflog.SubsystemTrace(logCtx, "ldap", "No more pages, search complete", map[string]any{
+					"final_page":    pageNum,
+					"total_entries": len(allEntries),
+				})
 				break // No more pages
 			}
-			pagingControl.SetCookie(pagingControl.Cookie)
+			pagingControl.SetCookie(responseControl.Cookie)
+			tflog.SubsystemTrace(logCtx, "ldap", "More pages available, continuing", map[string]any{
+				"completed_pages": pageNum,
+				"cookie_length":   len(responseControl.Cookie),
+			})
 		} else {
+			tflog.SubsystemTrace(logCtx, "ldap", "No paging control in response, search complete", map[string]any{
+				"final_page":    pageNum,
+				"total_entries": len(allEntries),
+			})
 			break // No paging control in response
 		}
 	}
+
+	totalDuration := time.Since(start)
+	finalFields := map[string]any{
+		"base_dn":            req.BaseDN,
+		"filter":             req.Filter,
+		"total_entries":      len(allEntries),
+		"pages_processed":    pageNum,
+		"duration_ms":        totalDuration.Milliseconds(),
+		"entries_per_second": float64(len(allEntries)) / totalDuration.Seconds(),
+	}
+
+	tflog.SubsystemInfo(logCtx, "ldap", "Paged search completed", finalFields)
 
 	return &SearchResult{
 		Entries: allEntries,
@@ -405,8 +742,23 @@ func (c *client) withRetry(ctx context.Context, operation func() error) error {
 	backoff := c.config.InitialBackoff
 
 	for attempt := 0; attempt <= c.config.MaxRetries; attempt++ {
+		if attempt > 0 {
+			tflog.SubsystemDebug(ctx, "ldap", "Retrying operation", map[string]any{
+				"attempt":    attempt,
+				"max_retry":  c.config.MaxRetries,
+				"backoff_ms": backoff.Milliseconds(),
+				"last_error": lastErr.Error(),
+			})
+		}
+
 		err := operation()
 		if err == nil {
+			if attempt > 0 {
+				tflog.SubsystemInfo(ctx, "ldap", "Operation succeeded after retries", map[string]any{
+					"successful_attempt": attempt + 1,
+					"total_attempts":     attempt + 1,
+				})
+			}
 			return nil // Success
 		}
 
@@ -414,6 +766,10 @@ func (c *client) withRetry(ctx context.Context, operation func() error) error {
 
 		// Check if error is retryable
 		if !c.isRetryableError(err) {
+			tflog.SubsystemDebug(ctx, "ldap", "Non-retryable error encountered", map[string]any{
+				"error":   err.Error(),
+				"attempt": attempt + 1,
+			})
 			return err // Non-retryable error
 		}
 
@@ -425,12 +781,21 @@ func (c *client) withRetry(ctx context.Context, operation func() error) error {
 		// Wait before retrying
 		select {
 		case <-ctx.Done():
+			tflog.SubsystemWarn(ctx, "ldap", "Operation cancelled during retry", map[string]any{
+				"context_error": ctx.Err().Error(),
+				"attempt":       attempt + 1,
+			})
 			return ctx.Err()
 		case <-time.After(backoff):
 			// Exponential backoff
 			backoff = min(time.Duration(float64(backoff)*c.config.BackoffFactor), c.config.MaxBackoff)
 		}
 	}
+
+	tflog.SubsystemError(ctx, "ldap", "Operation failed after all retries exhausted", map[string]any{
+		"total_attempts": c.config.MaxRetries + 1,
+		"final_error":    lastErr.Error(),
+	})
 
 	return NewConnectionError("operation failed after retries", false, lastErr)
 }

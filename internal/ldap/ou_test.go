@@ -781,8 +781,7 @@ func TestOUManager_EntryToOU(t *testing.T) {
 	assert.Equal(t, "Test Description", result.Description)
 	assert.Equal(t, "OU=TestOU,OU=ParentOU,dc=example,dc=com", result.DistinguishedName)
 	assert.Equal(t, "ou=ParentOU,dc=example,dc=com", result.Parent) // DN parsing results in lowercase
-	assert.Equal(t, "S-1-5-21-123456789-123456789-123456789-1000", result.ObjectSid)
-	assert.False(t, result.Protected) // No security descriptor means not protected
+	assert.False(t, result.Protected)                               // No security descriptor means not protected
 	// Use UTC for timestamp comparison to avoid timezone issues
 	assert.Equal(t, testTime.Truncate(time.Second), result.WhenCreated.Truncate(time.Second))
 	assert.Equal(t, testTime.Truncate(time.Second), result.WhenChanged.Truncate(time.Second))

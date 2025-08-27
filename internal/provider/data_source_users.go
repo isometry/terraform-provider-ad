@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -54,6 +55,8 @@ type UserFilterModel struct {
 	// Organizational filters
 	Department types.String `tfsdk:"department"` // Department name
 	Title      types.String `tfsdk:"title"`      // Job title
+	Company    types.String `tfsdk:"company"`    // Company name (exact match)
+	Office     types.String `tfsdk:"office"`     // Office location (exact match)
 	Manager    types.String `tfsdk:"manager"`    // Manager DN, GUID, UPN, or SAM
 
 	// Status filters
@@ -62,6 +65,10 @@ type UserFilterModel struct {
 	// Email filters
 	HasEmail    types.Bool   `tfsdk:"has_email"`    // true=users with email, false=users without email
 	EmailDomain types.String `tfsdk:"email_domain"` // Email domain (e.g., "example.com")
+
+	// Group membership filters (supports nested groups via LDAP_MATCHING_RULE_IN_CHAIN)
+	MemberOf    types.String `tfsdk:"member_of"`     // Filter users who are members of specified group (DN)
+	NotMemberOf types.String `tfsdk:"not_member_of"` // Filter users who are NOT members of specified group (DN)
 }
 
 // UserDataModel describes a single user in the result set.
@@ -107,6 +114,9 @@ func (d *UsersDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 				MarkdownDescription: "The DN of the container to search within. If not specified, searches from the base DN. " +
 					"Example: `OU=Users,DC=example,DC=com`",
 				Optional: true,
+				Validators: []validator.String{
+					validators.IsValidDN(),
+				},
 			},
 			"scope": schema.StringAttribute{
 				MarkdownDescription: "The search scope to use. Valid values: `base`, `onelevel`, `subtree`. Defaults to `subtree`.",
@@ -231,6 +241,14 @@ func (d *UsersDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 						MarkdownDescription: "Filter by manager. Accepts Distinguished Name, GUID, UPN, or SAM account name.",
 						Optional:            true,
 					},
+					"company": schema.StringAttribute{
+						MarkdownDescription: "Filter by company name (exact match, case-insensitive).",
+						Optional:            true,
+					},
+					"office": schema.StringAttribute{
+						MarkdownDescription: "Filter by office location (exact match, case-insensitive).",
+						Optional:            true,
+					},
 					"enabled": schema.BoolAttribute{
 						MarkdownDescription: "Filter by account status. `true` returns only enabled accounts, " +
 							"`false` returns only disabled accounts. If not specified, returns all accounts.",
@@ -245,6 +263,24 @@ func (d *UsersDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 						MarkdownDescription: "Filter by email domain (e.g., `example.com`). Only returns users whose " +
 							"email addresses end with the specified domain.",
 						Optional: true,
+					},
+					"member_of": schema.StringAttribute{
+						MarkdownDescription: "Filter by group membership. Only returns users who are members of the " +
+							"specified group (Distinguished Name). Includes nested group membership. " +
+							"Example: `CN=Domain Users,CN=Users,DC=example,DC=com`",
+						Optional: true,
+						Validators: []validator.String{
+							validators.IsValidDN(),
+						},
+					},
+					"not_member_of": schema.StringAttribute{
+						MarkdownDescription: "Filter by group non-membership. Only returns users who are NOT members of the " +
+							"specified group (Distinguished Name). Includes nested group membership. " +
+							"Example: `CN=Disabled Users,CN=Users,DC=example,DC=com`",
+						Optional: true,
+						Validators: []validator.String{
+							validators.IsValidDN(),
+						},
 					},
 				},
 			},
@@ -308,10 +344,14 @@ func (d *UsersDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 		"name_contains": searchFilter.NameContains,
 		"department":    searchFilter.Department,
 		"title":         searchFilter.Title,
+		"company":       searchFilter.Company,
+		"office":        searchFilter.Office,
 		"manager":       searchFilter.Manager,
 		"enabled":       searchFilter.Enabled,
 		"has_email":     searchFilter.HasEmail,
 		"email_domain":  searchFilter.EmailDomain,
+		"member_of":     searchFilter.MemberOf,
+		"not_member_of": searchFilter.NotMemberOf,
 	})
 
 	// Perform the search
@@ -386,6 +426,14 @@ func (d *UsersDataSource) buildSearchFilter(ctx context.Context, data *UsersData
 			searchFilter.Manager = filterModel.Manager.ValueString()
 		}
 
+		if !filterModel.Company.IsNull() && filterModel.Company.ValueString() != "" {
+			searchFilter.Company = filterModel.Company.ValueString()
+		}
+
+		if !filterModel.Office.IsNull() && filterModel.Office.ValueString() != "" {
+			searchFilter.Office = filterModel.Office.ValueString()
+		}
+
 		// Map status filter attributes
 		if !filterModel.Enabled.IsNull() {
 			enabled := filterModel.Enabled.ValueBool()
@@ -400,6 +448,15 @@ func (d *UsersDataSource) buildSearchFilter(ctx context.Context, data *UsersData
 
 		if !filterModel.EmailDomain.IsNull() && filterModel.EmailDomain.ValueString() != "" {
 			searchFilter.EmailDomain = filterModel.EmailDomain.ValueString()
+		}
+
+		// Map group membership filter attributes
+		if !filterModel.MemberOf.IsNull() && filterModel.MemberOf.ValueString() != "" {
+			searchFilter.MemberOf = filterModel.MemberOf.ValueString()
+		}
+
+		if !filterModel.NotMemberOf.IsNull() && filterModel.NotMemberOf.ValueString() != "" {
+			searchFilter.NotMemberOf = filterModel.NotMemberOf.ValueString()
 		}
 	}
 
