@@ -99,6 +99,18 @@ func (m *MockGroupClient) GetBaseDN(ctx context.Context) (string, error) {
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockGroupClient) WhoAmI(ctx context.Context) (*WhoAmIResult, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	result, ok := args.Get(0).(*WhoAmIResult)
+	if !ok {
+		return nil, args.Error(1)
+	}
+	return result, args.Error(1)
+}
+
 // Helper function to create a mock LDAP entry for a group.
 func createMockGroupEntry(name, guid, dn string, groupType int32) *ldap.Entry {
 	guidHandler := NewGUIDHandler()

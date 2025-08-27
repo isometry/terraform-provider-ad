@@ -2,6 +2,7 @@ package ldap
 
 import (
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"strings"
@@ -54,7 +55,7 @@ func createGSSAPIClient(cfg *ConnectionConfig) (ldap.GSSAPIClient, error) {
 
 	// Check if the krb5.conf file exists before proceeding
 	if !fileExists(krb5confPath) {
-		return nil, fmt.Errorf("Kerberos configuration file not found at %s. "+
+		return nil, fmt.Errorf("kerberos configuration file not found at %s. "+
 			"For Kerberos authentication, you must provide a valid krb5.conf file. "+
 			"Either create %s or specify a custom path using 'kerberos_config'. "+
 			"Example minimal configuration:\n%s",
@@ -232,10 +233,8 @@ func generateExampleKrb5Conf(cfg *ConnectionConfig) string {
 
 	realm := cfg.KerberosRealm
 	// Try to extract hostname from LDAP URLs if available
-	var kdcHost string
-
 	// Look for domain in the config to build a reasonable example
-	kdcHost = fmt.Sprintf("dc.%s", strings.ToLower(strings.ReplaceAll(realm, ".", ".")))
+	kdcHost := fmt.Sprintf("dc.%s", strings.ToLower(strings.ReplaceAll(realm, ".", ".")))
 
 	// If we have LDAP URLs in the parent config, we could potentially extract from there
 	// but for now, we'll generate a reasonable example

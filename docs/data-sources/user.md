@@ -545,6 +545,7 @@ output "debug_user_info" {
 - `manager` (String) The Distinguished Name of the user's manager.
 - `member_of` (List of String) A list of Distinguished Names of groups this user is a member of.
 - `mobile_phone` (String) The mobile telephone number of the user.
+- `name` (String) The common name (cn) of the user.
 - `object_guid` (String) The objectGUID of the user (immutable unique identifier).
 - `object_sid` (String) The Security Identifier (SID) of the user.
 - `office` (String) The physical office location of the user.

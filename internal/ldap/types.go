@@ -137,6 +137,9 @@ type Client interface {
 
 	// Directory information
 	GetBaseDN(ctx context.Context) (string, error)
+
+	// Identity operations
+	WhoAmI(ctx context.Context) (*WhoAmIResult, error)
 }
 
 // SearchRequest encapsulates LDAP search parameters.
@@ -177,6 +180,16 @@ type ModifyDNRequest struct {
 	NewRDN       string // New relative DN (e.g., "CN=NewName")
 	DeleteOldRDN bool   // Whether to delete the old RDN
 	NewSuperior  string // New parent DN (empty for rename-only operations)
+}
+
+// WhoAmIResult contains the result of an LDAP Who Am I? extended operation.
+type WhoAmIResult struct {
+	AuthzID           string // Raw authorization ID from server (e.g., "u:CN=User,CN=Users,DC=example,DC=com")
+	DN                string // Distinguished Name (if authzID is in DN format)
+	UserPrincipalName string // User Principal Name (if authzID is in UPN format)
+	SAMAccountName    string // SAM Account Name (if authzID is in SAM format)
+	SID               string // Security Identifier (if authzID is in SID format)
+	Format            string // Format of the authzID: "dn", "upn", "sam", "sid", or "unknown"
 }
 
 // SearchScope defines LDAP search scope.

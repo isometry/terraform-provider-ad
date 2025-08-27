@@ -38,9 +38,9 @@ const (
 // UserSearchFilter represents user-friendly filter options for searching users.
 type UserSearchFilter struct {
 	// Name filters
-	NamePrefix   string `json:"namePrefix,omitempty"`   // Users whose display name starts with this string
-	NameSuffix   string `json:"nameSuffix,omitempty"`   // Users whose display name ends with this string
-	NameContains string `json:"nameContains,omitempty"` // Users whose display name contains this string
+	NamePrefix   string `json:"namePrefix,omitempty"`   // Users whose common name starts with this string
+	NameSuffix   string `json:"nameSuffix,omitempty"`   // Users whose common name ends with this string
+	NameContains string `json:"nameContains,omitempty"` // Users whose common name contains this string
 
 	// Organizational filters
 	Department string `json:"department,omitempty"` // Department name
@@ -68,6 +68,7 @@ type User struct {
 	// Identity attributes
 	SAMAccountName    string `json:"sAMAccountName"`        // Pre-Windows 2000 name
 	UserPrincipalName string `json:"userPrincipalName"`     // UPN (user@domain.com)
+	CommonName        string `json:"commonName"`            // Common name (cn)
 	DisplayName       string `json:"displayName"`           // Display name
 	GivenName         string `json:"givenName,omitempty"`   // First name
 	Surname           string `json:"surname,omitempty"`     // Last name
@@ -508,6 +509,7 @@ func (ur *UserReader) entryToUser(entry *ldap.Entry) (*User, error) {
 	user.ObjectSid = entry.GetAttributeValue("objectSid")
 	user.SAMAccountName = entry.GetAttributeValue("sAMAccountName")
 	user.UserPrincipalName = entry.GetAttributeValue("userPrincipalName")
+	user.CommonName = entry.GetAttributeValue("cn")
 
 	// Personal information
 	user.DisplayName = entry.GetAttributeValue("displayName")
@@ -714,13 +716,13 @@ func (ur *UserReader) buildLDAPFilter(filter *UserSearchFilter) (string, error) 
 
 	// Name filters
 	if filter.NamePrefix != "" {
-		filterParts = append(filterParts, fmt.Sprintf("(displayName=%s*)", ldap.EscapeFilter(filter.NamePrefix)))
+		filterParts = append(filterParts, fmt.Sprintf("(cn=%s*)", ldap.EscapeFilter(filter.NamePrefix)))
 	}
 	if filter.NameSuffix != "" {
-		filterParts = append(filterParts, fmt.Sprintf("(displayName=*%s)", ldap.EscapeFilter(filter.NameSuffix)))
+		filterParts = append(filterParts, fmt.Sprintf("(cn=*%s)", ldap.EscapeFilter(filter.NameSuffix)))
 	}
 	if filter.NameContains != "" {
-		filterParts = append(filterParts, fmt.Sprintf("(displayName=*%s*)", ldap.EscapeFilter(filter.NameContains)))
+		filterParts = append(filterParts, fmt.Sprintf("(cn=*%s*)", ldap.EscapeFilter(filter.NameContains)))
 	}
 
 	// Organizational filters

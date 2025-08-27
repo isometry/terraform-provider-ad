@@ -686,10 +686,11 @@ func getEnvWithDefault(key, defaultValue string) string {
 
 // MockLDAPClient provides a mock LDAP client for unit testing.
 type MockLDAPClient struct {
-	groups map[string]*ldap.Group
-	users  map[string]*ldap.User
-	ous    map[string]*ldap.OU
-	err    error
+	groups       map[string]*ldap.Group
+	users        map[string]*ldap.User
+	ous          map[string]*ldap.OU
+	whoAmIResult *ldap.WhoAmIResult
+	err          error
 }
 
 // NewMockLDAPClient creates a new mock LDAP client.
@@ -761,4 +762,82 @@ func (m *MockLDAPClient) GetMockOU(id string) (*ldap.OU, error) {
 	}
 
 	return ou, nil
+}
+
+// SetWhoAmIResult sets the WhoAmI result to be returned by the mock.
+func (m *MockLDAPClient) SetWhoAmIResult(result *ldap.WhoAmIResult) {
+	m.whoAmIResult = result
+}
+
+// WhoAmI returns the mock WhoAmI result.
+func (m *MockLDAPClient) WhoAmI(ctx context.Context) (*ldap.WhoAmIResult, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.whoAmIResult, nil
+}
+
+// Client interface implementation methods (stubs for testing)
+
+func (m *MockLDAPClient) Connect(ctx context.Context) error {
+	return m.err
+}
+
+func (m *MockLDAPClient) Close() error {
+	return m.err
+}
+
+func (m *MockLDAPClient) Bind(ctx context.Context, username, password string) error {
+	return m.err
+}
+
+func (m *MockLDAPClient) BindWithConfig(ctx context.Context) error {
+	return m.err
+}
+
+func (m *MockLDAPClient) Search(ctx context.Context, req *ldap.SearchRequest) (*ldap.SearchResult, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	// Return empty result for now
+	return &ldap.SearchResult{}, nil
+}
+
+func (m *MockLDAPClient) SearchWithPaging(ctx context.Context, req *ldap.SearchRequest) (*ldap.SearchResult, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	// Return empty result for now
+	return &ldap.SearchResult{}, nil
+}
+
+func (m *MockLDAPClient) Add(ctx context.Context, req *ldap.AddRequest) error {
+	return m.err
+}
+
+func (m *MockLDAPClient) Modify(ctx context.Context, req *ldap.ModifyRequest) error {
+	return m.err
+}
+
+func (m *MockLDAPClient) ModifyDN(ctx context.Context, req *ldap.ModifyDNRequest) error {
+	return m.err
+}
+
+func (m *MockLDAPClient) Delete(ctx context.Context, dn string) error {
+	return m.err
+}
+
+func (m *MockLDAPClient) Ping(ctx context.Context) error {
+	return m.err
+}
+
+func (m *MockLDAPClient) Stats() ldap.PoolStats {
+	return ldap.PoolStats{}
+}
+
+func (m *MockLDAPClient) GetBaseDN(ctx context.Context) (string, error) {
+	if m.err != nil {
+		return "", m.err
+	}
+	return "DC=example,DC=com", nil
 }

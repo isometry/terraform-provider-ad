@@ -446,6 +446,7 @@ func (p *ActiveDirectoryProvider) DataSources(ctx context.Context) []func() data
 		NewOUDataSource,
 		NewUserDataSource,
 		NewUsersDataSource,
+		NewWhoAmIDataSource,
 	}
 }
 

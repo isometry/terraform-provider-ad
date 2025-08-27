@@ -567,9 +567,9 @@ Optional:
 - `enabled` (Boolean) Filter by account status. `true` returns only enabled accounts, `false` returns only disabled accounts. If not specified, returns all accounts.
 - `has_email` (Boolean) Filter by email presence. `true` returns only users with email addresses, `false` returns only users without email addresses. If not specified, returns all users.
 - `manager` (String) Filter by manager. Accepts Distinguished Name, GUID, UPN, or SAM account name.
-- `name_contains` (String) Users whose display name contains this string. Case-insensitive.
-- `name_prefix` (String) Users whose display name starts with this string. Case-insensitive.
-- `name_suffix` (String) Users whose display name ends with this string. Case-insensitive.
+- `name_contains` (String) Users whose common name contains this string. Case-insensitive.
+- `name_prefix` (String) Users whose common name starts with this string. Case-insensitive.
+- `name_suffix` (String) Users whose common name ends with this string. Case-insensitive.
 - `title` (String) Filter by job title. Case-insensitive partial match.
 
 
@@ -588,6 +588,7 @@ Read-Only:
 - `id` (String) The objectGUID of the user.
 - `last_logon` (String) When the user last logged on (RFC3339 format).
 - `manager` (String) The Distinguished Name of the user's manager.
+- `name` (String) The common name (cn) of the user.
 - `office` (String) The physical office location of the user.
 - `sam_account_name` (String) The SAM account name (pre-Windows 2000 name) of the user.
 - `surname` (String) The last name (surname) of the user.

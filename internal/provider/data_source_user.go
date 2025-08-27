@@ -43,6 +43,7 @@ type UserDataSourceModel struct {
 	// Core identity attributes (all computed)
 	ObjectGUID  types.String `tfsdk:"object_guid"`  // objectGUID
 	ObjectSid   types.String `tfsdk:"object_sid"`   // Security Identifier
+	Name        types.String `tfsdk:"name"`         // Common name (cn)
 	DisplayName types.String `tfsdk:"display_name"` // Display name
 	GivenName   types.String `tfsdk:"given_name"`   // First name
 	Surname     types.String `tfsdk:"surname"`      // Last name
@@ -154,6 +155,10 @@ func (d *UserDataSource) Schema(ctx context.Context, req datasource.SchemaReques
 			},
 			"object_sid": schema.StringAttribute{
 				MarkdownDescription: "The Security Identifier (SID) of the user.",
+				Computed:            true,
+			},
+			"name": schema.StringAttribute{
+				MarkdownDescription: "The common name (cn) of the user.",
 				Computed:            true,
 			},
 			"display_name": schema.StringAttribute{
@@ -511,6 +516,7 @@ func (d *UserDataSource) mapUserToModel(ctx context.Context, user *ldapclient.Us
 	// Core identity attributes (additional computed fields)
 	data.ObjectGUID = types.StringValue(user.ObjectGUID)
 	data.ObjectSid = types.StringValue(user.ObjectSid)
+	data.Name = types.StringValue(user.CommonName)
 	data.DisplayName = types.StringValue(user.DisplayName)
 	data.GivenName = types.StringValue(user.GivenName)
 	data.Surname = types.StringValue(user.Surname)

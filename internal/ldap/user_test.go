@@ -104,6 +104,18 @@ func (m *MockUserClient) ModifyDN(ctx context.Context, req *ModifyDNRequest) err
 	return args.Error(0)
 }
 
+func (m *MockUserClient) WhoAmI(ctx context.Context) (*WhoAmIResult, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	result, ok := args.Get(0).(*WhoAmIResult)
+	if !ok {
+		return nil, args.Error(1)
+	}
+	return result, args.Error(1)
+}
+
 // createMockUserEntry creates a mock LDAP entry for testing user operations.
 func createMockUserEntry() *ldap.Entry {
 	entry := &ldap.Entry{

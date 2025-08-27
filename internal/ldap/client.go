@@ -3,6 +3,7 @@ package ldap
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -467,6 +468,99 @@ func (c *client) isRetryableError(err error) bool {
 	}
 
 	return false
+}
+
+// WhoAmI performs the LDAP Who Am I? extended operation.
+func (c *client) WhoAmI(ctx context.Context) (*WhoAmIResult, error) {
+	conn, err := c.pool.Get(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer conn.Close()
+
+	var result *ldap.WhoAmIResult
+	err = c.withRetry(ctx, func() error {
+		var whoamiErr error
+		result, whoamiErr = conn.Conn().WhoAmI(nil)
+		return whoamiErr
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("WhoAmI operation failed: %w", err)
+	}
+
+	if result == nil {
+		return nil, fmt.Errorf("WhoAmI operation returned nil result")
+	}
+
+	// Parse the authorization ID and extract meaningful information
+	whoAmIResult := &WhoAmIResult{
+		AuthzID: result.AuthzID,
+	}
+
+	c.parseAuthzID(whoAmIResult)
+
+	return whoAmIResult, nil
+}
+
+// parseAuthzID parses the authorization ID and extracts structured information.
+func (c *client) parseAuthzID(result *WhoAmIResult) {
+	authzID := result.AuthzID
+
+	if authzID == "" {
+		result.Format = "empty"
+		return
+	}
+
+	// Remove the "u:" prefix if present (common in Active Directory responses)
+	cleanAuthzID := strings.TrimPrefix(authzID, "u:")
+
+	// Try to identify the format and extract relevant information
+
+	// Check for DN format (contains CN= or DC= components)
+	if c.isDNFormat(cleanAuthzID) {
+		result.Format = "dn"
+		result.DN = cleanAuthzID
+		return
+	}
+
+	// Check for UPN format (contains @ symbol)
+	if strings.Contains(cleanAuthzID, "@") && !strings.Contains(cleanAuthzID, "\\") {
+		result.Format = "upn"
+		result.UserPrincipalName = cleanAuthzID
+		return
+	}
+
+	// Check for SAM format (contains domain backslash)
+	if strings.Contains(cleanAuthzID, "\\") && !strings.HasPrefix(cleanAuthzID, "S-") {
+		result.Format = "sam"
+		result.SAMAccountName = cleanAuthzID
+		return
+	}
+
+	// Check for SID format (starts with S- and has the right pattern)
+	if c.isSIDFormat(cleanAuthzID) {
+		result.Format = "sid"
+		result.SID = cleanAuthzID
+		return
+	}
+
+	// Unknown format
+	result.Format = "unknown"
+}
+
+// isDNFormat checks if the string looks like a Distinguished Name.
+func (c *client) isDNFormat(s string) bool {
+	// A DN should have at least one component like CN=, OU=, DC=, etc.
+	dnPattern := regexp.MustCompile(`^[A-Za-z]+=.*`)
+	return dnPattern.MatchString(s) && (strings.Contains(s, "CN=") || strings.Contains(s, "OU=") || strings.Contains(s, "DC="))
+}
+
+// isSIDFormat checks if the string looks like a Security Identifier.
+func (c *client) isSIDFormat(s string) bool {
+	// SID format: S-R-I-S-S-... where R is revision, I is identifier authority, S are subauthorities
+	sidPattern := regexp.MustCompile(`^S-\d+-\d+-\d+(-\d+)*$`)
+	return sidPattern.MatchString(s)
 }
 
 // Helper functions for common operations

@@ -205,6 +205,15 @@ func (m *MockGroupMembershipClient) ModifyDN(ctx context.Context, req *ModifyDNR
 	return nil
 }
 
+func (m *MockGroupMembershipClient) WhoAmI(ctx context.Context) (*WhoAmIResult, error) {
+	// Return a default result for testing
+	return &WhoAmIResult{
+		AuthzID: "u:CN=Test User,CN=Users,DC=example,DC=com",
+		DN:      "CN=Test User,CN=Users,DC=example,DC=com",
+		Format:  "dn",
+	}, nil
+}
+
 func (m *MockGroupMembershipClient) handleGroupGUIDSearch(req *SearchRequest) (*SearchResult, error) {
 	// Extract GUID from filter (simplified)
 	if strings.Contains(req.Filter, "objectGUID") {

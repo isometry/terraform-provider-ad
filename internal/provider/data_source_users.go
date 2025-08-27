@@ -47,9 +47,9 @@ type UsersDataSourceModel struct {
 // UserFilterModel describes the nested filter block.
 type UserFilterModel struct {
 	// Name filters
-	NamePrefix   types.String `tfsdk:"name_prefix"`   // Users whose display name starts with this string
-	NameSuffix   types.String `tfsdk:"name_suffix"`   // Users whose display name ends with this string
-	NameContains types.String `tfsdk:"name_contains"` // Users whose display name contains this string
+	NamePrefix   types.String `tfsdk:"name_prefix"`   // Users whose common name starts with this string
+	NameSuffix   types.String `tfsdk:"name_suffix"`   // Users whose common name ends with this string
+	NameContains types.String `tfsdk:"name_contains"` // Users whose common name contains this string
 
 	// Organizational filters
 	Department types.String `tfsdk:"department"` // Department name
@@ -71,6 +71,7 @@ type UserDataModel struct {
 	DistinguishedName types.String `tfsdk:"dn"`               // full DN
 	UserPrincipalName types.String `tfsdk:"upn"`              // UPN (user@domain.com)
 	SAMAccountName    types.String `tfsdk:"sam_account_name"` // pre-Windows 2000 name
+	Name              types.String `tfsdk:"name"`             // common name (cn)
 	DisplayName       types.String `tfsdk:"display_name"`     // display name
 	GivenName         types.String `tfsdk:"given_name"`       // first name
 	Surname           types.String `tfsdk:"surname"`          // last name
@@ -145,6 +146,10 @@ func (d *UsersDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 							MarkdownDescription: "The SAM account name (pre-Windows 2000 name) of the user.",
 							Computed:            true,
 						},
+						"name": schema.StringAttribute{
+							MarkdownDescription: "The common name (cn) of the user.",
+							Computed:            true,
+						},
 						"display_name": schema.StringAttribute{
 							MarkdownDescription: "The display name of the user.",
 							Computed:            true,
@@ -203,15 +208,15 @@ func (d *UsersDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 				MarkdownDescription: "Filter criteria for searching users. All specified criteria must match (AND logic).",
 				Attributes: map[string]schema.Attribute{
 					"name_prefix": schema.StringAttribute{
-						MarkdownDescription: "Users whose display name starts with this string. Case-insensitive.",
+						MarkdownDescription: "Users whose common name starts with this string. Case-insensitive.",
 						Optional:            true,
 					},
 					"name_suffix": schema.StringAttribute{
-						MarkdownDescription: "Users whose display name ends with this string. Case-insensitive.",
+						MarkdownDescription: "Users whose common name ends with this string. Case-insensitive.",
 						Optional:            true,
 					},
 					"name_contains": schema.StringAttribute{
-						MarkdownDescription: "Users whose display name contains this string. Case-insensitive.",
+						MarkdownDescription: "Users whose common name contains this string. Case-insensitive.",
 						Optional:            true,
 					},
 					"department": schema.StringAttribute{
@@ -410,6 +415,7 @@ func (d *UsersDataSource) mapUsersToModel(ctx context.Context, users []*ldapclie
 			"dn":               types.StringType,
 			"upn":              types.StringType,
 			"sam_account_name": types.StringType,
+			"name":             types.StringType,
 			"display_name":     types.StringType,
 			"given_name":       types.StringType,
 			"surname":          types.StringType,
@@ -439,6 +445,7 @@ func (d *UsersDataSource) mapUsersToModel(ctx context.Context, users []*ldapclie
 			"dn":               types.StringValue(user.DistinguishedName),
 			"upn":              types.StringValue(user.UserPrincipalName),
 			"sam_account_name": types.StringValue(user.SAMAccountName),
+			"name":             types.StringValue(user.CommonName),
 			"display_name":     types.StringValue(user.DisplayName),
 			"given_name":       types.StringValue(user.GivenName),
 			"surname":          types.StringValue(user.Surname),

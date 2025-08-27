@@ -93,6 +93,18 @@ func (m *MockClient) GetBaseDN(ctx context.Context) (string, error) {
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockClient) WhoAmI(ctx context.Context) (*WhoAmIResult, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	result, ok := args.Get(0).(*WhoAmIResult)
+	if !ok {
+		return nil, args.Error(1)
+	}
+	return result, args.Error(1)
+}
+
 func (m *MockClient) ModifyDN(ctx context.Context, req *ModifyDNRequest) error {
 	args := m.Called(ctx, req)
 	return args.Error(0)
