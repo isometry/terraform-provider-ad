@@ -116,9 +116,33 @@ func (c *client) authenticateSimple(conn *ldap.Conn) error {
 
 // authenticateKerberos performs GSSAPI/Kerberos authentication.
 func (c *client) authenticateKerberos(conn *ldap.Conn) error {
-	// For now, return error indicating Kerberos is not yet implemented
-	// This will be implemented in a future phase
-	return fmt.Errorf("kerberos authentication not yet implemented")
+	// For client connections, we need to extract server info from the config
+	// Since client doesn't have direct access to ServerInfo like pool does,
+	// we'll create it from the first available server or derive from connection
+
+	var serverInfo *ServerInfo
+
+	// Try to get server info from the config
+	if len(c.config.LDAPURLs) > 0 {
+		// Use the first LDAP URL to create ServerInfo
+		parsedServer, err := ParseLDAPURL(c.config.LDAPURLs[0])
+		if err != nil {
+			return fmt.Errorf("failed to parse LDAP URL for Kerberos: %w", err)
+		}
+		serverInfo = parsedServer
+	} else if c.config.Domain != "" {
+		// For domain-based configs, we need to construct a hostname
+		// This is a fallback - ideally we'd have access to the actual connected server
+		serverInfo = &ServerInfo{
+			Host:   c.config.Domain,
+			Port:   636, // Default LDAPS port
+			UseTLS: true,
+		}
+	} else {
+		return fmt.Errorf("insufficient connection information for Kerberos authentication")
+	}
+
+	return performKerberosAuth(conn, c.config, serverInfo)
 }
 
 // authenticateExternal performs external/certificate authentication.

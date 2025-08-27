@@ -233,7 +233,7 @@ func (p *connectionPool) authenticateConnection(pooledConn *PooledConnection) er
 		}
 		err = pooledConn.conn.Bind(p.config.Username, p.config.Password)
 	case AuthMethodKerberos:
-		return fmt.Errorf("kerberos authentication not yet implemented")
+		err = p.authenticateKerberos(pooledConn.conn, pooledConn.serverInfo)
 	case AuthMethodExternal:
 		err = pooledConn.conn.Bind("", "")
 	default:
@@ -250,6 +250,11 @@ func (p *connectionPool) authenticateConnection(pooledConn *PooledConnection) er
 	pooledConn.authenticated = true
 	pooledConn.authTime = time.Now()
 	return nil
+}
+
+// authenticateKerberos performs Kerberos authentication on a pooled connection.
+func (p *connectionPool) authenticateKerberos(conn *ldap.Conn, serverInfo *ServerInfo) error {
+	return performKerberosAuth(conn, p.config, serverInfo)
 }
 
 // needsReAuthentication determines if a connection needs to be re-authenticated.

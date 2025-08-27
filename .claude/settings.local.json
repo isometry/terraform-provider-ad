@@ -1,29 +1,27 @@
 {
   "permissions": {
     "allow": [
+      "mcp__gopls__go_search",
       "mcp__gopls__go_workspace",
-      "WebFetch(domain:github.com)",
-      "WebSearch",
-      "WebSearch",
       "mcp__context7__resolve-library-id",
       "mcp__context7__get-library-docs",
       "Bash(git clone:*)",
-      "WebFetch(domain:pkg.go.dev)",
       "Bash(go get:*)",
       "Bash(go test:*)",
       "Bash(go build:*)",
-      "Bash(make:*)",
-      "Bash(golangci-lint run:*)",
       "Bash(go mod:*)",
       "Bash(go vet:*)",
       "Bash(go list:*)",
-      "Bash(gofmt:*)",
+      "Bash(go fmt:*)",
+      "Bash(golangci-lint run:*)",
       "Bash(grep:*)",
-      "WebFetch(domain:golangci-lint.run)",
-      "Bash(mkdir:*)",
+      "Bash(make:*)",
       "Bash(terraform validate:*)",
+      "WebFetch(domain:golangci-lint.run)",
       "WebFetch(domain:developer.hashicorp.com)",
-      "Bash(go fmt:*)"
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:pkg.go.dev)",
+      "WebSearch"
     ],
     "deny": [],
     "ask": []
