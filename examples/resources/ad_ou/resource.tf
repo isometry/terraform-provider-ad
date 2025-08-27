@@ -24,20 +24,20 @@ resource "ad_ou" "departments" {
 # Nested OU structure
 resource "ad_ou" "it_department" {
   name        = "IT Department"
-  path        = ad_ou.departments.distinguished_name
+  path        = ad_ou.departments.dn
   description = "Information Technology Department"
 }
 
 resource "ad_ou" "it_teams" {
   name        = "Teams"
-  path        = ad_ou.it_department.distinguished_name
+  path        = ad_ou.it_department.dn
   description = "IT Department teams"
 }
 
 # Protected OU (cannot be accidentally deleted)
 resource "ad_ou" "critical_systems" {
   name                  = "Critical Systems"
-  path                  = ad_ou.it_department.distinguished_name
+  path                  = ad_ou.it_department.dn
   description           = "Critical system accounts and groups"
   protect_from_deletion = true
 }
@@ -45,19 +45,19 @@ resource "ad_ou" "critical_systems" {
 # OU for different purposes
 resource "ad_ou" "service_accounts" {
   name        = "Service Accounts"
-  path        = ad_ou.it_department.distinguished_name
+  path        = ad_ou.it_department.dn
   description = "Service accounts for applications"
 }
 
 resource "ad_ou" "security_groups" {
   name        = "Security Groups"
-  path        = ad_ou.it_department.distinguished_name
+  path        = ad_ou.it_department.dn
   description = "Security groups for IT resources"
 }
 
 resource "ad_ou" "distribution_groups" {
   name        = "Distribution Groups"
-  path        = ad_ou.it_department.distinguished_name
+  path        = ad_ou.it_department.dn
   description = "Distribution groups for email"
 }
 
@@ -65,7 +65,7 @@ resource "ad_ou" "distribution_groups" {
 resource "ad_group" "it_admins" {
   name             = "IT Administrators"
   sam_account_name = "ITAdmins"
-  container        = ad_ou.security_groups.distinguished_name
+  container        = ad_ou.security_groups.dn
   scope            = "Global"
   category         = "Security"
   description      = "IT Department administrators"
@@ -80,13 +80,13 @@ resource "ad_ou" "applications" {
 
 resource "ad_ou" "web_applications" {
   name        = "Web Applications"
-  path        = ad_ou.applications.distinguished_name
+  path        = ad_ou.applications.dn
   description = "Web application resources"
 }
 
 resource "ad_ou" "database_applications" {
   name        = "Database Applications"
-  path        = ad_ou.applications.distinguished_name
+  path        = ad_ou.applications.dn
   description = "Database application resources"
 }
 
@@ -95,15 +95,15 @@ output "ou_structure" {
   value = {
     departments = {
       name = ad_ou.departments.name
-      dn   = ad_ou.departments.distinguished_name
+      dn   = ad_ou.departments.dn
     }
     it_department = {
       name = ad_ou.it_department.name
-      dn   = ad_ou.it_department.distinguished_name
+      dn   = ad_ou.it_department.dn
     }
     protected_ou = {
       name      = ad_ou.critical_systems.name
-      dn        = ad_ou.critical_systems.distinguished_name
+      dn        = ad_ou.critical_systems.dn
       protected = ad_ou.critical_systems.protect_from_deletion
     }
   }

@@ -72,7 +72,7 @@ data "ad_group" "domain_admins" {
 output "domain_admins_info" {
   value = {
     id                = data.ad_group.domain_admins.id
-    distinguished_name = data.ad_group.domain_admins.distinguished_name
+    dn = data.ad_group.domain_admins.dn
     sid               = data.ad_group.domain_admins.sid
     scope             = data.ad_group.domain_admins.scope
     category          = data.ad_group.domain_admins.category
@@ -93,7 +93,7 @@ data "ad_group" "existing_group" {
 resource "ad_group" "new_group" {
   name             = "New Related Group"
   sam_account_name = "NewRelatedGroup"
-  container        = dirname(data.ad_group.existing_group.distinguished_name)
+  container        = dirname(data.ad_group.existing_group.dn)
   scope            = data.ad_group.existing_group.scope
   category         = data.ad_group.existing_group.category
 }
@@ -101,7 +101,7 @@ resource "ad_group" "new_group" {
 # Add the existing group as a member of the new group
 resource "ad_group_membership" "nested_membership" {
   group_id = ad_group.new_group.id
-  members  = [data.ad_group.existing_group.distinguished_name]
+  members  = [data.ad_group.existing_group.dn]
 }
 ```
 
@@ -119,7 +119,7 @@ resource "ad_group" "admin_group" {
 
   name             = "Application Administrators"
   sam_account_name = "AppAdmins"
-  container        = dirname(data.ad_group.application_group.distinguished_name)
+  container        = dirname(data.ad_group.application_group.dn)
   scope            = data.ad_group.application_group.scope
   category         = "Security"
   description      = "Administrators for ${data.ad_group.application_group.display_name}"
@@ -200,7 +200,7 @@ data "ad_ou" "security_groups_ou" {
 
 # Find groups within that OU
 data "ad_groups" "security_groups" {
-  container = data.ad_ou.security_groups_ou.distinguished_name
+  container = data.ad_ou.security_groups_ou.dn
   category  = "Security"
 }
 
@@ -216,7 +216,7 @@ locals {
   security_groups_report = {
     for sam_name, group in data.ad_group.detailed_security_groups : sam_name => {
       display_name      = group.display_name
-      distinguished_name = group.distinguished_name
+      dn = group.dn
       description       = group.description
       scope            = group.scope
       member_count     = group.member_count
@@ -268,7 +268,7 @@ All attributes are computed (read-only) and provide comprehensive group informat
 
 ### Identification Attributes
 - `id`: ObjectGUID of the group
-- `distinguished_name`: Full Distinguished Name
+- `dn`: Full Distinguished Name
 - `sid`: Security Identifier
 - `display_name`: Display name (from cn attribute)
 - `sam_account_name`: SAM account name
@@ -313,7 +313,7 @@ data "ad_group" "frequently_used" {
 }
 
 locals {
-  common_group_dn = data.ad_group.frequently_used.distinguished_name
+  common_group_dn = data.ad_group.frequently_used.dn
   common_group_scope = data.ad_group.frequently_used.scope
 }
 
@@ -344,7 +344,7 @@ data "ad_group" "required_group" {
 locals {
   optional_group_info = try({
     id = data.ad_group.optional_group.id
-    dn = data.ad_group.optional_group.distinguished_name
+    dn = data.ad_group.optional_group.dn
   }, {
     id = null
     dn = null
@@ -404,7 +404,7 @@ data "ad_group" "debug_group" {
 output "debug_group_info" {
   value = {
     id                = data.ad_group.debug_group.id
-    dn                = data.ad_group.debug_group.distinguished_name
+    dn                = data.ad_group.debug_group.dn
     display_name      = data.ad_group.debug_group.display_name
     description       = data.ad_group.debug_group.description
     scope            = data.ad_group.debug_group.scope
@@ -433,7 +433,6 @@ output "debug_group_info" {
 - `category` (String) The category of the group. Valid values: `Security`, `Distribution`.
 - `description` (String) The description of the group.
 - `display_name` (String) The display name of the group (equivalent to common name).
-- `distinguished_name` (String) The full Distinguished Name of the group.
 - `group_type` (Number) The raw Active Directory groupType value as an integer.
 - `member_count` (Number) The total number of members in the group.
 - `members` (Set of String) A set of Distinguished Names of all group members. Includes users, groups, and other objects.

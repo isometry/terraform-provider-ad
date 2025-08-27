@@ -47,9 +47,9 @@ resource "ad_group" "local_access" {
 # Output group information
 output "security_group_info" {
   value = {
-    id                 = ad_group.basic_security.id
-    distinguished_name = ad_group.basic_security.distinguished_name
-    sid                = ad_group.basic_security.sid
-    group_type         = ad_group.basic_security.group_type
+    id         = ad_group.basic_security.id
+    dn         = ad_group.basic_security.dn
+    sid        = ad_group.basic_security.sid
+    group_type = ad_group.basic_security.group_type
   }
 }

@@ -66,7 +66,7 @@ resource "ad_group_membership" "admin_group_members" {
     "admin1@example.com",
     "admin2@example.com",
     # Include the project team group as a member
-    ad_group.project_team.distinguished_name
+    ad_group.project_team.dn
   ]
 }
 

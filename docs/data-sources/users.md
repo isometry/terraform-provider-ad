@@ -45,7 +45,7 @@ output "department_users" {
 data "ad_users" "it_managers" {
   container = "ou=Users,dc=example,dc=com"
   scope     = "subtree"
-  
+
   filter = {
     department = "IT"
     title      = "*Manager*"
@@ -56,7 +56,7 @@ data "ad_users" "it_managers" {
 # Create management group
 resource "ad_group" "it_managers" {
   name             = "IT Managers"
-  sam_acuser_count_name = "ITManagers"
+  sam_account_name = "ITManagers"
   container        = "ou=Management Groups,dc=example,dc=com"
   scope            = "Global"
   category         = "Security"
@@ -66,7 +66,7 @@ resource "ad_group" "it_managers" {
 # Add managers to the group
 resource "ad_group_membership" "it_managers" {
   group_id = ad_group.it_managers.id
-  members  = data.ad_users.it_managers.users[*].distinguished_name
+  members  = data.ad_users.it_managers.users[*].dn
 }
 ```
 
@@ -77,7 +77,7 @@ resource "ad_group_membership" "it_managers" {
 data "ad_users" "disabled_users" {
   container = "dc=example,dc=com"
   scope     = "subtree"
-  
+
   filter = {
     enabled = false
   }
@@ -87,7 +87,7 @@ data "ad_users" "disabled_users" {
 data "ad_users" "locked_users" {
   container = "ou=Users,dc=example,dc=com"
   scope     = "subtree"
-  
+
   filter = {
     locked_out = true
     enabled    = true  # Only enabled but locked acuser_counts
@@ -99,11 +99,11 @@ output "security_report" {
   value = {
     disabled_acuser_counts = {
       user_count = data.ad_users.disabled_users.user_count
-      users = data.ad_users.disabled_users.users[*].sam_acuser_count_name
+      users = data.ad_users.disabled_users.users[*].sam_account_name
     }
     locked_acuser_counts = {
       user_count = data.ad_users.locked_users.user_count
-      users = data.ad_users.locked_users.users[*].sam_acuser_count_name
+      users = data.ad_users.locked_users.users[*].sam_account_name
     }
   }
 }
@@ -115,7 +115,7 @@ output "security_report" {
 # Users whose names start with "Admin"
 data "ad_users" "admin_users" {
   container = "ou=Administrative Users,dc=example,dc=com"
-  
+
   filter = {
     name_prefix = "Admin"
     enabled     = true
@@ -125,7 +125,7 @@ data "ad_users" "admin_users" {
 # Service acuser_counts (names ending with "Service")
 data "ad_users" "service_acuser_counts" {
   container = "ou=Service Acuser_counts,dc=example,dc=com"
-  
+
   filter = {
     name_suffix = "Service"
     enabled     = true
@@ -146,10 +146,10 @@ data "ad_users" "test_users" {
 # Find all users by department
 data "ad_users" "by_department" {
   for_each = toset(["IT", "HR", "Finance", "Marketing"])
-  
+
   container = "ou=Users,dc=example,dc=com"
   scope     = "subtree"
-  
+
   filter = {
     department = each.value
     enabled    = true
@@ -159,9 +159,9 @@ data "ad_users" "by_department" {
 # Create department-based groups
 resource "ad_group" "department_groups" {
   for_each = data.ad_users.by_department
-  
+
   name             = "${each.key} Department"
-  sam_acuser_count_name = "${each.key}Dept"
+  sam_account_name = "${each.key}Dept"
   container        = "ou=Department Groups,dc=example,dc=com"
   scope            = "Global"
   category         = "Security"
@@ -171,9 +171,9 @@ resource "ad_group" "department_groups" {
 # Add department users to their groups
 resource "ad_group_membership" "department_memberships" {
   for_each = data.ad_users.by_department
-  
+
   group_id = ad_group.department_groups[each.key].id
-  members  = each.value.users[*].distinguished_name
+  members  = each.value.users[*].dn
 }
 ```
 
@@ -182,15 +182,15 @@ resource "ad_group_membership" "department_memberships" {
 ```terraform
 # Find users reporting to a specific manager
 data "ad_user" "department_manager" {
-  user_principal_name = "dept.manager@example.com"
+  upn = "dept.manager@example.com"
 }
 
 data "ad_users" "direct_reports" {
   container = "ou=Users,dc=example,dc=com"
   scope     = "subtree"
-  
+
   filter = {
-    manager = data.ad_user.department_manager.distinguished_name
+    manager = data.ad_user.department_manager.dn
     enabled = true
   }
 }
@@ -198,7 +198,7 @@ data "ad_users" "direct_reports" {
 # Create team group
 resource "ad_group" "team_group" {
   name             = "${data.ad_user.department_manager.display_name} Team"
-  sam_acuser_count_name = "${data.ad_user.department_manager.sam_acuser_count_name}Team"
+  sam_account_name = "${data.ad_user.department_manager.sam_account_name}Team"
   container        = "ou=Team Groups,dc=example,dc=com"
   scope            = "Global"
   category         = "Security"
@@ -208,8 +208,8 @@ resource "ad_group" "team_group" {
 resource "ad_group_membership" "team_membership" {
   group_id = ad_group.team_group.id
   members = concat(
-    [data.ad_user.department_manager.distinguished_name],
-    data.ad_users.direct_reports.users[*].distinguished_name
+    [data.ad_user.department_manager.dn],
+    data.ad_users.direct_reports.users[*].dn
   )
 }
 ```
@@ -221,7 +221,7 @@ resource "ad_group_membership" "team_membership" {
 data "ad_users" "senior_it_staff" {
   container = "ou=Users,dc=example,dc=com"
   scope     = "subtree"
-  
+
   filter = {
     department    = "IT"
     title         = "*Senior*,*Manager*,*Director*"  # Multiple title patterns
@@ -234,7 +234,7 @@ data "ad_users" "senior_it_staff" {
 data "ad_users" "new_employees" {
   container = "ou=Users,dc=example,dc=com"
   scope     = "subtree"
-  
+
   filter = {
     enabled      = true
     created_days_ago = 30  # Created within last 30 days
@@ -271,7 +271,7 @@ data "ad_users" "all_descendants" {
 data "ad_users" "privileged_users" {
   container = "dc=example,dc=com"
   scope     = "subtree"
-  
+
   filter = {
     title   = "*Admin*,*Manager*,*Director*"
     enabled = true
@@ -281,7 +281,7 @@ data "ad_users" "privileged_users" {
 # Create privileged access group
 resource "ad_group" "privileged_access" {
   name             = "Privileged Access Users"
-  sam_acuser_count_name = "PrivilegedAccess"
+  sam_account_name = "PrivilegedAccess"
   container        = "ou=Security Groups,dc=example,dc=com"
   scope            = "Global"
   category         = "Security"
@@ -291,7 +291,7 @@ resource "ad_group" "privileged_access" {
 # Add privileged users
 resource "ad_group_membership" "privileged_membership" {
   group_id = ad_group.privileged_access.id
-  members  = data.ad_users.privileged_users.users[*].distinguished_name
+  members  = data.ad_users.privileged_users.users[*].dn
 }
 ```
 
@@ -308,18 +308,18 @@ data "ad_users" "all_users" {
 locals {
   user_analysis = {
     total_users = data.ad_users.all_users.user_count
-    
+
     by_status = {
       enabled  = length([for u in data.ad_users.all_users.users : u if u.enabled])
       disabled = length([for u in data.ad_users.all_users.users : u if !u.enabled])
       locked   = length([for u in data.ad_users.all_users.users : u if u.locked_out])
     }
-    
+
     by_department = {
       for dept in distinct([for u in data.ad_users.all_users.users : u.department if u.department != ""]) :
       dept => length([for u in data.ad_users.all_users.users : u if u.department == dept])
     }
-    
+
     password_issues = {
       expired = length([for u in data.ad_users.all_users.users : u if u.password_expired])
       never_expires = length([for u in data.ad_users.all_users.users : u if u.password_never_expires])
@@ -343,10 +343,10 @@ variable "target_departments" {
 
 data "ad_users" "target_users" {
   for_each = toset(var.target_departments)
-  
+
   container = "ou=Users,dc=example,dc=com"
   scope     = "subtree"
-  
+
   filter = {
     department = each.value
     enabled    = true
@@ -356,9 +356,9 @@ data "ad_users" "target_users" {
 # Create application access groups
 resource "ad_group" "app_access_groups" {
   for_each = data.ad_users.target_users
-  
+
   name             = "${each.key} App Access"
-  sam_acuser_count_name = "${replace(each.key, " ", "")}AppAccess"
+  sam_account_name = "${replace(each.key, " ", "")}AppAccess"
   container        = "ou=Application Groups,dc=example,dc=com"
   scope            = "Global"
   category         = "Security"
@@ -367,9 +367,9 @@ resource "ad_group" "app_access_groups" {
 
 resource "ad_group_membership" "app_access_membership" {
   for_each = data.ad_users.target_users
-  
+
   group_id = ad_group.app_access_groups[each.key].id
-  members  = each.value.users[*].distinguished_name
+  members  = each.value.users[*].dn
 }
 ```
 
@@ -411,9 +411,9 @@ Each user in the results includes comprehensive user information:
 
 ### Identification
 - `id`: ObjectGUID of the user
-- `distinguished_name`: Full Distinguished Name
-- `user_principal_name`: UPN (email-like identifier)
-- `sam_acuser_count_name`: SAM acuser_count name
+- `dn`: Full Distinguished Name
+- `upn`: UPN (email-like identifier)
+- `sam_account_name`: SAM acuser_count name
 - `display_name`: Display name
 - `sid`: Security Identifier
 
@@ -452,7 +452,7 @@ Each user in the results includes comprehensive user information:
 data "ad_users" "efficient_search" {
   container = "ou=IT Users,dc=example,dc=com"  # Not entire domain
   scope     = "onelevel"                       # Not subtree unless needed
-  
+
   filter = {
     enabled = true  # Be specific about requirements
   }
@@ -464,7 +464,7 @@ data "ad_users" "efficient_search" {
 # Stack multiple criteria for precise results
 data "ad_users" "precise_search" {
   container = "ou=Users,dc=example,dc=com"
-  
+
   filter = {
     department = "IT"           # Specific department
     title      = "*Admin*"      # Admin roles
@@ -480,7 +480,7 @@ data "ad_users" "precise_search" {
 data "ad_users" "manageable_search" {
   container = "ou=Department,dc=example,dc=com"
   scope     = "onelevel"
-  
+
   filter = {
     enabled = true
   }
@@ -527,7 +527,7 @@ locals {
 data "ad_users" "debug_users" {
   container = "dc=example,dc=com"
   scope     = "onelevel"
-  
+
   filter = {
     enabled = true
   }
@@ -582,7 +582,7 @@ Read-Only:
 - `company` (String) The company name of the user.
 - `department` (String) The department of the user.
 - `display_name` (String) The display name of the user.
-- `distinguished_name` (String) The full Distinguished Name of the user.
+- `dn` (String) The full Distinguished Name of the user.
 - `email_address` (String) The primary email address of the user.
 - `given_name` (String) The first name (given name) of the user.
 - `id` (String) The objectGUID of the user.
@@ -592,5 +592,5 @@ Read-Only:
 - `sam_account_name` (String) The SAM account name (pre-Windows 2000 name) of the user.
 - `surname` (String) The last name (surname) of the user.
 - `title` (String) The job title of the user.
-- `user_principal_name` (String) The User Principal Name (UPN) of the user.
+- `upn` (String) The User Principal Name (UPN) of the user.
 - `when_created` (String) When the user was created (RFC3339 format).

@@ -133,7 +133,7 @@ resource "ad_group_membership" "department_memberships" {
   for_each = data.ad_users.department_users
 
   group_id = ad_group.department_groups[each.key].id
-  members  = each.value.users[*].distinguished_name
+  members  = each.value.users[*].dn
 }
 
 # Create manager groups automatically
@@ -148,7 +148,7 @@ resource "ad_group" "managers_group" {
 
 resource "ad_group_membership" "managers_membership" {
   group_id = ad_group.managers_group.id
-  members  = data.ad_users.managers.users[*].distinguished_name
+  members  = data.ad_users.managers.users[*].dn
 }
 
 # Generate comprehensive user reports
@@ -221,7 +221,7 @@ output "sample_users" {
     idx => {
       name       = user.display_name
       sam        = user.sam_account_name
-      upn        = user.user_principal_name
+      upn        = user.upn
       department = user.department
       title      = user.title
       email      = user.email

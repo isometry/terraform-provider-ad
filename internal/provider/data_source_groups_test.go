@@ -215,17 +215,17 @@ func TestAccGroupsDataSource_groupAttributes(t *testing.T) {
 					resource.TestCheckResourceAttrSet("data.ad_groups.test", "id"),
 					// Check that group attributes exist when groups are found
 					resource.TestCheckTypeSetElemNestedAttrs("data.ad_groups.test", "groups.*", map[string]string{
-						"id":                 "",
-						"name":               "",
-						"display_name":       "",
-						"description":        "",
-						"distinguished_name": "",
-						"sam_account_name":   "",
-						"scope":              "",
-						"category":           "",
-						"group_type":         "",
-						"sid":                "",
-						"member_count":       "",
+						"id":               "",
+						"name":             "",
+						"display_name":     "",
+						"description":      "",
+						"dn":               "",
+						"sam_account_name": "",
+						"scope":            "",
+						"category":         "",
+						"group_type":       "",
+						"sid":              "",
+						"member_count":     "",
 					}),
 				),
 			},
@@ -402,7 +402,7 @@ func testAccGroupsDataSourceConfig_combinedFilters() string {
 data "ad_groups" "test" {
   container = "CN=Users,DC=example,DC=com"
   scope     = "subtree"
-  
+
   filter {
     name_contains = "Admin"
     category      = "security"

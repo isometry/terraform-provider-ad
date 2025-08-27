@@ -21,7 +21,7 @@ data "ad_group" "existing_group" {
 
 # Lookup group by Distinguished Name
 data "ad_group" "by_dn" {
-  distinguished_name = "cn=IT Team,ou=Groups,dc=example,dc=com"
+  dn = "cn=IT Team,ou=Groups,dc=example,dc=com"
 }
 
 # Lookup group by GUID
@@ -52,7 +52,7 @@ resource "ad_group_membership" "add_to_existing" {
 resource "ad_group" "child_group" {
   name             = "IT Support Team"
   sam_account_name = "ITSupport"
-  container        = dirname(data.ad_group.by_dn.distinguished_name)
+  container        = dirname(data.ad_group.by_dn.dn)
   scope            = data.ad_group.by_dn.scope
   category         = data.ad_group.by_dn.category
   description      = "Support team within ${data.ad_group.by_dn.name}"
@@ -62,18 +62,18 @@ resource "ad_group" "child_group" {
 output "group_details" {
   value = {
     domain_admins = {
-      name               = data.ad_group.existing_group.name
-      distinguished_name = data.ad_group.existing_group.distinguished_name
-      sid                = data.ad_group.existing_group.sid
-      scope              = data.ad_group.existing_group.scope
-      category           = data.ad_group.existing_group.category
-      member_count       = data.ad_group.existing_group.member_count
+      name         = data.ad_group.existing_group.name
+      dn           = data.ad_group.existing_group.dn
+      sid          = data.ad_group.existing_group.sid
+      scope        = data.ad_group.existing_group.scope
+      category     = data.ad_group.existing_group.category
+      member_count = data.ad_group.existing_group.member_count
     }
     it_team = {
-      name               = data.ad_group.by_dn.name
-      distinguished_name = data.ad_group.by_dn.distinguished_name
-      group_type         = data.ad_group.by_dn.group_type
-      description        = data.ad_group.by_dn.description
+      name        = data.ad_group.by_dn.name
+      dn          = data.ad_group.by_dn.dn
+      group_type  = data.ad_group.by_dn.group_type
+      description = data.ad_group.by_dn.description
     }
   }
 }

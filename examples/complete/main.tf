@@ -34,32 +34,32 @@ resource "ad_ou" "departments" {
 
 resource "ad_ou" "it_department" {
   name        = "IT Department"
-  path        = ad_ou.departments.distinguished_name
+  path        = ad_ou.departments.dn
   description = "Information Technology Department"
 }
 
 resource "ad_ou" "hr_department" {
   name        = "HR Department"
-  path        = ad_ou.departments.distinguished_name
+  path        = ad_ou.departments.dn
   description = "Human Resources Department"
 }
 
 # IT Department sub-structure
 resource "ad_ou" "it_teams" {
   name        = "Teams"
-  path        = ad_ou.it_department.distinguished_name
+  path        = ad_ou.it_department.dn
   description = "IT Department teams"
 }
 
 resource "ad_ou" "it_groups" {
   name        = "Groups"
-  path        = ad_ou.it_department.distinguished_name
+  path        = ad_ou.it_department.dn
   description = "IT Department groups"
 }
 
 resource "ad_ou" "it_service_accounts" {
   name                  = "Service Accounts"
-  path                  = ad_ou.it_department.distinguished_name
+  path                  = ad_ou.it_department.dn
   description           = "IT service accounts"
   protect_from_deletion = true
 }
@@ -74,7 +74,7 @@ resource "ad_ou" "it_team_ous" {
   ])
 
   name        = each.key
-  path        = ad_ou.it_teams.distinguished_name
+  path        = ad_ou.it_teams.dn
   description = "${each.key} team"
 }
 
@@ -84,7 +84,7 @@ resource "ad_group" "it_team_groups" {
 
   name             = "IT ${each.value.name} Team"
   sam_account_name = "IT${each.value.name}Team"
-  container        = ad_ou.it_groups.distinguished_name
+  container        = ad_ou.it_groups.dn
   scope            = "Global"
   category         = "Security"
   description      = "Members of the IT ${each.value.name} team"
@@ -112,7 +112,7 @@ resource "ad_group" "app_groups" {
 
   name             = each.value.name
   sam_account_name = each.value.sam
-  container        = ad_ou.it_groups.distinguished_name
+  container        = ad_ou.it_groups.dn
   scope            = "Global"
   category         = "Security"
   description      = each.value.desc
@@ -140,7 +140,7 @@ resource "ad_group" "distribution_groups" {
 
   name             = each.value.name
   sam_account_name = each.value.sam
-  container        = ad_ou.it_groups.distinguished_name
+  container        = ad_ou.it_groups.dn
   scope            = "Universal"
   category         = "Distribution"
   description      = each.value.desc
@@ -174,7 +174,7 @@ resource "ad_group_membership" "dev_team" {
   # Add users with "Developer" in their title
   members = [
     for user in data.ad_users.it_users.users :
-    user.distinguished_name
+    user.dn
     if user.title != null && contains(split(" ", lower(user.title)), "developer")
   ]
 }
@@ -185,7 +185,7 @@ resource "ad_group_membership" "ops_team" {
   # Add users with "Operations" or "Engineer" in their title
   members = [
     for user in data.ad_users.it_users.users :
-    user.distinguished_name
+    user.dn
     if user.title != null && (
       contains(split(" ", lower(user.title)), "operations") ||
       contains(split(" ", lower(user.title)), "engineer")
@@ -199,7 +199,7 @@ resource "ad_group_membership" "security_team" {
   # Add users with "Security" in their title
   members = [
     for user in data.ad_users.it_users.users :
-    user.distinguished_name
+    user.dn
     if user.title != null && contains(split(" ", lower(user.title)), "security")
   ]
 }
@@ -207,13 +207,13 @@ resource "ad_group_membership" "security_team" {
 # Add all IT users to general IT groups
 resource "ad_group_membership" "all_it_staff" {
   group_id = ad_group.distribution_groups["all_staff"].id
-  members  = data.ad_users.it_users.users[*].distinguished_name
+  members  = data.ad_users.it_users.users[*].dn
 }
 
 # Add managers to managers group
 resource "ad_group_membership" "all_managers" {
   group_id = ad_group.distribution_groups["managers"].id
-  members  = data.ad_users.managers.users[*].distinguished_name
+  members  = data.ad_users.managers.users[*].dn
 }
 
 # Create nested group structure for database access
@@ -233,7 +233,7 @@ resource "ad_group" "database_access_levels" {
 
   name             = each.value.name
   sam_account_name = each.value.sam
-  container        = ad_ou.it_groups.distinguished_name
+  container        = ad_ou.it_groups.dn
   scope            = "Global"
   category         = "Security"
   description      = each.value.desc
@@ -243,7 +243,7 @@ resource "ad_group" "database_access_levels" {
 resource "ad_group_membership" "database_nesting" {
   group_id = ad_group.database_access_levels["read_write"].id
   members = [
-    ad_group.database_access_levels["read_only"].distinguished_name
+    ad_group.database_access_levels["read_only"].dn
   ]
 }
 
@@ -251,7 +251,7 @@ resource "ad_group_membership" "database_nesting" {
 resource "ad_group_membership" "database_admins" {
   group_id = ad_group.app_groups["database_admins"].id
   members = [
-    ad_group.database_access_levels["read_write"].distinguished_name
+    ad_group.database_access_levels["read_write"].dn
   ]
 }
 
@@ -260,13 +260,13 @@ output "organizational_structure" {
   value = {
     departments = {
       it = {
-        dn         = ad_ou.it_department.distinguished_name
-        teams_ou   = ad_ou.it_teams.distinguished_name
-        groups_ou  = ad_ou.it_groups.distinguished_name
-        service_ou = ad_ou.it_service_accounts.distinguished_name
+        dn         = ad_ou.it_department.dn
+        teams_ou   = ad_ou.it_teams.dn
+        groups_ou  = ad_ou.it_groups.dn
+        service_ou = ad_ou.it_service_accounts.dn
       }
       hr = {
-        dn = ad_ou.hr_department.distinguished_name
+        dn = ad_ou.hr_department.dn
       }
     }
   }
@@ -278,7 +278,7 @@ output "group_structure" {
       for name, group in ad_group.it_team_groups :
       name => {
         name = group.name
-        dn   = group.distinguished_name
+        dn   = group.dn
         sid  = group.sid
       }
     }
@@ -287,7 +287,7 @@ output "group_structure" {
       for name, group in ad_group.app_groups :
       name => {
         name = group.name
-        dn   = group.distinguished_name
+        dn   = group.dn
         sid  = group.sid
       }
     }
@@ -296,7 +296,7 @@ output "group_structure" {
       for name, group in ad_group.distribution_groups :
       name => {
         name = group.name
-        dn   = group.distinguished_name
+        dn   = group.dn
         sid  = group.sid
       }
     }
@@ -323,7 +323,7 @@ resource "ad_group" "test_group" {
 
   name             = "Test Group"
   sam_account_name = "TestGroup"
-  container        = ad_ou.it_groups.distinguished_name
+  container        = ad_ou.it_groups.dn
   scope            = "Global"
   category         = "Security"
   description      = "Temporary test group"

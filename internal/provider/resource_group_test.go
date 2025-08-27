@@ -359,7 +359,7 @@ func testAccGroupResourceConfig_basic(name, samName string) string {
 resource "ad_group" "test" {
   name             = %[1]q
   sam_account_name = %[2]q
-  container        = "%[3]s,${data.ad_domain.test.distinguished_name}"
+  container        = "%[3]s,${data.ad_domain.test.dn}"
 }
 `, TestProviderConfig(), TestDomainDataSource(), name, samName, DefaultTestContainer)
 }
@@ -373,7 +373,7 @@ func testAccGroupResourceConfig_withDescription(name, samName, description strin
 resource "ad_group" "test" {
   name             = %[1]q
   sam_account_name = %[2]q
-  container        = "%[4]s,${data.ad_domain.test.distinguished_name}"
+  container        = "%[4]s,${data.ad_domain.test.dn}"
   description      = %[3]q
 }
 `, TestProviderConfig(), TestDomainDataSource(), name, samName, description, DefaultTestContainer)
@@ -388,7 +388,7 @@ func testAccGroupResourceConfig_scopeCategory(name, samName, scope, category str
 resource "ad_group" "test" {
   name             = %[1]q
   sam_account_name = %[2]q
-  container        = "%[5]s,${data.ad_domain.test.distinguished_name}"
+  container        = "%[5]s,${data.ad_domain.test.dn}"
   scope            = %[3]q
   category         = %[4]q
 }
@@ -546,7 +546,7 @@ func testAccGroupResourceConfig_withContainer(name, samName, container string) s
 resource "ad_group" "test" {
   name             = %[1]q
   sam_account_name = %[2]q
-  container        = "%[3]s,${data.ad_domain.test.distinguished_name}"
+  container        = "%[3]s,${data.ad_domain.test.dn}"
 }
 `, TestProviderConfig(), TestDomainDataSource(), name, samName, container)
 }
@@ -560,7 +560,7 @@ func testAccGroupResourceConfig_withContainerAndDescription(name, samName, conta
 resource "ad_group" "test" {
   name             = %[1]q
   sam_account_name = %[2]q
-  container        = "%[3]s,${data.ad_domain.test.distinguished_name}"
+  container        = "%[3]s,${data.ad_domain.test.dn}"
   description      = %[4]q
 }
 `, TestProviderConfig(), TestDomainDataSource(), name, samName, container, description)

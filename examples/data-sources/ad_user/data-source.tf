@@ -21,12 +21,12 @@ data "ad_user" "by_sam" {
 
 # Lookup user by Distinguished Name
 data "ad_user" "by_dn" {
-  distinguished_name = "cn=John Doe,cn=users,dc=example,dc=com"
+  dn = "cn=John Doe,cn=users,dc=example,dc=com"
 }
 
 # Lookup user by User Principal Name (UPN)
 data "ad_user" "by_upn" {
-  user_principal_name = "john.doe@example.com"
+  upn = "john.doe@example.com"
 }
 
 # Lookup user by GUID
@@ -43,8 +43,8 @@ data "ad_user" "by_sid" {
 resource "ad_group_membership" "user_groups" {
   group_id = data.ad_group.it_team.id
   members = [
-    data.ad_user.by_sam.distinguished_name,
-    data.ad_user.by_upn.distinguished_name
+    data.ad_user.by_sam.dn,
+    data.ad_user.by_upn.dn
   ]
 }
 
@@ -67,25 +67,25 @@ resource "ad_group" "department_group" {
 output "user_details" {
   value = {
     by_sam = {
-      name                = data.ad_user.by_sam.display_name
-      sam_account_name    = data.ad_user.by_sam.sam_account_name
-      user_principal_name = data.ad_user.by_sam.user_principal_name
-      distinguished_name  = data.ad_user.by_sam.distinguished_name
-      email               = data.ad_user.by_sam.email
-      department          = data.ad_user.by_sam.department
-      title               = data.ad_user.by_sam.title
-      office              = data.ad_user.by_sam.office
-      telephone           = data.ad_user.by_sam.telephone
-      enabled             = data.ad_user.by_sam.enabled
-      sid                 = data.ad_user.by_sam.sid
+      name             = data.ad_user.by_sam.display_name
+      sam_account_name = data.ad_user.by_sam.sam_account_name
+      upn              = data.ad_user.by_sam.upn
+      dn               = data.ad_user.by_sam.dn
+      email            = data.ad_user.by_sam.email
+      department       = data.ad_user.by_sam.department
+      title            = data.ad_user.by_sam.title
+      office           = data.ad_user.by_sam.office
+      telephone        = data.ad_user.by_sam.telephone
+      enabled          = data.ad_user.by_sam.enabled
+      sid              = data.ad_user.by_sam.sid
     }
     by_upn = {
-      name               = data.ad_user.by_upn.display_name
-      sam_account_name   = data.ad_user.by_upn.sam_account_name
-      distinguished_name = data.ad_user.by_upn.distinguished_name
-      manager            = data.ad_user.by_upn.manager
-      department         = data.ad_user.by_upn.department
-      company            = data.ad_user.by_upn.company
+      name             = data.ad_user.by_upn.display_name
+      sam_account_name = data.ad_user.by_upn.sam_account_name
+      dn               = data.ad_user.by_upn.dn
+      manager          = data.ad_user.by_upn.manager
+      department       = data.ad_user.by_upn.department
+      company          = data.ad_user.by_upn.company
     }
   }
 }
@@ -111,5 +111,5 @@ resource "ad_group_membership" "manager_membership" {
   count = local.is_manager ? 1 : 0
 
   group_id = ad_group.managers_group[0].id
-  members  = [data.ad_user.by_sam.distinguished_name]
+  members  = [data.ad_user.by_sam.dn]
 }

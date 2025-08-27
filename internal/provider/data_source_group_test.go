@@ -187,7 +187,7 @@ func testAccGroupDataSourceConfig_ByID() string {
 resource "ad_group" "test" {
   name               = "TestGroup"
   sam_account_name   = "TestGroup"
-  container          = "CN=Users,${data.ad_domain.test.distinguished_name}"
+  container          = "CN=Users,${data.ad_domain.test.dn}"
   scope              = "Global"
   category           = "Security"
   description        = "Test group for data source"
@@ -206,7 +206,7 @@ func testAccGroupDataSourceConfig_ByDN() string {
 resource "ad_group" "test" {
   name               = "TestGroup"
   sam_account_name   = "TestGroup"
-  container          = "CN=Users,${data.ad_domain.test.distinguished_name}"
+  container          = "CN=Users,${data.ad_domain.test.dn}"
   scope              = "Global"
   category           = "Security"
   description        = "Test group for data source"
@@ -225,7 +225,7 @@ func testAccGroupDataSourceConfig_ByName() string {
 resource "ad_group" "test" {
   name               = "TestGroup"
   sam_account_name   = "TestGroup"
-  container          = "CN=Users,${data.ad_domain.test.distinguished_name}"
+  container          = "CN=Users,${data.ad_domain.test.dn}"
   scope              = "Global"
   category           = "Security"
   description        = "Test group for data source"
@@ -245,7 +245,7 @@ func testAccGroupDataSourceConfig_BySAMAccountName() string {
 resource "ad_group" "test" {
   name               = "TestGroup"
   sam_account_name   = "TestGroup"
-  container          = "CN=Users,${data.ad_domain.test.distinguished_name}"
+  container          = "CN=Users,${data.ad_domain.test.dn}"
   scope              = "Global"
   category           = "Security"
   description        = "Test group for data source"
@@ -265,7 +265,7 @@ func testAccGroupDataSourceConfig_WithMembers() string {
 resource "ad_group" "test" {
   name               = "TestGroupWithMembers"
   sam_account_name   = "TestGroupWithMembers"
-  container          = "CN=Users,${data.ad_domain.test.distinguished_name}"
+  container          = "CN=Users,${data.ad_domain.test.dn}"
   scope              = "Global"
   category           = "Security"
   description        = "Test group with members for data source"
@@ -275,7 +275,7 @@ resource "ad_group" "test" {
 resource "ad_group" "member" {
   name               = "TestMemberGroup"
   sam_account_name   = "TestMemberGroup"
-  container          = "CN=Users,${data.ad_domain.test.distinguished_name}"
+  container          = "CN=Users,${data.ad_domain.test.dn}"
   scope              = "Global"
   category           = "Security"
   description        = "Test member group"
@@ -357,7 +357,7 @@ func testAccGroupDataSourceConfig_NotFoundByDN() string {
 %s
 
 data "ad_group" "test" {
-  dn = "CN=NonExistentGroup,CN=Users,${data.ad_domain.test.distinguished_name}"
+  dn = "CN=NonExistentGroup,CN=Users,${data.ad_domain.test.dn}"
 }
 `, testAccProviderConfig())
 }

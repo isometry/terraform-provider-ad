@@ -114,7 +114,7 @@ resource "ad_group" "app_admin_groups" {
 
   name             = "${each.value.name} Administrators"
   sam_account_name = "${each.value.sam_account_name}Admin"
-  container        = dirname(each.value.distinguished_name)
+  container        = dirname(each.value.dn)
   scope            = each.value.scope
   category         = "Security"
   description      = "Administrators for ${each.value.display_name}"

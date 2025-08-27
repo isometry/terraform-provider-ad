@@ -22,32 +22,32 @@ This provider uses:
 provider "ad" {
   # Primary connection method - domain name for SRV record discovery
   domain = "example.com"  # Uses _ldap._tcp.example.com SRV records
-  
+
   # Alternative: Direct LDAP server specification
   # ldap_url = "ldaps://dc1.example.com:636"
-  
+
   # Authentication
   username = "cn=terraform,ou=service accounts,dc=example,dc=com"
   password = var.ad_password
-  
+
   # Optional Kerberos authentication
   # krb_realm      = "EXAMPLE.COM"
   # krb_config     = "/etc/krb5.conf"
   # krb_keytab     = "/etc/terraform.keytab"
   # krb_ccache     = "/tmp/krb5cc_terraform"
-  
+
   # TLS Configuration
   tls_insecure_skip_verify = false
   tls_server_name         = "dc1.example.com"
   ca_cert_file           = "/etc/ssl/certs/ca-certificates.crt"
-  
+
   # Connection settings
   bind_timeout       = "30s"
   search_timeout     = "60s"
   connection_timeout = "10s"
   max_connections    = 10
   max_idle_time      = "300s"
-  
+
   # Search base DN (auto-discovered if not specified)
   base_dn = "dc=example,dc=com"
 }
@@ -81,18 +81,18 @@ resource "ad_group" "example" {
   name             = "Engineers"                    # Group name
   sam_account_name = "engineers"                   # Pre-Windows 2000 name
   container        = "ou=groups,dc=example,dc=com" # Parent container DN
-  
+
   # Optional
   description = "Engineering team group"
   scope       = "global"     # "global", "domainlocal", "universal"
   category    = "security"   # "security", "distribution"
-  
+
   # Advanced options
   notes           = "Created by Terraform"
   managed_by      = "cn=admin,ou=users,dc=example,dc=com"
   mail            = "engineers@example.com"
   display_name    = "Engineering Team"
-  
+
   # Computed (read-only)
   # id              = "550e8400-e29b-41d4-a716-446655440000" (objectGUID - Terraform resource ID)
   # dn              = "cn=Engineers,ou=groups,dc=example,dc=com"
@@ -127,7 +127,7 @@ Manages membership of an Active Directory group, supporting users, groups, and c
 ```hcl
 resource "ad_group_membership" "engineers" {
   group_id = ad_group.engineers.id
-  
+
   # Members can be specified by any identifier
   group_members = [
     "cn=john.doe,ou=users,dc=example,dc=com",        # Distinguished Name
@@ -182,12 +182,12 @@ resource "ad_ou" "engineering" {
   # Required
   name = "Engineering"
   path = "dc=example,dc=com"  # Parent container DN
-  
+
   # Optional
   description = "Engineering department organizational unit"
   protected   = true          # Protect from accidental deletion
   managed_by  = "cn=eng-admin,ou=users,dc=example,dc=com"
-  
+
   # Computed (read-only)
   # id           = "550e8400-e29b-41d4-a716-446655440000" (objectGUID - Terraform resource ID)
   # dn           = "ou=Engineering,dc=example,dc=com"
@@ -273,7 +273,7 @@ data "ad_search" "eng_security_groups" {
   search_base   = "ou=engineering,dc=example,dc=com"
   search_filter = "(&(objectClass=group)(groupType:1.2.840.113556.1.4.803:=2147483648))"
   search_scope  = "subtree"  # "base", "onelevel", "subtree"
-  
+
   # Optional: limit returned attributes for performance
   attributes = ["cn", "distinguishedName", "objectGUID", "sAMAccountName"]
 }
@@ -405,7 +405,7 @@ data "ad_user" "by_sid" {
 
 # Lookup by User Principal Name
 data "ad_user" "by_upn" {
-  user_principal_name = "john.doe@example.com"
+  upn = "john.doe@example.com"
 }
 
 # Lookup by SAM Account Name
@@ -422,15 +422,15 @@ output "user_info" {
     guid                  = data.ad_user.by_dn.guid                  # Same as id
     sid                   = data.ad_user.by_dn.sid
     sam_account_name      = data.ad_user.by_dn.sam_account_name
-    user_principal_name   = data.ad_user.by_dn.user_principal_name
-    
+    upn   = data.ad_user.by_dn.upn
+
     # Personal Information
     display_name          = data.ad_user.by_dn.display_name
     given_name           = data.ad_user.by_dn.given_name
     surname              = data.ad_user.by_dn.surname
     initials             = data.ad_user.by_dn.initials
     description          = data.ad_user.by_dn.description
-    
+
     # Contact Information
     email_address        = data.ad_user.by_dn.email_address
     home_phone           = data.ad_user.by_dn.home_phone
@@ -438,7 +438,7 @@ output "user_info" {
     office_phone         = data.ad_user.by_dn.office_phone
     fax                  = data.ad_user.by_dn.fax
     home_page            = data.ad_user.by_dn.home_page
-    
+
     # Address Information
     street_address       = data.ad_user.by_dn.street_address
     city                 = data.ad_user.by_dn.city
@@ -446,7 +446,7 @@ output "user_info" {
     postal_code          = data.ad_user.by_dn.postal_code
     country              = data.ad_user.by_dn.country
     po_box               = data.ad_user.by_dn.po_box
-    
+
     # Organizational Information
     title                = data.ad_user.by_dn.title
     department           = data.ad_user.by_dn.department
@@ -457,13 +457,13 @@ output "user_info" {
     office               = data.ad_user.by_dn.office
     division             = data.ad_user.by_dn.division
     organization         = data.ad_user.by_dn.organization
-    
+
     # System Information
     home_directory       = data.ad_user.by_dn.home_directory
     home_drive           = data.ad_user.by_dn.home_drive
     profile_path         = data.ad_user.by_dn.profile_path
     logon_script         = data.ad_user.by_dn.logon_script
-    
+
     # Security & Access
     account_enabled      = data.ad_user.by_dn.account_enabled
     password_never_expires = data.ad_user.by_dn.password_never_expires
@@ -473,11 +473,11 @@ output "user_info" {
     smart_card_logon_required = data.ad_user.by_dn.smart_card_logon_required
     trusted_for_delegation = data.ad_user.by_dn.trusted_for_delegation
     account_locked_out   = data.ad_user.by_dn.account_locked_out
-    
+
     # Group Memberships
     member_of            = data.ad_user.by_dn.member_of
     primary_group        = data.ad_user.by_dn.primary_group
-    
+
     # Timestamps
     when_created         = data.ad_user.by_dn.when_created
     when_changed         = data.ad_user.by_dn.when_changed
@@ -497,7 +497,7 @@ Only one of these attributes should be specified:
 | `dn` | string | Distinguished Name | `cn=john doe,ou=users,dc=example,dc=com` |
 | `guid` | string | objectGUID | `550e8400-e29b-41d4-a716-446655440000` |
 | `sid` | string | Security Identifier | `S-1-5-21-123456789-123456789-123456789-1001` |
-| `user_principal_name` | string | User Principal Name | `john.doe@example.com` |
+| `upn` | string | User Principal Name | `john.doe@example.com` |
 | `sam_account_name` | string | SAM Account Name | `john.doe` |
 
 ## LDAP-Specific Features
@@ -570,7 +570,7 @@ The provider maintains a pool of LDAP connections for efficient resource usage:
 ```hcl
 provider "ad" {
   domain = "example.com"
-  
+
   # TLS configuration
   tls_insecure_skip_verify = false
   tls_server_name         = "dc1.example.com"
@@ -587,12 +587,12 @@ provider "ad" {
 ```hcl
 provider "ad" {
   domain = "example.com"
-  
+
   # Kerberos with keytab
   krb_realm  = "EXAMPLE.COM"
   krb_keytab = "/etc/terraform.keytab"
   username   = "terraform"
-  
+
   # Alternative: Kerberos with password
   # username   = "terraform@EXAMPLE.COM"
   # password   = var.ad_password
@@ -623,7 +623,7 @@ data "ad_search" "all_engineers" {
 # Efficient group membership management
 resource "ad_group_membership" "engineering" {
   group_id = ad_group.engineering.id
-  
+
   # Bulk member addition using search results
   group_members = [
     for user in data.ad_search.all_engineers.results : user.distinguishedName

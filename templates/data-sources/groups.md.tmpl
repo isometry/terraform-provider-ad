@@ -44,7 +44,7 @@ output "department_groups" {
 data "ad_groups" "admin_groups" {
   container = "dc=example,dc=com"
   scope     = "subtree"
-  
+
   filter = {
     name_contains = "Admin"
     category      = "Security"
@@ -56,7 +56,7 @@ output "admin_groups_summary" {
   value = {
     for group in data.ad_groups.admin_groups.groups : group.sam_acgroup_count_name => {
       name         = group.display_name
-      dn           = group.distinguished_name
+      dn           = group.dn
       scope        = group.scope
       member_group_count = group.member_group_count
     }
@@ -71,7 +71,7 @@ output "admin_groups_summary" {
 data "ad_groups" "it_security_groups" {
   container = "ou=IT,ou=Departments,dc=example,dc=com"
   scope     = "onelevel"  # Only direct children
-  
+
   filter = {
     category = "Security"
     scope    = "Global"
@@ -82,7 +82,7 @@ data "ad_groups" "it_security_groups" {
 data "ad_groups" "email_lists" {
   container = "ou=Email Groups,dc=example,dc=com"
   scope     = "subtree"
-  
+
   filter = {
     category = "Distribution"
   }
@@ -95,7 +95,7 @@ data "ad_groups" "email_lists" {
 # Groups that start with "APP-"
 data "ad_groups" "application_groups" {
   container = "ou=Applications,dc=example,dc=com"
-  
+
   filter = {
     name_prefix = "APP-"
     category    = "Security"
@@ -105,7 +105,7 @@ data "ad_groups" "application_groups" {
 # Groups that end with "-Users"
 data "ad_groups" "user_groups" {
   container = "ou=Access Groups,dc=example,dc=com"
-  
+
   filter = {
     name_suffix = "-Users"
     scope       = "Global"
@@ -127,7 +127,7 @@ data "ad_groups" "project_groups" {
 # Find empty groups (no members)
 data "ad_groups" "empty_groups" {
   container = "ou=Cleanup,dc=example,dc=com"
-  
+
   filter = {
     has_members = false
   }
@@ -136,7 +136,7 @@ data "ad_groups" "empty_groups" {
 # Find groups with members (active groups)
 data "ad_groups" "active_groups" {
   container = "ou=Active Groups,dc=example,dc=com"
-  
+
   filter = {
     has_members = true
     category    = "Security"
@@ -151,7 +151,7 @@ data "ad_groups" "active_groups" {
 data "ad_groups" "app_security_groups" {
   container = "dc=example,dc=com"
   scope     = "subtree"
-  
+
   filter = {
     name_prefix = "APP-"
     name_suffix = "-SEC"
@@ -170,7 +170,7 @@ resource "ad_group" "app_admin_groups" {
 
   name             = "${each.value.name} Administrators"
   sam_acgroup_count_name = "${each.value.sam_acgroup_count_name}Admin"
-  container        = dirname(each.value.distinguished_name)
+  container        = dirname(each.value.dn)
   scope            = each.value.scope
   category         = "Security"
   description      = "Administrators for ${each.value.display_name}"
@@ -207,17 +207,17 @@ variable "search_ous" {
   type = list(string)
   default = [
     "ou=IT,dc=example,dc=com",
-    "ou=HR,dc=example,dc=com", 
+    "ou=HR,dc=example,dc=com",
     "ou=Finance,dc=example,dc=com"
   ]
 }
 
 data "ad_groups" "department_groups" {
   for_each = toset(var.search_ous)
-  
+
   container = each.value
   scope     = "onelevel"
-  
+
   filter = {
     category = "Security"
   }
@@ -247,7 +247,7 @@ output "all_departments_summary" {
 # Find service acgroup_count groups
 data "ad_groups" "service_groups" {
   container = "ou=Service Acgroup_counts,dc=example,dc=com"
-  
+
   filter = {
     name_suffix = "-Service"
     category    = "Security"
@@ -264,7 +264,7 @@ resource "ad_group" "service_admin_groups" {
 
   name             = replace(each.value.name, "-Service", "-Admin")
   sam_acgroup_count_name = replace(each.value.sam_acgroup_count_name, "Service", "Admin")
-  container        = dirname(each.value.distinguished_name)
+  container        = dirname(each.value.dn)
   scope            = each.value.scope
   category         = "Security"
   description      = "Administrators for ${each.value.display_name}"
@@ -275,7 +275,7 @@ resource "ad_group_membership" "service_to_admin" {
   for_each = ad_group.service_admin_groups
 
   group_id = each.value.id
-  members  = [data.ad_groups.service_groups.groups[index(data.ad_groups.service_groups.groups[*].sam_acgroup_count_name, replace(each.key, "Admin", "Service"))].distinguished_name]
+  members  = [data.ad_groups.service_groups.groups[index(data.ad_groups.service_groups.groups[*].sam_acgroup_count_name, replace(each.key, "Admin", "Service"))].dn]
 }
 ```
 
@@ -292,18 +292,18 @@ data "ad_groups" "all_groups" {
 locals {
   group_analysis = {
     total_groups = data.ad_groups.all_groups.group_count
-    
+
     by_category = {
       security     = length([for g in data.ad_groups.all_groups.groups : g if g.category == "Security"])
       distribution = length([for g in data.ad_groups.all_groups.groups : g if g.category == "Distribution"])
     }
-    
+
     by_scope = {
       global       = length([for g in data.ad_groups.all_groups.groups : g if g.scope == "Global"])
       universal    = length([for g in data.ad_groups.all_groups.groups : g if g.scope == "Universal"])
       domainlocal  = length([for g in data.ad_groups.all_groups.groups : g if g.scope == "DomainLocal"])
     }
-    
+
     empty_groups = length([for g in data.ad_groups.all_groups.groups : g if g.member_group_count == 0])
     large_groups = length([for g in data.ad_groups.all_groups.groups : g if g.member_group_count > 100])
   }
@@ -320,7 +320,7 @@ The `filter` block supports these search criteria:
 
 ### Name Pattern Filters
 - `name_prefix`: Groups whose name starts with the specified string
-- `name_suffix`: Groups whose name ends with the specified string  
+- `name_suffix`: Groups whose name ends with the specified string
 - `name_contains`: Groups whose name contains the specified string
 
 ### Group Type Filters
@@ -347,7 +347,7 @@ Each group in the results includes these attributes:
 - `name`: Common name (cn) of the group
 - `display_name`: Display name (same as name)
 - `sam_acgroup_count_name`: SAM acgroup_count name
-- `distinguished_name`: Full Distinguished Name
+- `dn`: Full Distinguished Name
 - `sid`: Security Identifier
 
 ### Classification
@@ -367,7 +367,7 @@ Each group in the results includes these attributes:
 data "ad_groups" "efficient_search" {
   container = "ou=Specific OU,dc=example,dc=com"  # Not the entire domain
   scope     = "onelevel"                          # Not subtree if unnecessary
-  
+
   filter = {
     category = "Security"  # Be as specific as possible
   }
@@ -379,7 +379,7 @@ data "ad_groups" "efficient_search" {
 # Stack multiple filter criteria for precise results
 data "ad_groups" "precise_search" {
   container = "ou=Applications,dc=example,dc=com"
-  
+
   filter = {
     name_prefix = "APP-"      # Application groups
     name_suffix = "-PROD"     # Production environment
@@ -396,7 +396,7 @@ data "ad_groups" "precise_search" {
 data "ad_groups" "manageable_search" {
   container = "ou=Department,dc=example,dc=com"
   scope     = "onelevel"
-  
+
   filter = {
     category = "Security"
   }
@@ -466,7 +466,7 @@ data "ad_groups" "broad_search" {
 data "ad_groups" "narrow_search" {
   container = "ou=Specific,dc=example,dc=com"
   scope     = "onelevel"
-  
+
   filter = {
     category = "Security"
   }

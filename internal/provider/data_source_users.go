@@ -67,14 +67,14 @@ type UserFilterModel struct {
 // UserDataModel describes a single user in the result set.
 type UserDataModel struct {
 	// Core identity
-	ID                types.String `tfsdk:"id"`                  // objectGUID
-	DistinguishedName types.String `tfsdk:"dn"`                  // full DN
-	UserPrincipalName types.String `tfsdk:"user_principal_name"` // UPN (user@domain.com)
-	SAMAccountName    types.String `tfsdk:"sam_account_name"`    // pre-Windows 2000 name
-	DisplayName       types.String `tfsdk:"display_name"`        // display name
-	GivenName         types.String `tfsdk:"given_name"`          // first name
-	Surname           types.String `tfsdk:"surname"`             // last name
-	EmailAddress      types.String `tfsdk:"email_address"`       // primary email
+	ID                types.String `tfsdk:"id"`               // objectGUID
+	DistinguishedName types.String `tfsdk:"dn"`               // full DN
+	UserPrincipalName types.String `tfsdk:"upn"`              // UPN (user@domain.com)
+	SAMAccountName    types.String `tfsdk:"sam_account_name"` // pre-Windows 2000 name
+	DisplayName       types.String `tfsdk:"display_name"`     // display name
+	GivenName         types.String `tfsdk:"given_name"`       // first name
+	Surname           types.String `tfsdk:"surname"`          // last name
+	EmailAddress      types.String `tfsdk:"email_address"`    // primary email
 
 	// Organizational information
 	Title      types.String `tfsdk:"title"`      // job title
@@ -137,7 +137,7 @@ func (d *UsersDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 							MarkdownDescription: "The full Distinguished Name of the user.",
 							Computed:            true,
 						},
-						"user_principal_name": schema.StringAttribute{
+						"upn": schema.StringAttribute{
 							MarkdownDescription: "The User Principal Name (UPN) of the user.",
 							Computed:            true,
 						},
@@ -406,22 +406,22 @@ func (d *UsersDataSource) mapUsersToModel(ctx context.Context, users []*ldapclie
 	// Define the object type for user elements
 	userObjectType := types.ObjectType{
 		AttrTypes: map[string]attr.Type{
-			"id":                  types.StringType,
-			"dn":                  types.StringType,
-			"user_principal_name": types.StringType,
-			"sam_account_name":    types.StringType,
-			"display_name":        types.StringType,
-			"given_name":          types.StringType,
-			"surname":             types.StringType,
-			"email_address":       types.StringType,
-			"title":               types.StringType,
-			"department":          types.StringType,
-			"company":             types.StringType,
-			"manager":             types.StringType,
-			"office":              types.StringType,
-			"account_enabled":     types.BoolType,
-			"when_created":        types.StringType,
-			"last_logon":          types.StringType,
+			"id":               types.StringType,
+			"dn":               types.StringType,
+			"upn":              types.StringType,
+			"sam_account_name": types.StringType,
+			"display_name":     types.StringType,
+			"given_name":       types.StringType,
+			"surname":          types.StringType,
+			"email_address":    types.StringType,
+			"title":            types.StringType,
+			"department":       types.StringType,
+			"company":          types.StringType,
+			"manager":          types.StringType,
+			"office":           types.StringType,
+			"account_enabled":  types.BoolType,
+			"when_created":     types.StringType,
+			"last_logon":       types.StringType,
 		},
 	}
 
@@ -435,22 +435,22 @@ func (d *UsersDataSource) mapUsersToModel(ctx context.Context, users []*ldapclie
 		}
 
 		userAttrs := map[string]attr.Value{
-			"id":                  types.StringValue(user.ObjectGUID),
-			"dn":                  types.StringValue(user.DistinguishedName),
-			"user_principal_name": types.StringValue(user.UserPrincipalName),
-			"sam_account_name":    types.StringValue(user.SAMAccountName),
-			"display_name":        types.StringValue(user.DisplayName),
-			"given_name":          types.StringValue(user.GivenName),
-			"surname":             types.StringValue(user.Surname),
-			"email_address":       types.StringValue(user.EmailAddress),
-			"title":               types.StringValue(user.Title),
-			"department":          types.StringValue(user.Department),
-			"company":             types.StringValue(user.Company),
-			"manager":             types.StringValue(user.Manager),
-			"office":              types.StringValue(user.Office),
-			"account_enabled":     types.BoolValue(user.AccountEnabled),
-			"when_created":        types.StringValue(user.WhenCreated.Format(time.RFC3339)),
-			"last_logon":          lastLogonValue,
+			"id":               types.StringValue(user.ObjectGUID),
+			"dn":               types.StringValue(user.DistinguishedName),
+			"upn":              types.StringValue(user.UserPrincipalName),
+			"sam_account_name": types.StringValue(user.SAMAccountName),
+			"display_name":     types.StringValue(user.DisplayName),
+			"given_name":       types.StringValue(user.GivenName),
+			"surname":          types.StringValue(user.Surname),
+			"email_address":    types.StringValue(user.EmailAddress),
+			"title":            types.StringValue(user.Title),
+			"department":       types.StringValue(user.Department),
+			"company":          types.StringValue(user.Company),
+			"manager":          types.StringValue(user.Manager),
+			"office":           types.StringValue(user.Office),
+			"account_enabled":  types.BoolValue(user.AccountEnabled),
+			"when_created":     types.StringValue(user.WhenCreated.Format(time.RFC3339)),
+			"last_logon":       lastLogonValue,
 		}
 
 		userObj, objDiags := types.ObjectValue(userObjectType.AttrTypes, userAttrs)

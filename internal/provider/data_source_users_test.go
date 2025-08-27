@@ -224,13 +224,13 @@ func TestAccUsersDataSource_userAttributes(t *testing.T) {
 					resource.TestCheckResourceAttrSet("data.ad_users.test", "users"),
 					// Check that each user in the list has the required attributes
 					resource.TestCheckTypeSetElemNestedAttrs("data.ad_users.test", "users.*", map[string]string{
-						"id":                  "", // Will be set to something
-						"distinguished_name":  "", // Will be set to something
-						"user_principal_name": "", // Will be set to something
-						"sam_account_name":    "", // Will be set to something
-						"display_name":        "", // Will be set to something
-						"account_enabled":     "", // Will be set to something
-						"when_created":        "", // Will be set to something
+						"id":               "", // Will be set to something
+						"dn":               "", // Will be set to something
+						"upn":              "", // Will be set to something
+						"sam_account_name": "", // Will be set to something
+						"display_name":     "", // Will be set to something
+						"account_enabled":  "", // Will be set to something
+						"when_created":     "", // Will be set to something
 					}),
 				),
 			},
@@ -348,7 +348,7 @@ func testAccUsersDataSourceConfig_combinedFilters() string {
 data "ad_users" "test" {
   container = "CN=Users,DC=example,DC=com"
   scope     = "subtree"
-  
+
   filter {
     name_contains = "test"
     enabled       = true

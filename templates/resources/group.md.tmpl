@@ -171,7 +171,7 @@ resource "ad_ou" "application_groups" {
 resource "ad_group" "app_users" {
   name             = "Application Users"
   sam_account_name = "AppUsers"
-  container        = ad_ou.application_groups.distinguished_name
+  container        = ad_ou.application_groups.dn
   scope            = "Global"
   category         = "Security"
   description      = "Users with access to the main application"
@@ -181,7 +181,7 @@ resource "ad_group" "app_users" {
 resource "ad_group" "app_admins" {
   name             = "Application Administrators"
   sam_account_name = "AppAdmins"
-  container        = ad_ou.application_groups.distinguished_name
+  container        = ad_ou.application_groups.dn
   scope            = "Global"
   category         = "Security"
   description      = "Administrators for the main application"
@@ -191,7 +191,7 @@ resource "ad_group" "app_admins" {
 resource "ad_group" "app_notifications" {
   name             = "Application Notifications"
   sam_account_name = "AppNotifications"
-  container        = ad_ou.application_groups.distinguished_name
+  container        = ad_ou.application_groups.dn
   scope            = "Universal"
   category         = "Distribution"
   description      = "Distribution list for application notifications"
@@ -201,7 +201,7 @@ resource "ad_group" "app_notifications" {
 output "app_users_group" {
   value = {
     id                = ad_group.app_users.id
-    distinguished_name = ad_group.app_users.distinguished_name
+    dn = ad_group.app_users.dn
     sid               = ad_group.app_users.sid
   }
 }
@@ -224,14 +224,14 @@ resource "ad_ou" "security_groups" {
 }
 
 resource "ad_ou" "distribution_groups" {
-  name = "Distribution Groups"  
+  name = "Distribution Groups"
   path = "dc=example,dc=com"
 }
 
 resource "ad_group" "security_group" {
   name             = "Resource Access"
   sam_account_name = "ResourceAccess"
-  container        = ad_ou.security_groups.distinguished_name
+  container        = ad_ou.security_groups.dn
   scope            = "Global"
   category         = "Security"
 }

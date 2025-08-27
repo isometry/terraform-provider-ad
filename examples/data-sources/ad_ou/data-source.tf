@@ -21,7 +21,7 @@ data "ad_ou" "departments" {
 
 # Lookup OU by Distinguished Name
 data "ad_ou" "by_dn" {
-  distinguished_name = "ou=IT Department,ou=Departments,dc=example,dc=com"
+  dn = "ou=IT Department,ou=Departments,dc=example,dc=com"
 }
 
 # Lookup OU by GUID
@@ -38,7 +38,7 @@ data "ad_ou" "by_path" {
 resource "ad_group" "department_group" {
   name             = "IT Department Staff"
   sam_account_name = "ITStaff"
-  container        = data.ad_ou.by_dn.distinguished_name
+  container        = data.ad_ou.by_dn.dn
   scope            = "Global"
   category         = "Security"
   description      = "All IT Department staff members"
@@ -47,7 +47,7 @@ resource "ad_group" "department_group" {
 # Create nested OU structure based on existing OU
 resource "ad_ou" "nested_ou" {
   name        = "Contractors"
-  path        = data.ad_ou.by_dn.distinguished_name
+  path        = data.ad_ou.by_dn.dn
   description = "Contractor accounts within ${data.ad_ou.by_dn.name}"
 }
 
@@ -60,7 +60,7 @@ resource "ad_ou" "sub_departments" {
   ])
 
   name        = each.key
-  path        = data.ad_ou.by_dn.distinguished_name
+  path        = data.ad_ou.by_dn.dn
   description = "${each.key} team within ${data.ad_ou.by_dn.name}"
 }
 
@@ -70,7 +70,7 @@ resource "ad_group" "sub_department_groups" {
 
   name             = "${each.value.name} Team"
   sam_account_name = "${each.value.name}Team"
-  container        = each.value.distinguished_name
+  container        = each.value.dn
   scope            = "Global"
   category         = "Security"
   description      = "Members of the ${each.value.name} team"
@@ -80,16 +80,16 @@ resource "ad_group" "sub_department_groups" {
 output "ou_details" {
   value = {
     departments = {
-      name               = data.ad_ou.departments.name
-      distinguished_name = data.ad_ou.departments.distinguished_name
-      description        = data.ad_ou.departments.description
-      protected          = data.ad_ou.departments.protect_from_deletion
+      name        = data.ad_ou.departments.name
+      dn          = data.ad_ou.departments.dn
+      description = data.ad_ou.departments.description
+      protected   = data.ad_ou.departments.protect_from_deletion
     }
     it_department = {
-      name               = data.ad_ou.by_dn.name
-      distinguished_name = data.ad_ou.by_dn.distinguished_name
-      description        = data.ad_ou.by_dn.description
-      protected          = data.ad_ou.by_dn.protect_from_deletion
+      name        = data.ad_ou.by_dn.name
+      dn          = data.ad_ou.by_dn.dn
+      description = data.ad_ou.by_dn.description
+      protected   = data.ad_ou.by_dn.protect_from_deletion
     }
   }
 }
@@ -99,14 +99,14 @@ output "created_structure" {
     sub_departments = {
       for name, ou in ad_ou.sub_departments :
       name => {
-        dn          = ou.distinguished_name
+        dn          = ou.dn
         description = ou.description
       }
     }
     groups = {
       for name, group in ad_group.sub_department_groups :
       name => {
-        dn        = group.distinguished_name
+        dn        = group.dn
         container = group.container
       }
     }

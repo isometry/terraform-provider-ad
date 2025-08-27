@@ -171,7 +171,7 @@ resource "ad_ou" "application_groups" {
 resource "ad_group" "app_users" {
   name             = "Application Users"
   sam_account_name = "AppUsers"
-  container        = ad_ou.application_groups.distinguished_name
+  container        = ad_ou.application_groups.dn
   scope            = "Global"
   category         = "Security"
   description      = "Users with access to the main application"
@@ -181,7 +181,7 @@ resource "ad_group" "app_users" {
 resource "ad_group" "app_admins" {
   name             = "Application Administrators"
   sam_account_name = "AppAdmins"
-  container        = ad_ou.application_groups.distinguished_name
+  container        = ad_ou.application_groups.dn
   scope            = "Global"
   category         = "Security"
   description      = "Administrators for the main application"
@@ -191,7 +191,7 @@ resource "ad_group" "app_admins" {
 resource "ad_group" "app_notifications" {
   name             = "Application Notifications"
   sam_account_name = "AppNotifications"
-  container        = ad_ou.application_groups.distinguished_name
+  container        = ad_ou.application_groups.dn
   scope            = "Universal"
   category         = "Distribution"
   description      = "Distribution list for application notifications"
@@ -201,7 +201,7 @@ resource "ad_group" "app_notifications" {
 output "app_users_group" {
   value = {
     id                = ad_group.app_users.id
-    distinguished_name = ad_group.app_users.distinguished_name
+    dn = ad_group.app_users.dn
     sid               = ad_group.app_users.sid
   }
 }
@@ -224,14 +224,14 @@ resource "ad_ou" "security_groups" {
 }
 
 resource "ad_ou" "distribution_groups" {
-  name = "Distribution Groups"  
+  name = "Distribution Groups"
   path = "dc=example,dc=com"
 }
 
 resource "ad_group" "security_group" {
   name             = "Resource Access"
   sam_account_name = "ResourceAccess"
-  container        = ad_ou.security_groups.distinguished_name
+  container        = ad_ou.security_groups.dn
   scope            = "Global"
   category         = "Security"
 }
@@ -308,7 +308,7 @@ resource "ad_group" "debug_group" {
 
 ### Read-Only
 
-- `distinguished_name` (String) The distinguished name of the group. This is automatically generated based on the name and container.
+- `dn` (String) The distinguished name of the group. This is automatically generated based on the name and container.
 - `group_type` (Number) The numeric group type value used internally by Active Directory. This is derived from the scope and category.
 - `id` (String) The objectGUID of the group. This is automatically assigned by Active Directory and used as the unique identifier.
 - `sid` (String) The Security Identifier (SID) of the group. This is automatically assigned by Active Directory.

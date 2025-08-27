@@ -180,7 +180,7 @@ func (g *TestDataGenerator) GenerateGroupConfig(name, samName string) string {
 resource "ad_group" "test" {
   name             = %[1]q
   sam_account_name = %[2]q
-  container        = "%[3]s,${data.ad_domain.test.distinguished_name}"
+  container        = "%[3]s,${data.ad_domain.test.dn}"
   scope            = "Global"
   category         = "Security"
 }`, name, samName, g.config.Container)
@@ -192,7 +192,7 @@ func (g *TestDataGenerator) GenerateGroupConfigWithDescription(name, samName, de
 resource "ad_group" "test" {
   name             = %[1]q
   sam_account_name = %[2]q
-  container        = "%[3]s,${data.ad_domain.test.distinguished_name}"
+  container        = "%[3]s,${data.ad_domain.test.dn}"
   scope            = "Global"
   category         = "Security"
   description      = %[4]q
@@ -204,7 +204,7 @@ func (g *TestDataGenerator) GenerateOUConfig(name string) string {
 	return fmt.Sprintf(`
 resource "ad_ou" "test" {
   name      = %[1]q
-  container = "${data.ad_domain.test.distinguished_name}"
+  container = "${data.ad_domain.test.dn}"
 }`, name)
 }
 
@@ -213,7 +213,7 @@ func (g *TestDataGenerator) GenerateOUConfigWithDescription(name, description st
 	return fmt.Sprintf(`
 resource "ad_ou" "test" {
   name        = %[1]q
-  container   = "${data.ad_domain.test.distinguished_name}"
+  container   = "${data.ad_domain.test.dn}"
   description = %[2]q
 }`, name, description)
 }

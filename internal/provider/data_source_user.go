@@ -34,11 +34,11 @@ type UserDataSource struct {
 // UserDataSourceModel describes the data source data model with multiple lookup methods.
 type UserDataSourceModel struct {
 	// Lookup methods (mutually exclusive)
-	ID                types.String `tfsdk:"id"`                  // objectGUID lookup
-	DistinguishedName types.String `tfsdk:"dn"`                  // Distinguished Name lookup
-	UserPrincipalName types.String `tfsdk:"user_principal_name"` // UPN lookup (user@domain.com)
-	SAMAccountName    types.String `tfsdk:"sam_account_name"`    // SAM account name lookup
-	SID               types.String `tfsdk:"sid"`                 // Security Identifier lookup
+	ID                types.String `tfsdk:"id"`               // objectGUID lookup
+	DistinguishedName types.String `tfsdk:"dn"`               // Distinguished Name lookup
+	UserPrincipalName types.String `tfsdk:"upn"`              // UPN lookup (user@domain.com)
+	SAMAccountName    types.String `tfsdk:"sam_account_name"` // SAM account name lookup
+	SID               types.String `tfsdk:"sid"`              // Security Identifier lookup
 
 	// Core identity attributes (all computed)
 	ObjectGUID  types.String `tfsdk:"object_guid"`  // objectGUID
@@ -128,7 +128,7 @@ func (d *UserDataSource) Schema(ctx context.Context, req datasource.SchemaReques
 				Optional: true,
 				Computed: true,
 			},
-			"user_principal_name": schema.StringAttribute{
+			"upn": schema.StringAttribute{
 				MarkdownDescription: "The User Principal Name (UPN) of the user to retrieve. " +
 					"Example: `john.doe@example.com`",
 				Optional: true,
@@ -366,7 +366,7 @@ func (d *UserDataSource) ConfigValidators(ctx context.Context) []datasource.Conf
 		datasourcevalidator.ExactlyOneOf(
 			path.MatchRoot("id"),
 			path.MatchRoot("dn"),
-			path.MatchRoot("user_principal_name"),
+			path.MatchRoot("upn"),
 			path.MatchRoot("sam_account_name"),
 			path.MatchRoot("sid"),
 		),

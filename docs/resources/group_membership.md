@@ -121,8 +121,8 @@ resource "ad_group" "administrators" {
 resource "ad_group_membership" "all_users_nested" {
   group_id = ad_group.all_users.id
   members = [
-    ad_group.developers.distinguished_name,
-    ad_group.administrators.distinguished_name,
+    ad_group.developers.dn,
+    ad_group.administrators.dn,
     # Also add individual users
     "globaladmin@example.com"
   ]
@@ -147,8 +147,8 @@ resource "ad_group_membership" "marketing_group" {
   group_id = ad_group.marketing.id
   # Use toset() to convert list to set as required by the resource
   members = toset(concat(
-    data.ad_users.marketing_users.users[*].user_principal_name,
-    data.ad_users.managers.users[*].user_principal_name
+    data.ad_users.marketing_users.users[*].upn,
+    data.ad_users.managers.users[*].upn
   ))
 }
 ```
@@ -162,12 +162,12 @@ resource "ad_group_membership" "service_access" {
     # Service accounts
     "CN=App Service,OU=Service Accounts,DC=example,DC=com",
     "CN=Web Service,OU=Service Accounts,DC=example,DC=com",
-    
+
     # Computer accounts (note the $ suffix)
     "EXAMPLE\\webserver01$",
     "EXAMPLE\\appserver01$",
     "CN=DATABASE01,OU=Servers,DC=example,DC=com",
-    
+
     # Mix with user accounts
     "serviceadmin@example.com"
   ]
@@ -217,10 +217,10 @@ data "ad_users" "contractors" {
 # Conditional membership based on variable
 resource "ad_group_membership" "project_access" {
   group_id = ad_group.project.id
-  
+
   members = toset(concat(
-    data.ad_users.employees.users[*].distinguished_name,
-    var.include_contractors ? data.ad_users.contractors.users[*].distinguished_name : []
+    data.ad_users.employees.users[*].dn,
+    var.include_contractors ? data.ad_users.contractors.users[*].dn : []
   ))
 }
 ```
@@ -241,7 +241,7 @@ locals {
       "CN=Dev Service,OU=Service Accounts,DC=example,DC=com"
     ]
     "prod" = [
-      "prod-team@example.com", 
+      "prod-team@example.com",
       "CN=Prod Service,OU=Service Accounts,DC=example,DC=com",
       "operations@example.com"
     ]
@@ -301,16 +301,16 @@ resource "ad_group" "all_employees" {
 # Break down by department
 resource "ad_group_membership" "it_department" {
   group_id = ad_group.it_department.id
-  members  = toset(data.ad_users.it_users.users[*].user_principal_name)
+  members  = toset(data.ad_users.it_users.users[*].upn)
 }
 
 # Then add department groups to the main group
 resource "ad_group_membership" "all_employees" {
   group_id = ad_group.all_employees.id
   members = [
-    ad_group.it_department.distinguished_name,
-    ad_group.hr_department.distinguished_name,
-    ad_group.finance_department.distinguished_name
+    ad_group.it_department.dn,
+    ad_group.hr_department.dn,
+    ad_group.finance_department.dn
   ]
 }
 ```
@@ -380,15 +380,15 @@ resource "ad_group_membership" "debug" {
 ```terraform
 # Use data sources to validate members exist before adding
 data "ad_user" "validate_user" {
-  user_principal_name = "user@example.com"
+  upn = "user@example.com"
 }
 
 resource "ad_group_membership" "validated" {
   group_id = ad_group.example.id
   members = [
-    data.ad_user.validate_user.user_principal_name
+    data.ad_user.validate_user.upn
   ]
-  
+
   # This ensures the user exists before attempting membership
   depends_on = [data.ad_user.validate_user]
 }
@@ -400,7 +400,7 @@ resource "ad_group_membership" "validated" {
 ### Required
 
 - `group_id` (String) The objectGUID of the group whose membership is being managed. This must be the GUID of an existing Active Directory group.
-- `members` (Set of String) Set of group member identifiers. Members can be specified using any supported identifier format (DN, UPN, SAM, GUID, or SID). The resource automatically normalizes all identifiers to distinguished names to prevent configuration drift. **Note**: This resource manages the complete membership set - members not listed here will be removed from the group.
+- `members` (Set of Dynamic) Set of group member identifiers. Members can be specified using any supported identifier format (DN, UPN, SAM, GUID, or SID). The resource automatically normalizes all identifiers to distinguished names to prevent configuration drift. **Note**: This resource manages the complete membership set - members not listed here will be removed from the group.
 
 ### Read-Only
 

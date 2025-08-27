@@ -17,7 +17,7 @@ func TestAccUserDataSource(t *testing.T) {
 			{
 				Config: testAccUserDataSourceConfig_byUPN("testuser@example.com"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("data.ad_user.test", "user_principal_name", "testuser@example.com"),
+					resource.TestCheckResourceAttr("data.ad_user.test", "upn", "testuser@example.com"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "id"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "object_guid"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "dn"),
@@ -43,7 +43,7 @@ func TestAccUserDataSource_byDN(t *testing.T) {
 					resource.TestCheckResourceAttr("data.ad_user.test", "dn", "CN=Test User,CN=Users,DC=example,DC=com"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "id"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "object_guid"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "user_principal_name"),
+					resource.TestCheckResourceAttrSet("data.ad_user.test", "upn"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "sam_account_name"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "display_name"),
 				),
@@ -63,7 +63,7 @@ func TestAccUserDataSource_byGUID(t *testing.T) {
 					resource.TestCheckResourceAttr("data.ad_user.test", "object_guid", "550e8400-e29b-41d4-a716-446655440000"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "id"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "dn"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "user_principal_name"),
+					resource.TestCheckResourceAttrSet("data.ad_user.test", "upn"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "sam_account_name"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "display_name"),
 				),
@@ -84,7 +84,7 @@ func TestAccUserDataSource_bySAM(t *testing.T) {
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "id"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "object_guid"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "dn"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "user_principal_name"),
+					resource.TestCheckResourceAttrSet("data.ad_user.test", "upn"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "display_name"),
 				),
 			},
@@ -104,7 +104,7 @@ func TestAccUserDataSource_bySID(t *testing.T) {
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "id"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "object_guid"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "dn"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "user_principal_name"),
+					resource.TestCheckResourceAttrSet("data.ad_user.test", "upn"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "sam_account_name"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "display_name"),
 				),
@@ -126,7 +126,7 @@ func TestAccUserDataSource_allAttributes(t *testing.T) {
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "object_guid"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "object_sid"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "dn"),
-					resource.TestCheckResourceAttr("data.ad_user.test", "user_principal_name", "fulluser@example.com"),
+					resource.TestCheckResourceAttr("data.ad_user.test", "upn", "fulluser@example.com"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "sam_account_name"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "display_name"),
 
@@ -186,7 +186,7 @@ func TestAccUserDataSource_configValidation(t *testing.T) {
 func testAccUserDataSourceConfig_byUPN(upn string) string {
 	return fmt.Sprintf(`
 data "ad_user" "test" {
-  user_principal_name = %[1]q
+  upn = %[1]q
 }
 `, upn)
 }
@@ -233,7 +233,7 @@ data "ad_user" "test" {
 func testAccUserDataSourceConfig_multipleLookupMethods() string {
 	return `
 data "ad_user" "test" {
-  user_principal_name = "test@example.com"
+  upn = "test@example.com"
   sam_account_name    = "test"
 }
 `

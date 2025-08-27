@@ -34,7 +34,7 @@ Lookup by email-like identifier:
 
 ```terraform
 data "ad_user" "by_upn" {
-  user_principal_name = "john.doe@example.com"
+  upn = "john.doe@example.com"
 }
 ```
 
@@ -63,7 +63,7 @@ data "ad_user" "by_sam" {
 ```terraform
 # Get information about a user
 data "ad_user" "john_doe" {
-  user_principal_name = "john.doe@example.com"
+  upn = "john.doe@example.com"
 }
 
 # Output user information
@@ -85,7 +85,7 @@ output "user_info" {
 ```terraform
 # Find a department manager
 data "ad_user" "dept_manager" {
-  user_principal_name = "manager@example.com"
+  upn = "manager@example.com"
 }
 
 # Create a group for the manager's department
@@ -101,7 +101,7 @@ resource "ad_group" "dept_group" {
 # Add the manager to the group
 resource "ad_group_membership" "manager_membership" {
   group_id = ad_group.dept_group.id
-  members  = [data.ad_user.dept_manager.distinguished_name]
+  members  = [data.ad_user.dept_manager.dn]
 }
 ```
 
@@ -118,12 +118,12 @@ locals {
     [for group in data.ad_user.admin_user.member_of : lower(group)],
     lower("CN=Domain Admins,CN=Users,DC=example,DC=com")
   )
-  
+
   is_enterprise_admin = contains(
     [for group in data.ad_user.admin_user.member_of : lower(group)],
     lower("CN=Enterprise Admins,CN=Users,DC=example,DC=com")
   )
-  
+
   admin_groups = [
     for group in data.ad_user.admin_user.member_of :
     group if can(regex("(?i)admin", group))
@@ -151,7 +151,7 @@ variable "manager_upn" {
 }
 
 data "ad_user" "manager" {
-  user_principal_name = var.manager_upn
+  upn = var.manager_upn
 }
 
 # Find all users in the organization
@@ -164,7 +164,7 @@ data "ad_users" "all_users" {
 locals {
   direct_reports = [
     for user in data.ad_users.all_users.users :
-    user if user.manager == data.ad_user.manager.distinguished_name
+    user if user.manager == data.ad_user.manager.dn
   ]
 }
 
@@ -174,7 +174,7 @@ data "ad_user" "direct_reports" {
     for user in local.direct_reports :
     user.sam_account_name => user
   }
-  
+
   sam_account_name = each.key
 }
 
@@ -214,8 +214,8 @@ variable "service_accounts" {
 
 data "ad_user" "service_accounts" {
   for_each = toset(var.service_accounts)
-  
-  user_principal_name = each.value
+
+  upn = each.value
 }
 
 # Generate service account report
@@ -254,7 +254,7 @@ output "alerts" {
 ```terraform
 # Find users needing specific access
 data "ad_user" "privileged_user" {
-  user_principal_name = var.user_upn
+  upn = var.user_upn
 }
 
 # Conditional group membership based on user attributes
@@ -263,15 +263,15 @@ resource "ad_group_membership" "conditional_access" {
     data.ad_user.privileged_user.department == "IT" &&
     data.ad_user.privileged_user.enabled
   ) ? 1 : 0
-  
+
   group_id = data.ad_group.it_access.id
-  members  = [data.ad_user.privileged_user.distinguished_name]
+  members  = [data.ad_user.privileged_user.dn]
 }
 
 # Create user-specific OU if manager
 resource "ad_ou" "manager_ou" {
   count = can(regex("(?i)manager|director|vp", data.ad_user.privileged_user.title)) ? 1 : 0
-  
+
   name        = "${data.ad_user.privileged_user.display_name} Team"
   path        = "OU=${data.ad_user.privileged_user.department},OU=Departments,DC=example,DC=com"
   description = "OU for ${data.ad_user.privileged_user.display_name}'s team"
@@ -287,7 +287,7 @@ variable "user_list" {
   type = list(string)
   default = [
     "admin1@example.com",
-    "admin2@example.com", 
+    "admin2@example.com",
     "admin3@example.com"
   ]
 }
@@ -295,8 +295,8 @@ variable "user_list" {
 # Lookup all users
 data "ad_user" "admin_users" {
   for_each = toset(var.user_list)
-  
-  user_principal_name = each.value
+
+  upn = each.value
 }
 
 # Create admin summary
@@ -319,7 +319,7 @@ locals {
   all_admin_groups = flatten([
     for user in data.ad_user.admin_users : user.member_of
   ])
-  
+
   common_groups = [
     for group in distinct(local.all_admin_groups) :
     group if length([
@@ -340,8 +340,8 @@ All attributes are computed (read-only) and provide comprehensive user informati
 
 ### Identification Attributes
 - `id`: ObjectGUID of the user
-- `distinguished_name`: Full Distinguished Name
-- `user_principal_name`: User Principal Name (UPN)
+- `dn`: Full Distinguished Name
+- `upn`: User Principal Name (UPN)
 - `sam_account_name`: SAM account name
 - `display_name`: Display name
 - `sid`: Security Identifier
@@ -384,7 +384,7 @@ All attributes are computed (read-only) and provide comprehensive user informati
 ```terraform
 # Prefer UPN for user lookups (commonly available)
 data "ad_user" "by_upn" {
-  user_principal_name = "user@example.com"
+  upn = "user@example.com"
 }
 
 # Use GUID when available (most efficient)
@@ -402,12 +402,12 @@ data "ad_user" "by_sam" {
 ```terraform
 # For repeated user access, use locals
 data "ad_user" "frequently_referenced" {
-  user_principal_name = "admin@example.com"
+  upn = "admin@example.com"
 }
 
 locals {
   admin_user = {
-    dn         = data.ad_user.frequently_referenced.distinguished_name
+    dn         = data.ad_user.frequently_referenced.dn
     department = data.ad_user.frequently_referenced.department
     enabled    = data.ad_user.frequently_referenced.enabled
   }
@@ -432,9 +432,9 @@ locals {
 # Conditional resource creation
 resource "ad_group_membership" "conditional" {
   count = local.user_exists && local.optional_user.enabled ? 1 : 0
-  
+
   group_id = ad_group.example.id
-  members  = [local.optional_user.distinguished_name]
+  members  = [local.optional_user.dn]
 }
 ```
 
@@ -452,7 +452,7 @@ resource "ad_group_membership" "conditional" {
    ```
    Error: Only one lookup method can be specified
    ```
-   Use only one of: `id`, `dn`, `user_principal_name`, or `sam_account_name`.
+   Use only one of: `id`, `dn`, `upn`, or `sam_account_name`.
 
 3. **Permission Issues**
    ```
@@ -465,7 +465,7 @@ resource "ad_group_membership" "conditional" {
 ```terraform
 # Debug user lookup
 data "ad_user" "debug_user" {
-  user_principal_name = "debug@example.com"
+  upn = "debug@example.com"
 }
 
 # Output comprehensive user information
@@ -473,31 +473,31 @@ output "debug_user_info" {
   value = {
     # Identity
     id                  = data.ad_user.debug_user.id
-    dn                  = data.ad_user.debug_user.distinguished_name
-    upn                 = data.ad_user.debug_user.user_principal_name
+    dn                  = data.ad_user.debug_user.dn
+    upn                 = data.ad_user.debug_user.upn
     sam                 = data.ad_user.debug_user.sam_account_name
     display_name        = data.ad_user.debug_user.display_name
-    
+
     # Personal
     given_name          = data.ad_user.debug_user.given_name
     surname             = data.ad_user.debug_user.surname
     email               = data.ad_user.debug_user.email_address
-    
+
     # Organizational
     department          = data.ad_user.debug_user.department
     title               = data.ad_user.debug_user.title
     manager             = data.ad_user.debug_user.manager
     direct_reports      = data.ad_user.debug_user.direct_reports
-    
+
     # Account Status
     enabled             = data.ad_user.debug_user.enabled
     locked_out          = data.ad_user.debug_user.locked_out
     password_expired    = data.ad_user.debug_user.password_expired
-    
+
     # Timestamps
     created             = data.ad_user.debug_user.created
     last_logon          = data.ad_user.debug_user.last_logon
-    
+
     # Memberships
     group_count         = length(data.ad_user.debug_user.member_of)
     first_few_groups    = slice(data.ad_user.debug_user.member_of, 0, min(5, length(data.ad_user.debug_user.member_of)))
