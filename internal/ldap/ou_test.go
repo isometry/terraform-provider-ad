@@ -113,7 +113,7 @@ func (m *MockOUClient) WhoAmI(ctx context.Context) (*WhoAmIResult, error) {
 
 func TestOUManager_BuildOUDN(t *testing.T) {
 	client := &MockOUClient{}
-	manager := NewOUManager(client, "dc=example,dc=com")
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
 
 	tests := []struct {
 		name     string
@@ -151,7 +151,7 @@ func TestOUManager_BuildOUDN(t *testing.T) {
 
 func TestOUManager_ValidateOUHierarchy(t *testing.T) {
 	client := &MockOUClient{}
-	manager := NewOUManager(client, "dc=example,dc=com")
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
 
 	tests := []struct {
 		name     string
@@ -205,7 +205,7 @@ func TestOUManager_ValidateOUHierarchy(t *testing.T) {
 
 func TestOUManager_ValidateOURequest(t *testing.T) {
 	client := &MockOUClient{}
-	manager := NewOUManager(client, "dc=example,dc=com")
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
 
 	tests := []struct {
 		name    string
@@ -275,9 +275,8 @@ func TestOUManager_ValidateOURequest(t *testing.T) {
 
 func TestOUManager_CreateOU(t *testing.T) {
 	client := &MockOUClient{}
-	manager := NewOUManager(client, "dc=example,dc=com")
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
 
-	ctx := context.Background()
 	testTime := time.Now()
 
 	req := &CreateOURequest{
@@ -314,7 +313,7 @@ func TestOUManager_CreateOU(t *testing.T) {
 	}
 
 	// Mock successful add operation
-	client.On("Add", ctx, mock.MatchedBy(func(addReq *AddRequest) bool {
+	client.On("Add", mock.Anything, mock.MatchedBy(func(addReq *AddRequest) bool {
 		return addReq.DN == expectedAddReq.DN &&
 			assert.Equal(t, expectedAddReq.Attributes, addReq.Attributes)
 	})).Return(nil)
@@ -332,14 +331,14 @@ func TestOUManager_CreateOU(t *testing.T) {
 		HasMore: false,
 	}
 
-	client.On("Search", ctx, mock.MatchedBy(func(req *SearchRequest) bool {
+	client.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 		return req.BaseDN == searchReq.BaseDN &&
 			req.Scope == searchReq.Scope &&
 			req.Filter == searchReq.Filter
 	})).Return(searchResult, nil)
 
 	// Execute test
-	result, err := manager.CreateOU(ctx, req)
+	result, err := manager.CreateOU(req)
 
 	// Assertions
 	require.NoError(t, err)
@@ -355,9 +354,8 @@ func TestOUManager_CreateOU(t *testing.T) {
 
 func TestOUManager_GetOU(t *testing.T) {
 	client := &MockOUClient{}
-	manager := NewOUManager(client, "dc=example,dc=com")
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
 
-	ctx := context.Background()
 	testGUID := "12345678-1234-1234-1234-123456789012"
 	testGUIDBytes := []byte{0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12}
 	testTime := time.Now()
@@ -382,13 +380,13 @@ func TestOUManager_GetOU(t *testing.T) {
 	}
 
 	// Mock GUID search
-	client.On("Search", ctx, mock.MatchedBy(func(req *SearchRequest) bool {
+	client.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 		return strings.Contains(req.Filter, "objectGUID") &&
 			strings.Contains(req.Filter, "objectClass=organizationalUnit")
 	})).Return(searchResult, nil)
 
 	// Execute test
-	result, err := manager.GetOU(ctx, testGUID)
+	result, err := manager.GetOU(testGUID)
 
 	// Assertions
 	require.NoError(t, err)
@@ -404,9 +402,8 @@ func TestOUManager_GetOU(t *testing.T) {
 
 func TestOUManager_GetOU_NotFound(t *testing.T) {
 	client := &MockOUClient{}
-	manager := NewOUManager(client, "dc=example,dc=com")
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
 
-	ctx := context.Background()
 	testGUID := "12345678-1234-1234-1234-123456789012"
 
 	// Mock empty search result
@@ -416,10 +413,10 @@ func TestOUManager_GetOU_NotFound(t *testing.T) {
 		HasMore: false,
 	}
 
-	client.On("Search", ctx, mock.AnythingOfType("*ldap.SearchRequest")).Return(searchResult, nil)
+	client.On("Search", mock.Anything, mock.AnythingOfType("*ldap.SearchRequest")).Return(searchResult, nil)
 
 	// Execute test
-	result, err := manager.GetOU(ctx, testGUID)
+	result, err := manager.GetOU(testGUID)
 
 	// Assertions
 	assert.Error(t, err)
@@ -431,9 +428,8 @@ func TestOUManager_GetOU_NotFound(t *testing.T) {
 
 func TestOUManager_UpdateOU(t *testing.T) {
 	client := &MockOUClient{}
-	manager := NewOUManager(client, "dc=example,dc=com")
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
 
-	ctx := context.Background()
 	testGUID := "12345678-1234-1234-1234-123456789012"
 	testGUIDBytes := []byte{0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12}
 	testTime := time.Now()
@@ -477,7 +473,7 @@ func TestOUManager_UpdateOU(t *testing.T) {
 	}
 
 	// Mock getting current OU
-	client.On("Search", ctx, mock.AnythingOfType("*ldap.SearchRequest")).Return(searchResult, nil).Once()
+	client.On("Search", mock.Anything, mock.AnythingOfType("*ldap.SearchRequest")).Return(searchResult, nil).Once()
 
 	// Mock modify operation
 	expectedModReq := &ModifyRequest{
@@ -488,12 +484,12 @@ func TestOUManager_UpdateOU(t *testing.T) {
 		},
 	}
 
-	client.On("Modify", ctx, mock.MatchedBy(func(modReq *ModifyRequest) bool {
+	client.On("Modify", mock.Anything, mock.MatchedBy(func(modReq *ModifyRequest) bool {
 		return modReq.DN == expectedModReq.DN
 	})).Return(nil)
 
 	// Mock getting updated OU
-	client.On("Search", ctx, mock.AnythingOfType("*ldap.SearchRequest")).Return(updatedSearchResult, nil).Once()
+	client.On("Search", mock.Anything, mock.AnythingOfType("*ldap.SearchRequest")).Return(updatedSearchResult, nil).Once()
 
 	// Update request
 	newName := "UpdatedOU"
@@ -504,7 +500,7 @@ func TestOUManager_UpdateOU(t *testing.T) {
 	}
 
 	// Execute test
-	result, err := manager.UpdateOU(ctx, testGUID, updateReq)
+	result, err := manager.UpdateOU(testGUID, updateReq)
 
 	// Assertions
 	require.NoError(t, err)
@@ -519,9 +515,8 @@ func TestOUManager_UpdateOU(t *testing.T) {
 
 func TestOUManager_DeleteOU(t *testing.T) {
 	client := &MockOUClient{}
-	manager := NewOUManager(client, "dc=example,dc=com")
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
 
-	ctx := context.Background()
 	testGUID := "12345678-1234-1234-1234-123456789012"
 	testGUIDBytes := []byte{0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12}
 
@@ -543,13 +538,13 @@ func TestOUManager_DeleteOU(t *testing.T) {
 	}
 
 	// Mock getting OU for deletion check
-	client.On("Search", ctx, mock.AnythingOfType("*ldap.SearchRequest")).Return(searchResult, nil)
+	client.On("Search", mock.Anything, mock.AnythingOfType("*ldap.SearchRequest")).Return(searchResult, nil)
 
 	// Mock delete operation
-	client.On("Delete", ctx, "OU=TestOU,dc=example,dc=com").Return(nil)
+	client.On("Delete", mock.Anything, "OU=TestOU,dc=example,dc=com").Return(nil)
 
 	// Execute test
-	err := manager.DeleteOU(ctx, testGUID)
+	err := manager.DeleteOU(testGUID)
 
 	// Assertions
 	require.NoError(t, err)
@@ -559,9 +554,8 @@ func TestOUManager_DeleteOU(t *testing.T) {
 
 func TestOUManager_DeleteOU_Protected(t *testing.T) {
 	client := &MockOUClient{}
-	manager := NewOUManager(client, "dc=example,dc=com")
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
 
-	ctx := context.Background()
 	testGUID := "12345678-1234-1234-1234-123456789012"
 	testGUIDBytes := []byte{0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12}
 
@@ -585,12 +579,12 @@ func TestOUManager_DeleteOU_Protected(t *testing.T) {
 	}
 
 	// Mock getting OU for deletion check
-	client.On("Search", ctx, mock.AnythingOfType("*ldap.SearchRequest")).Return(searchResult, nil)
+	client.On("Search", mock.Anything, mock.AnythingOfType("*ldap.SearchRequest")).Return(searchResult, nil)
 
 	// Note: We do NOT mock Delete() call because it should not be called for protected OUs
 
 	// Execute test
-	err := manager.DeleteOU(ctx, testGUID)
+	err := manager.DeleteOU(testGUID)
 
 	// Assertions
 	assert.Error(t, err)
@@ -601,9 +595,8 @@ func TestOUManager_DeleteOU_Protected(t *testing.T) {
 
 func TestOUManager_SearchOUs(t *testing.T) {
 	client := &MockOUClient{}
-	manager := NewOUManager(client, "dc=example,dc=com")
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
 
-	ctx := context.Background()
 	testGUIDBytes1 := []byte{0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12}
 	testGUIDBytes2 := []byte{0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0x90, 0x13}
 
@@ -635,13 +628,13 @@ func TestOUManager_SearchOUs(t *testing.T) {
 	}
 
 	// Mock search operation
-	client.On("SearchWithPaging", ctx, mock.MatchedBy(func(req *SearchRequest) bool {
+	client.On("SearchWithPaging", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 		return req.Filter == "(&(objectClass=organizationalUnit)(ou=Test*))" &&
 			req.BaseDN == "dc=example,dc=com"
 	})).Return(searchResult, nil)
 
 	// Execute test
-	results, err := manager.SearchOUs(ctx, "dc=example,dc=com", "(ou=Test*)")
+	results, err := manager.SearchOUs("dc=example,dc=com", "(ou=Test*)")
 
 	// Assertions
 	require.NoError(t, err)
@@ -654,9 +647,8 @@ func TestOUManager_SearchOUs(t *testing.T) {
 
 func TestOUManager_GetOUChildren(t *testing.T) {
 	client := &MockOUClient{}
-	manager := NewOUManager(client, "dc=example,dc=com")
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
 
-	ctx := context.Background()
 	parentOUDN := "OU=ParentOU,dc=example,dc=com"
 	testGUIDBytes := []byte{0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12}
 
@@ -678,14 +670,14 @@ func TestOUManager_GetOUChildren(t *testing.T) {
 	}
 
 	// Mock search for children (single level scope)
-	client.On("Search", ctx, mock.MatchedBy(func(req *SearchRequest) bool {
+	client.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 		return req.BaseDN == parentOUDN &&
 			req.Scope == ScopeSingleLevel &&
 			req.Filter == "(objectClass=organizationalUnit)"
 	})).Return(searchResult, nil)
 
 	// Execute test
-	children, err := manager.GetOUChildren(ctx, parentOUDN)
+	children, err := manager.GetOUChildren(context.Background(), parentOUDN)
 
 	// Assertions
 	require.NoError(t, err)
@@ -699,9 +691,8 @@ func TestOUManager_GetOUChildren(t *testing.T) {
 
 func TestOUManager_GetOUStats(t *testing.T) {
 	client := &MockOUClient{}
-	manager := NewOUManager(client, "dc=example,dc=com")
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
 
-	ctx := context.Background()
 	testGUIDBytes1 := []byte{0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12}
 	testGUIDBytes2 := []byte{0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0x90, 0x13}
 
@@ -732,12 +723,12 @@ func TestOUManager_GetOUStats(t *testing.T) {
 	}
 
 	// Mock search operation
-	client.On("SearchWithPaging", ctx, mock.MatchedBy(func(req *SearchRequest) bool {
+	client.On("SearchWithPaging", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 		return req.Filter == "(objectClass=organizationalUnit)"
 	})).Return(searchResult, nil)
 
 	// Execute test
-	stats, err := manager.GetOUStats(ctx)
+	stats, err := manager.GetOUStats(context.Background())
 
 	// Assertions
 	require.NoError(t, err)
@@ -751,7 +742,7 @@ func TestOUManager_GetOUStats(t *testing.T) {
 
 func TestOUManager_EntryToOU(t *testing.T) {
 	client := &MockOUClient{}
-	manager := NewOUManager(client, "dc=example,dc=com")
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
 
 	testGUIDBytes := []byte{0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12}
 	testTime := time.Date(2025, 8, 21, 12, 0, 0, 0, time.UTC) // Fixed time for consistent testing
@@ -789,7 +780,7 @@ func TestOUManager_EntryToOU(t *testing.T) {
 
 func TestOUManager_EntryToOU_NilEntry(t *testing.T) {
 	client := &MockOUClient{}
-	manager := NewOUManager(client, "dc=example,dc=com")
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
 
 	// Execute test
 	result, err := manager.entryToOU(nil)
@@ -807,9 +798,7 @@ func TestOUManager_PerformanceNestedOUs(t *testing.T) {
 	}
 
 	client := &MockOUClient{}
-	manager := NewOUManager(client, "dc=example,dc=com")
-
-	ctx := context.Background()
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
 
 	// Simulate creating and searching through nested OU structures
 	startTime := time.Now()
@@ -839,7 +828,7 @@ func TestOUManager_PerformanceNestedOUs(t *testing.T) {
 			HasMore: false,
 		}
 
-		client.On("Search", ctx, mock.AnythingOfType("*ldap.SearchRequest")).Return(searchResult, nil).Once()
+		client.On("Search", mock.Anything, mock.AnythingOfType("*ldap.SearchRequest")).Return(searchResult, nil).Once()
 
 		// Test DN building for each level
 		parentDN := "dc=example,dc=com"

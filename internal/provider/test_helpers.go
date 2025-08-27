@@ -307,10 +307,10 @@ func TestCheckGroupExists(resourceName string) resource.TestCheckFunc {
 		defer client.Close()
 
 		ctx := context.Background()
-		groupManager := ldap.NewGroupManager(client, config.BaseDN)
+		groupManager := ldap.NewGroupManager(ctx, client, config.BaseDN)
 
 		// Try to read the group by GUID (stored in ID)
-		_, err = groupManager.GetGroup(ctx, rs.Primary.ID)
+		_, err = groupManager.GetGroup(rs.Primary.ID)
 		if err != nil {
 			return fmt.Errorf("group %s does not exist: %v", rs.Primary.ID, err)
 		}
@@ -342,7 +342,7 @@ func TestCheckGroupDestroy(s *terraform.State) error {
 	defer client.Close()
 
 	ctx := context.Background()
-	groupManager := ldap.NewGroupManager(client, config.BaseDN)
+	groupManager := ldap.NewGroupManager(ctx, client, config.BaseDN)
 
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != "ad_group" {
@@ -350,7 +350,7 @@ func TestCheckGroupDestroy(s *terraform.State) error {
 		}
 
 		// Try to read the group - it should not exist
-		_, err := groupManager.GetGroup(ctx, rs.Primary.ID)
+		_, err := groupManager.GetGroup(rs.Primary.ID)
 		if err == nil {
 			return fmt.Errorf("group %s still exists", rs.Primary.ID)
 		}
@@ -393,10 +393,10 @@ func TestCheckGroupDisappears(resourceName string) resource.TestCheckFunc {
 		defer client.Close()
 
 		ctx := context.Background()
-		groupManager := ldap.NewGroupManager(client, config.BaseDN)
+		groupManager := ldap.NewGroupManager(ctx, client, config.BaseDN)
 
 		// Delete the group manually using its GUID
-		err = groupManager.DeleteGroup(ctx, rs.Primary.ID)
+		err = groupManager.DeleteGroup(rs.Primary.ID)
 		if err != nil {
 			return fmt.Errorf("failed to manually delete group: %v", err)
 		}
@@ -574,10 +574,10 @@ func TestCheckGroupMembershipExists(resourceName string) resource.TestCheckFunc 
 		defer client.Close()
 
 		ctx := context.Background()
-		membershipManager := ldap.NewGroupMembershipManager(client, config.BaseDN)
+		membershipManager := ldap.NewGroupMembershipManager(ctx, client, config.BaseDN)
 
 		// Verify the group has the expected members
-		members, err := membershipManager.GetGroupMembers(ctx, groupID)
+		members, err := membershipManager.GetGroupMembers(groupID)
 		if err != nil {
 			return fmt.Errorf("failed to get group members: %v", err)
 		}
@@ -634,7 +634,7 @@ func (h *BenchmarkHelper) Close() error {
 
 // CreateTestGroups creates test groups for benchmarking.
 func (h *BenchmarkHelper) CreateTestGroups(ctx context.Context, count int) ([]string, error) {
-	groupManager := ldap.NewGroupManager(h.client, h.config.BaseDN)
+	groupManager := ldap.NewGroupManager(context.Background(), h.client, h.config.BaseDN)
 	groups := make([]string, 0, count)
 
 	for i := range count {
@@ -651,7 +651,7 @@ func (h *BenchmarkHelper) CreateTestGroups(ctx context.Context, count int) ([]st
 			Category:       ldap.GroupCategorySecurity,
 		}
 
-		group, err := groupManager.CreateGroup(ctx, req)
+		group, err := groupManager.CreateGroup(req)
 		if err != nil {
 			// Cleanup created groups on error
 			h.CleanupTestGroups(ctx, groups)
@@ -666,10 +666,10 @@ func (h *BenchmarkHelper) CreateTestGroups(ctx context.Context, count int) ([]st
 
 // CleanupTestGroups removes test groups.
 func (h *BenchmarkHelper) CleanupTestGroups(ctx context.Context, groupIDs []string) {
-	groupManager := ldap.NewGroupManager(h.client, h.config.BaseDN)
+	groupManager := ldap.NewGroupManager(context.Background(), h.client, h.config.BaseDN)
 
 	for _, groupID := range groupIDs {
-		if err := groupManager.DeleteGroup(ctx, groupID); err != nil {
+		if err := groupManager.DeleteGroup(groupID); err != nil {
 			log.Printf("Failed to cleanup benchmark group %s: %v", groupID, err)
 		}
 	}

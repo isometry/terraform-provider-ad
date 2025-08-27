@@ -107,11 +107,14 @@ func (r *GroupMembershipResource) getMembershipManager(ctx context.Context) (*ld
 	}
 
 	// Create and return GroupMembershipManager
-	return ldapclient.NewGroupMembershipManager(r.client, baseDN), nil
+	return ldapclient.NewGroupMembershipManager(ctx, r.client, baseDN), nil
 }
 
 func (r *GroupMembershipResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data GroupMembershipResourceModel
+
+	// Initialize logging subsystem for consistent logging
+	ctx = initializeLogging(ctx)
 
 	// Read Terraform plan data into the model
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -158,7 +161,7 @@ func (r *GroupMembershipResource) Create(ctx context.Context, req resource.Creat
 	}
 
 	// Set the complete membership using the anti-drift operation
-	err = membershipManager.SetGroupMembers(ctx, data.GroupID.ValueString(), members)
+	err = membershipManager.SetGroupMembers(data.GroupID.ValueString(), members)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Setting Group Members",
@@ -192,6 +195,9 @@ func (r *GroupMembershipResource) Create(ctx context.Context, req resource.Creat
 func (r *GroupMembershipResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var data GroupMembershipResourceModel
 
+	// Initialize logging subsystem for consistent logging
+	ctx = initializeLogging(ctx)
+
 	// Read Terraform prior state data into the model
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
@@ -213,7 +219,7 @@ func (r *GroupMembershipResource) Read(ctx context.Context, req resource.ReadReq
 	}
 
 	// Check if the group still exists by trying to get its members
-	_, err = membershipManager.GetGroupMembers(ctx, data.GroupID.ValueString())
+	_, err = membershipManager.GetGroupMembers(data.GroupID.ValueString())
 	if err != nil {
 		// Check if the group was not found (has been deleted)
 		if ldapErr, ok := err.(*ldapclient.LDAPError); ok {
@@ -249,6 +255,9 @@ func (r *GroupMembershipResource) Read(ctx context.Context, req resource.ReadReq
 
 func (r *GroupMembershipResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var data GroupMembershipResourceModel
+
+	// Initialize logging subsystem for consistent logging
+	ctx = initializeLogging(ctx)
 
 	// Read Terraform plan data into the model
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -295,7 +304,7 @@ func (r *GroupMembershipResource) Update(ctx context.Context, req resource.Updat
 	}
 
 	// Set the complete membership (this handles the delta calculation internally)
-	err = membershipManager.SetGroupMembers(ctx, data.GroupID.ValueString(), members)
+	err = membershipManager.SetGroupMembers(data.GroupID.ValueString(), members)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Updating Group Members",
@@ -326,6 +335,9 @@ func (r *GroupMembershipResource) Update(ctx context.Context, req resource.Updat
 func (r *GroupMembershipResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var data GroupMembershipResourceModel
 
+	// Initialize logging subsystem for consistent logging
+	ctx = initializeLogging(ctx)
+
 	// Read Terraform prior state data into the model
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
@@ -347,7 +359,7 @@ func (r *GroupMembershipResource) Delete(ctx context.Context, req resource.Delet
 	}
 
 	// Clear all members from the group (empty slice means remove all)
-	err = membershipManager.SetGroupMembers(ctx, data.GroupID.ValueString(), []string{})
+	err = membershipManager.SetGroupMembers(data.GroupID.ValueString(), []string{})
 	if err != nil {
 		// If the group no longer exists, that's fine - the membership is effectively deleted
 		if ldapErr, ok := err.(*ldapclient.LDAPError); ok {
@@ -399,7 +411,7 @@ func (r *GroupMembershipResource) ImportState(ctx context.Context, req resource.
 	}
 
 	// Verify the group exists and get its current members
-	currentMembers, err := membershipManager.GetGroupMembers(ctx, groupGUID)
+	currentMembers, err := membershipManager.GetGroupMembers(groupGUID)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Importing Group Membership",
@@ -447,7 +459,7 @@ func (r *GroupMembershipResource) ImportState(ctx context.Context, req resource.
 // This ensures the state contains normalized DNs and reflects the actual AD state.
 func (r *GroupMembershipResource) refreshMembershipState(ctx context.Context, membershipManager *ldapclient.GroupMembershipManager, model *GroupMembershipResourceModel) error {
 	// Get current members from AD (already normalized as DNs)
-	currentMembers, err := membershipManager.GetGroupMembers(ctx, model.GroupID.ValueString())
+	currentMembers, err := membershipManager.GetGroupMembers(model.GroupID.ValueString())
 	if err != nil {
 		return fmt.Errorf("could not get current group members: %w", err)
 	}

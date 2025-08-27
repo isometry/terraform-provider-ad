@@ -176,11 +176,14 @@ func (d *OUDataSource) Configure(ctx context.Context, req datasource.ConfigureRe
 		)
 		return
 	}
-	d.ouManager = ldapclient.NewOUManager(client, baseDN)
+	d.ouManager = ldapclient.NewOUManager(ctx, client, baseDN)
 }
 
 func (d *OUDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
 	var data OUDataSourceModel
+
+	// Initialize logging subsystem for consistent logging
+	ctx = initializeLogging(ctx)
 
 	// Read Terraform configuration data into the model
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
@@ -241,7 +244,7 @@ func (d *OUDataSource) retrieveOU(ctx context.Context, data *OUDataSourceModel, 
 		tflog.Debug(ctx, "Looking up OU by objectGUID", map[string]any{
 			"guid": guid,
 		})
-		return d.ouManager.GetOU(ctx, guid)
+		return d.ouManager.GetOU(guid)
 	}
 
 	// DN lookup
@@ -250,7 +253,7 @@ func (d *OUDataSource) retrieveOU(ctx context.Context, data *OUDataSourceModel, 
 		tflog.Debug(ctx, "Looking up OU by DN", map[string]any{
 			"dn": dn,
 		})
-		return d.ouManager.GetOUByDN(ctx, dn)
+		return d.ouManager.GetOUByDN(dn)
 	}
 
 	// Name + Path lookup
@@ -265,7 +268,7 @@ func (d *OUDataSource) retrieveOU(ctx context.Context, data *OUDataSourceModel, 
 			"path":    path,
 			"full_dn": ouDN,
 		})
-		return d.ouManager.GetOUByDN(ctx, ouDN)
+		return d.ouManager.GetOUByDN(ouDN)
 	}
 
 	return nil, fmt.Errorf("no valid lookup method provided")

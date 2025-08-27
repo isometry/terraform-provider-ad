@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/providervalidator"
@@ -335,75 +334,19 @@ func (p *ActiveDirectoryProvider) Configure(ctx context.Context, req provider.Co
 	resp.ResourceData = client
 }
 
-// configureLogging sets up logging configuration and subsystems based on environment variables.
+// configureLogging sets up logging configuration based on environment variables.
 func (p *ActiveDirectoryProvider) configureLogging(ctx context.Context) context.Context {
-	// Custom log level from TF_AD_LOG
-	logLevel := strings.ToLower(os.Getenv("TF_AD_LOG"))
-
 	// Add persistent fields for all logs
 	ctx = tflog.SetField(ctx, "provider", "ad")
 	ctx = tflog.SetField(ctx, "provider_version", p.version)
 
-	// Configure subsystems with fallback to TF_AD_LOG if subsystem-specific level not set
-	// First check for subsystem-specific level, then fall back to TF_AD_LOG
-	ldapLevel := os.Getenv("TF_AD_LOG_LDAP")
-	if ldapLevel == "" {
-		ldapLevel = logLevel
-	}
-	kerberosLevel := os.Getenv("TF_AD_LOG_KERBEROS")
-	if kerberosLevel == "" {
-		kerberosLevel = logLevel
-	}
-	poolLevel := os.Getenv("TF_AD_LOG_POOL")
-	if poolLevel == "" {
-		poolLevel = logLevel
-	}
-	providerLevel := os.Getenv("TF_AD_LOG_PROVIDER")
-	if providerLevel == "" {
-		providerLevel = logLevel
-	}
+	// Subsystems will be initialized on-demand in getLoggingContext
+	// using standard Terraform environment variables:
+	// - TF_LOG_PROVIDER_AD_LDAP
+	// - TF_LOG_PROVIDER_AD_KERBEROS
+	// - TF_LOG_PROVIDER_AD_POOL
 
-	// Set up subsystems with the determined levels
-	if ldapLevel != "" {
-		os.Setenv("TF_AD_LOG_LDAP_EFFECTIVE", ldapLevel)
-		ctx = tflog.NewSubsystem(ctx, "ldap", tflog.WithLevelFromEnv("TF_AD_LOG_LDAP_EFFECTIVE"))
-	} else {
-		ctx = tflog.NewSubsystem(ctx, "ldap")
-	}
-
-	if kerberosLevel != "" {
-		os.Setenv("TF_AD_LOG_KERBEROS_EFFECTIVE", kerberosLevel)
-		ctx = tflog.NewSubsystem(ctx, "kerberos", tflog.WithLevelFromEnv("TF_AD_LOG_KERBEROS_EFFECTIVE"))
-	} else {
-		ctx = tflog.NewSubsystem(ctx, "kerberos")
-	}
-
-	if poolLevel != "" {
-		os.Setenv("TF_AD_LOG_POOL_EFFECTIVE", poolLevel)
-		ctx = tflog.NewSubsystem(ctx, "pool", tflog.WithLevelFromEnv("TF_AD_LOG_POOL_EFFECTIVE"))
-	} else {
-		ctx = tflog.NewSubsystem(ctx, "pool")
-	}
-
-	if providerLevel != "" {
-		os.Setenv("TF_AD_LOG_PROVIDER_EFFECTIVE", providerLevel)
-		ctx = tflog.NewSubsystem(ctx, "provider", tflog.WithLevelFromEnv("TF_AD_LOG_PROVIDER_EFFECTIVE"))
-	} else {
-		ctx = tflog.NewSubsystem(ctx, "provider")
-	}
-
-	// Log the logging configuration itself
-	tflog.Debug(ctx, "Logging configuration initialized", map[string]any{
-		"primary_log_level":        logLevel,
-		"effective_ldap_level":     ldapLevel,
-		"effective_kerberos_level": kerberosLevel,
-		"effective_pool_level":     poolLevel,
-		"effective_provider_level": providerLevel,
-		"ldap_log_level":           os.Getenv("TF_AD_LOG_LDAP"),
-		"kerberos_log_level":       os.Getenv("TF_AD_LOG_KERBEROS"),
-		"pool_log_level":           os.Getenv("TF_AD_LOG_POOL"),
-		"provider_log_level":       os.Getenv("TF_AD_LOG_PROVIDER"),
-	})
+	tflog.Debug(ctx, "Active Directory provider logging configured")
 
 	return ctx
 }

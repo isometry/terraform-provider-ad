@@ -138,6 +138,9 @@ func (r *OUResource) Configure(ctx context.Context, req resource.ConfigureReques
 func (r *OUResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data OUResourceModel
 
+	// Initialize logging subsystem for consistent logging
+	ctx = initializeLogging(ctx)
+
 	// Read Terraform plan data into the model
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
 
@@ -183,7 +186,7 @@ func (r *OUResource) Create(ctx context.Context, req resource.CreateRequest, res
 	}
 
 	// Create the OU
-	ou, err := ouManager.CreateOU(ctx, createReq)
+	ou, err := ouManager.CreateOU(createReq)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Creating OU",
@@ -207,6 +210,9 @@ func (r *OUResource) Create(ctx context.Context, req resource.CreateRequest, res
 func (r *OUResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var data OUResourceModel
 
+	// Initialize logging subsystem for consistent logging
+	ctx = initializeLogging(ctx)
+
 	// Read Terraform prior state data into the model
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
 
@@ -229,7 +235,7 @@ func (r *OUResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 	}
 
 	// Get the OU by GUID
-	ou, err := ouManager.GetOU(ctx, data.ID.ValueString())
+	ou, err := ouManager.GetOU(data.ID.ValueString())
 	if err != nil {
 		// Check if the OU was not found
 		if ldapErr, ok := err.(*ldapclient.LDAPError); ok {
@@ -255,6 +261,9 @@ func (r *OUResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 
 func (r *OUResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var data OUResourceModel
+
+	// Initialize logging subsystem for consistent logging
+	ctx = initializeLogging(ctx)
 
 	// Read Terraform plan data into the model
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -310,7 +319,7 @@ func (r *OUResource) Update(ctx context.Context, req resource.UpdateRequest, res
 	}
 
 	// Update the OU
-	ou, err := ouManager.UpdateOU(ctx, data.ID.ValueString(), updateReq)
+	ou, err := ouManager.UpdateOU(data.ID.ValueString(), updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Updating OU",
@@ -332,6 +341,9 @@ func (r *OUResource) Update(ctx context.Context, req resource.UpdateRequest, res
 
 func (r *OUResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var data OUResourceModel
+
+	// Initialize logging subsystem for consistent logging
+	ctx = initializeLogging(ctx)
 
 	// Read Terraform prior state data into the model
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
@@ -355,7 +367,7 @@ func (r *OUResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 	}
 
 	// Delete the OU
-	err = ouManager.DeleteOU(ctx, data.ID.ValueString())
+	err = ouManager.DeleteOU(data.ID.ValueString())
 	if err != nil {
 		// Provide more helpful error messages for common scenarios
 		if strings.Contains(err.Error(), "protected") {
@@ -401,7 +413,7 @@ func (r *OUResource) ImportState(ctx context.Context, req resource.ImportStateRe
 	// Check if the import ID looks like a GUID
 	if r.isGUID(importID) {
 		// Import by GUID
-		ou, err = ouManager.GetOU(ctx, importID)
+		ou, err = ouManager.GetOU(importID)
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error Importing OU by GUID",
@@ -411,7 +423,7 @@ func (r *OUResource) ImportState(ctx context.Context, req resource.ImportStateRe
 		}
 	} else {
 		// Import by DN
-		ou, err = ouManager.GetOUByDN(ctx, importID)
+		ou, err = ouManager.GetOUByDN(importID)
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error Importing OU by DN",
@@ -485,7 +497,7 @@ func (r *OUResource) getOUManager(ctx context.Context) (*ldapclient.OUManager, e
 	}
 
 	// Create OUManager
-	return ldapclient.NewOUManager(r.client, baseDN), nil
+	return ldapclient.NewOUManager(ctx, r.client, baseDN), nil
 }
 
 // isGUID checks if a string looks like a GUID.

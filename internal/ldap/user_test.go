@@ -201,7 +201,7 @@ func TestNewUserReader(t *testing.T) {
 	client := &MockUserClient{}
 	baseDN := "DC=example,DC=com"
 
-	reader := NewUserReader(client, baseDN)
+	reader := NewUserReader(t.Context(), client, baseDN)
 
 	assert.NotNil(t, reader)
 	assert.Equal(t, client, reader.client)
@@ -213,7 +213,7 @@ func TestNewUserReader(t *testing.T) {
 
 func TestUserReader_SetTimeout(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(client, "DC=example,DC=com")
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
 
 	timeout := 45 * time.Second
 	reader.SetTimeout(timeout)
@@ -223,13 +223,12 @@ func TestUserReader_SetTimeout(t *testing.T) {
 
 func TestUserReader_GetUserByDN_Success(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(client, "DC=example,DC=com")
-	ctx := context.Background()
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
 
 	mockEntry := createMockUserEntry()
 	dn := "CN=John Doe,OU=Users,DC=example,DC=com"
 
-	client.On("Search", ctx, mock.MatchedBy(func(req *SearchRequest) bool {
+	client.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 		return req.BaseDN == dn &&
 			req.Scope == ScopeBaseObject &&
 			req.Filter == "(&(objectClass=user)(!(objectClass=computer)))" &&
@@ -239,7 +238,7 @@ func TestUserReader_GetUserByDN_Success(t *testing.T) {
 		Total:   1,
 	}, nil)
 
-	user, err := reader.GetUserByDN(ctx, dn)
+	user, err := reader.GetUserByDN(dn)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, user)
@@ -259,17 +258,16 @@ func TestUserReader_GetUserByDN_Success(t *testing.T) {
 
 func TestUserReader_GetUserByDN_NotFound(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(client, "DC=example,DC=com")
-	ctx := context.Background()
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
 
 	dn := "CN=NonExistent,OU=Users,DC=example,DC=com"
 
-	client.On("Search", ctx, mock.AnythingOfType("*ldap.SearchRequest")).Return(&SearchResult{
+	client.On("Search", mock.Anything, mock.AnythingOfType("*ldap.SearchRequest")).Return(&SearchResult{
 		Entries: []*ldap.Entry{},
 		Total:   0,
 	}, nil)
 
-	user, err := reader.GetUserByDN(ctx, dn)
+	user, err := reader.GetUserByDN(dn)
 
 	assert.Error(t, err)
 	assert.Nil(t, user)
@@ -280,13 +278,12 @@ func TestUserReader_GetUserByDN_NotFound(t *testing.T) {
 
 func TestUserReader_GetUserByGUID_Success(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(client, "DC=example,DC=com")
-	ctx := context.Background()
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
 
 	mockEntry := createMockUserEntry()
 	guid := "12345678-1234-1234-1234-567890123456"
 
-	client.On("Search", ctx, mock.MatchedBy(func(req *SearchRequest) bool {
+	client.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 		return req.BaseDN == "DC=example,DC=com" &&
 			req.Scope == ScopeWholeSubtree &&
 			strings.Contains(req.Filter, "objectGUID") &&
@@ -296,7 +293,7 @@ func TestUserReader_GetUserByGUID_Success(t *testing.T) {
 		Total:   1,
 	}, nil)
 
-	user, err := reader.GetUserByGUID(ctx, guid)
+	user, err := reader.GetUserByGUID(guid)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, user)
@@ -307,10 +304,9 @@ func TestUserReader_GetUserByGUID_Success(t *testing.T) {
 
 func TestUserReader_GetUserByGUID_InvalidFormat(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(client, "DC=example,DC=com")
-	ctx := context.Background()
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
 
-	user, err := reader.GetUserByGUID(ctx, "invalid-guid")
+	user, err := reader.GetUserByGUID("invalid-guid")
 
 	assert.Error(t, err)
 	assert.Nil(t, user)
@@ -321,13 +317,12 @@ func TestUserReader_GetUserByGUID_InvalidFormat(t *testing.T) {
 
 func TestUserReader_GetUserBySID_Success(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(client, "DC=example,DC=com")
-	ctx := context.Background()
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
 
 	mockEntry := createMockUserEntry()
 	sid := "S-1-5-21-123456789-123456789-123456789-1001"
 
-	client.On("Search", ctx, mock.MatchedBy(func(req *SearchRequest) bool {
+	client.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 		return req.BaseDN == "DC=example,DC=com" &&
 			req.Scope == ScopeWholeSubtree &&
 			strings.Contains(req.Filter, fmt.Sprintf("objectSid=%s", sid)) &&
@@ -337,7 +332,7 @@ func TestUserReader_GetUserBySID_Success(t *testing.T) {
 		Total:   1,
 	}, nil)
 
-	user, err := reader.GetUserBySID(ctx, sid)
+	user, err := reader.GetUserBySID(sid)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, user)
@@ -348,13 +343,12 @@ func TestUserReader_GetUserBySID_Success(t *testing.T) {
 
 func TestUserReader_GetUserByUPN_Success(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(client, "DC=example,DC=com")
-	ctx := context.Background()
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
 
 	mockEntry := createMockUserEntry()
 	upn := "john.doe@example.com"
 
-	client.On("Search", ctx, mock.MatchedBy(func(req *SearchRequest) bool {
+	client.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 		return req.BaseDN == "DC=example,DC=com" &&
 			req.Scope == ScopeWholeSubtree &&
 			strings.Contains(req.Filter, fmt.Sprintf("userPrincipalName=%s", upn)) &&
@@ -364,7 +358,7 @@ func TestUserReader_GetUserByUPN_Success(t *testing.T) {
 		Total:   1,
 	}, nil)
 
-	user, err := reader.GetUserByUPN(ctx, upn)
+	user, err := reader.GetUserByUPN(upn)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, user)
@@ -375,13 +369,12 @@ func TestUserReader_GetUserByUPN_Success(t *testing.T) {
 
 func TestUserReader_GetUserBySAM_Success(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(client, "DC=example,DC=com")
-	ctx := context.Background()
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
 
 	mockEntry := createMockUserEntry()
 	sam := "john.doe"
 
-	client.On("Search", ctx, mock.MatchedBy(func(req *SearchRequest) bool {
+	client.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 		return req.BaseDN == "DC=example,DC=com" &&
 			req.Scope == ScopeWholeSubtree &&
 			strings.Contains(req.Filter, fmt.Sprintf("sAMAccountName=%s", sam)) &&
@@ -391,7 +384,7 @@ func TestUserReader_GetUserBySAM_Success(t *testing.T) {
 		Total:   1,
 	}, nil)
 
-	user, err := reader.GetUserBySAM(ctx, sam)
+	user, err := reader.GetUserBySAM(sam)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, user)
@@ -402,21 +395,20 @@ func TestUserReader_GetUserBySAM_Success(t *testing.T) {
 
 func TestUserReader_GetUserBySAM_DomainFormat(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(client, "DC=example,DC=com")
-	ctx := context.Background()
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
 
 	mockEntry := createMockUserEntry()
 	domainSam := "EXAMPLE\\john.doe"
 	expectedSam := "john.doe"
 
-	client.On("Search", ctx, mock.MatchedBy(func(req *SearchRequest) bool {
+	client.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 		return strings.Contains(req.Filter, fmt.Sprintf("sAMAccountName=%s", expectedSam))
 	})).Return(&SearchResult{
 		Entries: []*ldap.Entry{mockEntry},
 		Total:   1,
 	}, nil)
 
-	user, err := reader.GetUserBySAM(ctx, domainSam)
+	user, err := reader.GetUserBySAM(domainSam)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, user)
@@ -427,8 +419,7 @@ func TestUserReader_GetUserBySAM_DomainFormat(t *testing.T) {
 
 func TestUserReader_GetUser_AutoDetectIdentifier(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(client, "DC=example,DC=com")
-	ctx := context.Background()
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
 
 	mockEntry := createMockUserEntry()
 
@@ -471,14 +462,14 @@ func TestUserReader_GetUser_AutoDetectIdentifier(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			client.ExpectedCalls = nil // Reset expectations
 
-			client.On("Search", ctx, mock.MatchedBy(func(req *SearchRequest) bool {
+			client.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 				return tc.filterCheck(req.Filter)
 			})).Return(&SearchResult{
 				Entries: []*ldap.Entry{mockEntry},
 				Total:   1,
 			}, nil)
 
-			user, err := reader.GetUser(ctx, tc.identifier)
+			user, err := reader.GetUser(tc.identifier)
 
 			assert.NoError(t, err)
 			assert.NotNil(t, user)
@@ -491,13 +482,12 @@ func TestUserReader_GetUser_AutoDetectIdentifier(t *testing.T) {
 
 func TestUserReader_SearchUsers_Success(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(client, "DC=example,DC=com")
-	ctx := context.Background()
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
 
 	mockEntry1 := createMockUserEntry()
 	mockEntry2 := createDisabledUserEntry()
 
-	client.On("SearchWithPaging", ctx, mock.MatchedBy(func(req *SearchRequest) bool {
+	client.On("SearchWithPaging", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 		return req.BaseDN == "DC=example,DC=com" &&
 			req.Scope == ScopeWholeSubtree &&
 			req.Filter == "(&(objectClass=user)(!(objectClass=computer)))"
@@ -506,7 +496,7 @@ func TestUserReader_SearchUsers_Success(t *testing.T) {
 		Total:   2,
 	}, nil)
 
-	users, err := reader.SearchUsers(ctx, "", nil)
+	users, err := reader.SearchUsers("", nil)
 
 	assert.NoError(t, err)
 	assert.Len(t, users, 2)
@@ -520,8 +510,7 @@ func TestUserReader_SearchUsers_Success(t *testing.T) {
 
 func TestUserReader_SearchUsersWithFilter_NameFilters(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(client, "DC=example,DC=com")
-	ctx := context.Background()
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
 
 	mockEntry := createMockUserEntry()
 
@@ -551,14 +540,14 @@ func TestUserReader_SearchUsersWithFilter_NameFilters(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			client.ExpectedCalls = nil // Reset expectations
 
-			client.On("SearchWithPaging", ctx, mock.MatchedBy(func(req *SearchRequest) bool {
+			client.On("SearchWithPaging", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 				return strings.Contains(req.Filter, tc.expectedFilter)
 			})).Return(&SearchResult{
 				Entries: []*ldap.Entry{mockEntry},
 				Total:   1,
 			}, nil)
 
-			users, err := reader.SearchUsersWithFilter(ctx, tc.filter)
+			users, err := reader.SearchUsersWithFilter(tc.filter)
 
 			assert.NoError(t, err)
 			assert.Len(t, users, 1)
@@ -570,8 +559,7 @@ func TestUserReader_SearchUsersWithFilter_NameFilters(t *testing.T) {
 
 func TestUserReader_SearchUsersWithFilter_OrganizationalFilters(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(client, "DC=example,DC=com")
-	ctx := context.Background()
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
 
 	mockEntry := createMockUserEntry()
 
@@ -596,14 +584,14 @@ func TestUserReader_SearchUsersWithFilter_OrganizationalFilters(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			client.ExpectedCalls = nil // Reset expectations
 
-			client.On("SearchWithPaging", ctx, mock.MatchedBy(func(req *SearchRequest) bool {
+			client.On("SearchWithPaging", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 				return strings.Contains(req.Filter, tc.expectedFilter)
 			})).Return(&SearchResult{
 				Entries: []*ldap.Entry{mockEntry},
 				Total:   1,
 			}, nil)
 
-			users, err := reader.SearchUsersWithFilter(ctx, tc.filter)
+			users, err := reader.SearchUsersWithFilter(tc.filter)
 
 			assert.NoError(t, err)
 			assert.Len(t, users, 1)
@@ -615,8 +603,7 @@ func TestUserReader_SearchUsersWithFilter_OrganizationalFilters(t *testing.T) {
 
 func TestUserReader_SearchUsersWithFilter_StatusFilters(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(client, "DC=example,DC=com")
-	ctx := context.Background()
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
 
 	mockEntry := createMockUserEntry()
 
@@ -643,14 +630,14 @@ func TestUserReader_SearchUsersWithFilter_StatusFilters(t *testing.T) {
 
 			filter := &UserSearchFilter{Enabled: tc.enabled}
 
-			client.On("SearchWithPaging", ctx, mock.MatchedBy(func(req *SearchRequest) bool {
+			client.On("SearchWithPaging", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 				return strings.Contains(req.Filter, tc.expectedFilter)
 			})).Return(&SearchResult{
 				Entries: []*ldap.Entry{mockEntry},
 				Total:   1,
 			}, nil)
 
-			users, err := reader.SearchUsersWithFilter(ctx, filter)
+			users, err := reader.SearchUsersWithFilter(filter)
 
 			assert.NoError(t, err)
 			assert.Len(t, users, 1)
@@ -662,8 +649,7 @@ func TestUserReader_SearchUsersWithFilter_StatusFilters(t *testing.T) {
 
 func TestUserReader_SearchUsersWithFilter_EmailFilters(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(client, "DC=example,DC=com")
-	ctx := context.Background()
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
 
 	mockEntry := createMockUserEntry()
 
@@ -693,14 +679,14 @@ func TestUserReader_SearchUsersWithFilter_EmailFilters(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			client.ExpectedCalls = nil // Reset expectations
 
-			client.On("SearchWithPaging", ctx, mock.MatchedBy(func(req *SearchRequest) bool {
+			client.On("SearchWithPaging", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 				return strings.Contains(req.Filter, tc.expectedFilter)
 			})).Return(&SearchResult{
 				Entries: []*ldap.Entry{mockEntry},
 				Total:   1,
 			}, nil)
 
-			users, err := reader.SearchUsersWithFilter(ctx, tc.filter)
+			users, err := reader.SearchUsersWithFilter(tc.filter)
 
 			assert.NoError(t, err)
 			assert.Len(t, users, 1)
@@ -712,22 +698,21 @@ func TestUserReader_SearchUsersWithFilter_EmailFilters(t *testing.T) {
 
 func TestUserReader_SearchUsersWithFilter_Container(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(client, "DC=example,DC=com")
-	ctx := context.Background()
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
 
 	mockEntry := createMockUserEntry()
 	containerDN := "OU=Engineering,DC=example,DC=com"
 
 	filter := &UserSearchFilter{Container: containerDN}
 
-	client.On("SearchWithPaging", ctx, mock.MatchedBy(func(req *SearchRequest) bool {
+	client.On("SearchWithPaging", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 		return req.BaseDN == containerDN
 	})).Return(&SearchResult{
 		Entries: []*ldap.Entry{mockEntry},
 		Total:   1,
 	}, nil)
 
-	users, err := reader.SearchUsersWithFilter(ctx, filter)
+	users, err := reader.SearchUsersWithFilter(filter)
 
 	assert.NoError(t, err)
 	assert.Len(t, users, 1)
@@ -737,12 +722,11 @@ func TestUserReader_SearchUsersWithFilter_Container(t *testing.T) {
 
 func TestUserReader_SearchUsersWithFilter_InvalidContainer(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(client, "DC=example,DC=com")
-	ctx := context.Background()
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
 
 	filter := &UserSearchFilter{Container: "invalid-dn"}
 
-	users, err := reader.SearchUsersWithFilter(ctx, filter)
+	users, err := reader.SearchUsersWithFilter(filter)
 
 	assert.Error(t, err)
 	assert.Nil(t, users)
@@ -752,7 +736,7 @@ func TestUserReader_SearchUsersWithFilter_InvalidContainer(t *testing.T) {
 }
 
 func TestUserReader_parseUserAccountControl(t *testing.T) {
-	reader := NewUserReader(&MockUserClient{}, "DC=example,DC=com")
+	reader := NewUserReader(context.Background(), &MockUserClient{}, "DC=example,DC=com")
 
 	testCases := []struct {
 		name     string
@@ -830,7 +814,7 @@ func TestUserReader_parseUserAccountControl(t *testing.T) {
 }
 
 func TestUserReader_parseADTimestamp(t *testing.T) {
-	reader := NewUserReader(&MockUserClient{}, "DC=example,DC=com")
+	reader := NewUserReader(context.Background(), &MockUserClient{}, "DC=example,DC=com")
 
 	testCases := []struct {
 		name      string
@@ -882,7 +866,7 @@ func TestUserReader_parseADTimestamp(t *testing.T) {
 }
 
 func TestUserReader_entryToUser_ComprehensiveMapping(t *testing.T) {
-	reader := NewUserReader(&MockUserClient{}, "DC=example,DC=com")
+	reader := NewUserReader(context.Background(), &MockUserClient{}, "DC=example,DC=com")
 	entry := createMockUserEntry()
 
 	user, err := reader.entryToUser(entry)
@@ -959,18 +943,17 @@ func TestUserReader_entryToUser_ComprehensiveMapping(t *testing.T) {
 
 func TestUserReader_GetUserStats(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(client, "DC=example,DC=com")
-	ctx := context.Background()
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
 
 	enabledEntry := createMockUserEntry()
 	disabledEntry := createDisabledUserEntry()
 
-	client.On("SearchWithPaging", ctx, mock.AnythingOfType("*ldap.SearchRequest")).Return(&SearchResult{
+	client.On("SearchWithPaging", mock.Anything, mock.AnythingOfType("*ldap.SearchRequest")).Return(&SearchResult{
 		Entries: []*ldap.Entry{enabledEntry, disabledEntry},
 		Total:   2,
 	}, nil)
 
-	stats, err := reader.GetUserStats(ctx)
+	stats, err := reader.GetUserStats()
 
 	assert.NoError(t, err)
 	assert.Equal(t, 2, stats["total"])
@@ -982,19 +965,18 @@ func TestUserReader_GetUserStats(t *testing.T) {
 
 func TestUserReader_EmptyIdentifier(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(client, "DC=example,DC=com")
-	ctx := context.Background()
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
 
 	testCases := []struct {
 		name string
 		fn   func() (*User, error)
 	}{
-		{"GetUser", func() (*User, error) { return reader.GetUser(ctx, "") }},
-		{"GetUserByDN", func() (*User, error) { return reader.GetUserByDN(ctx, "") }},
-		{"GetUserByGUID", func() (*User, error) { return reader.GetUserByGUID(ctx, "") }},
-		{"GetUserBySID", func() (*User, error) { return reader.GetUserBySID(ctx, "") }},
-		{"GetUserByUPN", func() (*User, error) { return reader.GetUserByUPN(ctx, "") }},
-		{"GetUserBySAM", func() (*User, error) { return reader.GetUserBySAM(ctx, "") }},
+		{"GetUser", func() (*User, error) { return reader.GetUser("") }},
+		{"GetUserByDN", func() (*User, error) { return reader.GetUserByDN("") }},
+		{"GetUserByGUID", func() (*User, error) { return reader.GetUserByGUID("") }},
+		{"GetUserBySID", func() (*User, error) { return reader.GetUserBySID("") }},
+		{"GetUserByUPN", func() (*User, error) { return reader.GetUserByUPN("") }},
+		{"GetUserBySAM", func() (*User, error) { return reader.GetUserBySAM("") }},
 	}
 
 	for _, tc := range testCases {

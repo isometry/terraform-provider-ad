@@ -11,6 +11,22 @@ import (
 	"github.com/go-ldap/ldap/v3"
 )
 
+// Connection pool limits.
+const (
+	// MaxConnectionPoolLimit is the maximum allowed connections in a pool.
+	//
+	// This limit prevents excessive resource consumption and protects against:
+	//   - LDAP server connection exhaustion
+	//   - Memory overconsumption on the client side
+	//   - Network socket depletion
+	//   - Degraded performance due to context switching
+	//
+	// A limit of 100 connections provides sufficient concurrency for most
+	// Terraform operations while staying well below typical AD server limits
+	// (which often default to 1000+ concurrent connections).
+	MaxConnectionPoolLimit = 100
+)
+
 // connectionPool implements ConnectionPool interface.
 type connectionPool struct {
 	config      *ConnectionConfig
@@ -493,8 +509,8 @@ func validateConfig(config *ConnectionConfig) error {
 		return errors.New("MaxConnections must be positive")
 	}
 
-	if config.MaxConnections > 100 {
-		return errors.New("MaxConnections too high (max 100)")
+	if config.MaxConnections > MaxConnectionPoolLimit {
+		return fmt.Errorf("MaxConnections too high (max %d)", MaxConnectionPoolLimit)
 	}
 
 	if config.MaxIdleTime <= 0 {

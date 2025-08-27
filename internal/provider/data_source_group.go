@@ -232,11 +232,14 @@ func (d *GroupDataSource) Configure(ctx context.Context, req datasource.Configur
 		)
 		return
 	}
-	d.groupManager = ldapclient.NewGroupManager(client, baseDN)
+	d.groupManager = ldapclient.NewGroupManager(ctx, client, baseDN)
 }
 
 func (d *GroupDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
 	var data GroupDataSourceModel
+
+	// Initialize logging subsystem for consistent logging
+	ctx = initializeLogging(ctx)
 
 	// Read Terraform configuration data into the model
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
@@ -287,7 +290,7 @@ func (d *GroupDataSource) retrieveGroup(ctx context.Context, data *GroupDataSour
 		tflog.Debug(ctx, "Looking up group by objectGUID", map[string]any{
 			"guid": guid,
 		})
-		return d.groupManager.GetGroup(ctx, guid)
+		return d.groupManager.GetGroup(guid)
 	}
 
 	// DN lookup
@@ -296,7 +299,7 @@ func (d *GroupDataSource) retrieveGroup(ctx context.Context, data *GroupDataSour
 		tflog.Debug(ctx, "Looking up group by DN", map[string]any{
 			"dn": dn,
 		})
-		return d.groupManager.GetGroupByDN(ctx, dn)
+		return d.groupManager.GetGroupByDN(dn)
 	}
 
 	// Name + Container lookup
@@ -311,7 +314,7 @@ func (d *GroupDataSource) retrieveGroup(ctx context.Context, data *GroupDataSour
 			"container": container,
 			"full_dn":   groupDN,
 		})
-		return d.groupManager.GetGroupByDN(ctx, groupDN)
+		return d.groupManager.GetGroupByDN(groupDN)
 	}
 
 	// SAM account name lookup - requires search
@@ -323,7 +326,7 @@ func (d *GroupDataSource) retrieveGroup(ctx context.Context, data *GroupDataSour
 
 		// Use search to find group by SAM account name
 		filter := fmt.Sprintf("(sAMAccountName=%s)", samAccountName)
-		groups, err := d.groupManager.SearchGroups(ctx, filter, nil)
+		groups, err := d.groupManager.SearchGroups(filter, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to search for group by SAM account name: %w", err)
 		}
@@ -380,7 +383,7 @@ func (d *GroupDataSource) mapGroupToModel(ctx context.Context, group *ldapclient
 	// Check if we should flatten members to users only
 	if !data.FlattenMembers.IsNull() && data.FlattenMembers.ValueBool() {
 		// Get flattened user members
-		flattenedUsers, err := d.groupManager.GetFlattenedUserMembers(ctx, group.ObjectGUID)
+		flattenedUsers, err := d.groupManager.GetFlattenedUserMembers(group.ObjectGUID)
 		if err != nil {
 			tflog.Warn(ctx, "Failed to get flattened user members", map[string]any{
 				"group_guid": group.ObjectGUID,

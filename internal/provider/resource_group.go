@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -172,6 +173,9 @@ func (r *GroupResource) Configure(ctx context.Context, req resource.ConfigureReq
 func (r *GroupResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data GroupResourceModel
 
+	// Initialize logging subsystem for consistent logging
+	ctx = initializeLogging(ctx)
+
 	// Read Terraform plan data into the model
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
 
@@ -180,22 +184,29 @@ func (r *GroupResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 
 	// Set up entry/exit logging
-	fields := map[string]any{
-		"name":             data.Name.ValueString(),
-		"sam_account_name": data.SAMAccountName.ValueString(),
-		"container":        data.Container.ValueString(),
-	}
-	logCompletion := ldapclient.LogResourceOperation(ctx, "ad_group", "create", fields)
+	start := time.Now()
+	tflog.Debug(ctx, "Starting resource operation", map[string]any{
+		"operation": "create",
+		"resource":  "ad_group",
+		"name":      data.Name.ValueString(),
+		"scope":     data.Scope.ValueString(),
+		"category":  data.Category.ValueString(),
+	})
 	defer func() {
-		var err error
+		duration := time.Since(start)
 		if resp.Diagnostics.HasError() {
-			// Get first error for logging
-			for _, diag := range resp.Diagnostics.Errors() {
-				err = fmt.Errorf("%s: %s", diag.Summary(), diag.Detail())
-				break
-			}
+			tflog.Error(ctx, "Resource operation failed", map[string]any{
+				"operation":   "create",
+				"resource":    "ad_group",
+				"duration_ms": duration.Milliseconds(),
+			})
+		} else {
+			tflog.Info(ctx, "Resource operation completed", map[string]any{
+				"operation":   "create",
+				"resource":    "ad_group",
+				"duration_ms": duration.Milliseconds(),
+			})
 		}
-		logCompletion(err)
 	}()
 
 	tflog.Debug(ctx, "Creating AD group", map[string]any{
@@ -229,7 +240,7 @@ func (r *GroupResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 
 	// Create the group
-	group, err := groupManager.CreateGroup(ctx, createReq)
+	group, err := groupManager.CreateGroup(createReq)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Creating Group",
@@ -253,6 +264,9 @@ func (r *GroupResource) Create(ctx context.Context, req resource.CreateRequest, 
 func (r *GroupResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var data GroupResourceModel
 
+	// Initialize logging subsystem for consistent logging
+	ctx = initializeLogging(ctx)
+
 	// Read Terraform prior state data into the model
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
 
@@ -275,7 +289,7 @@ func (r *GroupResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	}
 
 	// Get the group by GUID
-	group, err := groupManager.GetGroup(ctx, data.ID.ValueString())
+	group, err := groupManager.GetGroup(data.ID.ValueString())
 	if err != nil {
 		// Check if the group was not found
 		if ldapErr, ok := err.(*ldapclient.LDAPError); ok {
@@ -301,6 +315,9 @@ func (r *GroupResource) Read(ctx context.Context, req resource.ReadRequest, resp
 
 func (r *GroupResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var data GroupResourceModel
+
+	// Initialize logging subsystem for consistent logging
+	ctx = initializeLogging(ctx)
 
 	// Read Terraform plan data into the model
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -376,7 +393,7 @@ func (r *GroupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	}
 
 	// Update the group
-	group, err := groupManager.UpdateGroup(ctx, data.ID.ValueString(), updateReq)
+	group, err := groupManager.UpdateGroup(data.ID.ValueString(), updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Updating Group",
@@ -398,6 +415,9 @@ func (r *GroupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 
 func (r *GroupResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var data GroupResourceModel
+
+	// Initialize logging subsystem for consistent logging
+	ctx = initializeLogging(ctx)
 
 	// Read Terraform prior state data into the model
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
@@ -421,7 +441,7 @@ func (r *GroupResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	}
 
 	// Delete the group
-	err = groupManager.DeleteGroup(ctx, data.ID.ValueString())
+	err = groupManager.DeleteGroup(data.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Deleting Group",
@@ -458,7 +478,7 @@ func (r *GroupResource) ImportState(ctx context.Context, req resource.ImportStat
 	// Check if the import ID looks like a GUID
 	if r.isGUID(importID) {
 		// Import by GUID
-		group, err = groupManager.GetGroup(ctx, importID)
+		group, err = groupManager.GetGroup(importID)
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error Importing Group by GUID",
@@ -468,7 +488,7 @@ func (r *GroupResource) ImportState(ctx context.Context, req resource.ImportStat
 		}
 	} else {
 		// Import by DN
-		group, err = groupManager.GetGroupByDN(ctx, importID)
+		group, err = groupManager.GetGroupByDN(importID)
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error Importing Group by DN",
@@ -545,7 +565,7 @@ func (r *GroupResource) getGroupManager(ctx context.Context) (*ldapclient.GroupM
 	}
 
 	// Create GroupManager
-	return ldapclient.NewGroupManager(r.client, baseDN), nil
+	return ldapclient.NewGroupManager(ctx, r.client, baseDN), nil
 }
 
 // isGUID checks if a string looks like a GUID.

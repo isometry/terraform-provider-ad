@@ -21,6 +21,21 @@ const (
 	SDFlagSACL  = 0x00000008 // System Access Control List
 	SDFlagOwner = 0x00000001 // Owner SID
 	SDFlagGroup = 0x00000002 // Primary group SID
+
+	// ProtectedOUDescriptorMinLength is the minimum length threshold for security descriptors.
+	//
+	// Protected OUs in Active Directory have additional Access Control Entries (ACEs) that
+	// prevent accidental deletion. These ACEs significantly increase the security descriptor
+	// size compared to unprotected OUs.
+	//
+	// Typical size patterns:
+	//   - Unprotected OU: ~50-80 bytes (basic inheritance ACEs only)
+	//   - Protected OU: 150-300+ bytes (includes deny delete ACEs)
+	//
+	// This heuristic provides a simple way to detect protection status when the
+	// security descriptor cannot be fully parsed. A threshold of 100 bytes provides
+	// a reasonable balance between false positives and detection accuracy.
+	ProtectedOUDescriptorMinLength = 100
 )
 
 // OU represents an Active Directory Organizational Unit.
@@ -74,6 +89,7 @@ type OUEntry struct {
 
 // OUManager handles Active Directory organizational unit operations.
 type OUManager struct {
+	ctx         context.Context
 	client      Client
 	guidHandler *GUIDHandler
 	baseDN      string
@@ -81,8 +97,9 @@ type OUManager struct {
 }
 
 // NewOUManager creates a new OU manager instance.
-func NewOUManager(client Client, baseDN string) *OUManager {
+func NewOUManager(ctx context.Context, client Client, baseDN string) *OUManager {
 	return &OUManager{
+		ctx:         ctx,
 		client:      client,
 		guidHandler: NewGUIDHandler(),
 		baseDN:      baseDN,
@@ -163,7 +180,7 @@ func (om *OUManager) ValidateOURequest(req *CreateOURequest) error {
 }
 
 // CreateOU creates a new Active Directory organizational unit.
-func (om *OUManager) CreateOU(ctx context.Context, req *CreateOURequest) (*OU, error) {
+func (om *OUManager) CreateOU(req *CreateOURequest) (*OU, error) {
 	if err := om.ValidateOURequest(req); err != nil {
 		return nil, WrapError("create_ou_validation", err)
 	}
@@ -188,12 +205,12 @@ func (om *OUManager) CreateOU(ctx context.Context, req *CreateOURequest) (*OU, e
 		Attributes: attributes,
 	}
 
-	if err := om.client.Add(ctx, addReq); err != nil {
+	if err := om.client.Add(om.ctx, addReq); err != nil {
 		return nil, WrapError("create_ou", err)
 	}
 
 	// Retrieve the created OU to get its GUID and other computed attributes
-	ou, err := om.getOUByDN(ctx, ouDN)
+	ou, err := om.getOUByDN(ouDN)
 	if err != nil {
 		return nil, WrapError("retrieve_created_ou", err)
 	}
@@ -201,7 +218,7 @@ func (om *OUManager) CreateOU(ctx context.Context, req *CreateOURequest) (*OU, e
 	// Set protection if requested
 	if req.Protected {
 		// Try to set protection, but don't fail OU creation if this fails
-		_ = om.SetOUProtection(ctx, ouDN, true)
+		_ = om.SetOUProtection(ouDN, true)
 		ou.Protected = true
 	}
 
@@ -209,7 +226,7 @@ func (om *OUManager) CreateOU(ctx context.Context, req *CreateOURequest) (*OU, e
 }
 
 // GetOU retrieves an OU by its objectGUID.
-func (om *OUManager) GetOU(ctx context.Context, guid string) (*OU, error) {
+func (om *OUManager) GetOU(guid string) (*OU, error) {
 	if guid == "" {
 		return nil, fmt.Errorf("OU GUID cannot be empty")
 	}
@@ -235,7 +252,7 @@ func (om *OUManager) GetOU(ctx context.Context, guid string) (*OU, error) {
 	// Add the organizationalUnit filter
 	searchReq.Filter = fmt.Sprintf("(&(objectClass=organizationalUnit)%s)", searchReq.Filter)
 
-	result, err := om.client.Search(ctx, searchReq)
+	result, err := om.client.Search(om.ctx, searchReq)
 	if err != nil {
 		return nil, WrapError("search_ou_by_guid", err)
 	}
@@ -253,16 +270,16 @@ func (om *OUManager) GetOU(ctx context.Context, guid string) (*OU, error) {
 }
 
 // GetOUByDN retrieves an OU by its distinguished name.
-func (om *OUManager) GetOUByDN(ctx context.Context, dn string) (*OU, error) {
+func (om *OUManager) GetOUByDN(dn string) (*OU, error) {
 	if dn == "" {
 		return nil, fmt.Errorf("OU DN cannot be empty")
 	}
 
-	return om.getOUByDN(ctx, dn)
+	return om.getOUByDN(dn)
 }
 
 // getOUByDN is the internal implementation for DN-based OU retrieval.
-func (om *OUManager) getOUByDN(ctx context.Context, dn string) (*OU, error) {
+func (om *OUManager) getOUByDN(dn string) (*OU, error) {
 	searchReq := &SearchRequest{
 		BaseDN: dn,
 		Scope:  ScopeBaseObject,
@@ -275,7 +292,7 @@ func (om *OUManager) getOUByDN(ctx context.Context, dn string) (*OU, error) {
 		TimeLimit: om.timeout,
 	}
 
-	result, err := om.client.Search(ctx, searchReq)
+	result, err := om.client.Search(om.ctx, searchReq)
 	if err != nil {
 		return nil, WrapError("search_ou_by_dn", err)
 	}
@@ -293,7 +310,7 @@ func (om *OUManager) getOUByDN(ctx context.Context, dn string) (*OU, error) {
 }
 
 // UpdateOU updates an existing OU.
-func (om *OUManager) UpdateOU(ctx context.Context, guid string, req *UpdateOURequest) (*OU, error) {
+func (om *OUManager) UpdateOU(guid string, req *UpdateOURequest) (*OU, error) {
 	if guid == "" {
 		return nil, fmt.Errorf("OU GUID cannot be empty")
 	}
@@ -303,7 +320,7 @@ func (om *OUManager) UpdateOU(ctx context.Context, guid string, req *UpdateOUReq
 	}
 
 	// Get current OU to determine DN and validate changes
-	currentOU, err := om.GetOU(ctx, guid)
+	currentOU, err := om.GetOU(guid)
 	if err != nil {
 		return nil, WrapError("get_current_ou", err)
 	}
@@ -338,7 +355,7 @@ func (om *OUManager) UpdateOU(ctx context.Context, guid string, req *UpdateOUReq
 
 	// Handle protection change
 	if req.Protected != nil && *req.Protected != currentOU.Protected {
-		if err := om.SetOUProtection(ctx, currentOU.DistinguishedName, *req.Protected); err != nil {
+		if err := om.SetOUProtection(currentOU.DistinguishedName, *req.Protected); err != nil {
 			return nil, WrapError("set_ou_protection", err)
 		}
 		hasChanges = true
@@ -346,7 +363,7 @@ func (om *OUManager) UpdateOU(ctx context.Context, guid string, req *UpdateOUReq
 
 	// Apply other modifications if any
 	if hasChanges && (len(modReq.ReplaceAttributes) > 0 || len(modReq.DeleteAttributes) > 0) {
-		if err := om.client.Modify(ctx, modReq); err != nil {
+		if err := om.client.Modify(om.ctx, modReq); err != nil {
 			return nil, WrapError("modify_ou", err)
 		}
 	}
@@ -357,7 +374,7 @@ func (om *OUManager) UpdateOU(ctx context.Context, guid string, req *UpdateOUReq
 	}
 
 	// Retrieve updated OU
-	updatedOU, err := om.GetOU(ctx, guid)
+	updatedOU, err := om.GetOU(guid)
 	if err != nil {
 		return nil, WrapError("retrieve_updated_ou", err)
 	}
@@ -366,13 +383,13 @@ func (om *OUManager) UpdateOU(ctx context.Context, guid string, req *UpdateOUReq
 }
 
 // DeleteOU deletes an OU by its objectGUID.
-func (om *OUManager) DeleteOU(ctx context.Context, guid string) error {
+func (om *OUManager) DeleteOU(guid string) error {
 	if guid == "" {
 		return fmt.Errorf("OU GUID cannot be empty")
 	}
 
 	// Get OU to determine DN and check protection
-	ou, err := om.GetOU(ctx, guid)
+	ou, err := om.GetOU(guid)
 	if err != nil {
 		// Check if it's a "not found" error
 		if ldapErr, ok := err.(*LDAPError); ok {
@@ -390,7 +407,7 @@ func (om *OUManager) DeleteOU(ctx context.Context, guid string) error {
 	}
 
 	// Delete the OU
-	if err := om.client.Delete(ctx, ou.DistinguishedName); err != nil {
+	if err := om.client.Delete(om.ctx, ou.DistinguishedName); err != nil {
 		return WrapError("delete_ou", err)
 	}
 
@@ -398,7 +415,7 @@ func (om *OUManager) DeleteOU(ctx context.Context, guid string) error {
 }
 
 // SetOUProtection toggles the protection flag on an OU using ntSecurityDescriptor.
-func (om *OUManager) SetOUProtection(ctx context.Context, ouDN string, protected bool) error {
+func (om *OUManager) SetOUProtection(ouDN string, protected bool) error {
 	if ouDN == "" {
 		return fmt.Errorf("OU DN cannot be empty")
 	}
@@ -422,7 +439,7 @@ func (om *OUManager) SetOUProtection(ctx context.Context, ouDN string, protected
 		TimeLimit:  om.timeout,
 	}
 
-	result, err := om.client.Search(ctx, searchReq)
+	result, err := om.client.Search(om.ctx, searchReq)
 	if err != nil {
 		return WrapError("get_security_descriptor", err)
 	}
@@ -447,7 +464,7 @@ func (om *OUManager) SetOUProtection(ctx context.Context, ouDN string, protected
 }
 
 // SearchOUs searches for OUs using various criteria.
-func (om *OUManager) SearchOUs(ctx context.Context, baseDN string, filter string) ([]*OU, error) {
+func (om *OUManager) SearchOUs(baseDN string, filter string) ([]*OU, error) {
 	if baseDN == "" {
 		baseDN = om.baseDN
 	}
@@ -470,7 +487,7 @@ func (om *OUManager) SearchOUs(ctx context.Context, baseDN string, filter string
 		TimeLimit: om.timeout,
 	}
 
-	result, err := om.client.SearchWithPaging(ctx, searchReq)
+	result, err := om.client.SearchWithPaging(om.ctx, searchReq)
 	if err != nil {
 		return nil, WrapError("search_ous", err)
 	}
@@ -505,7 +522,7 @@ func (om *OUManager) GetOUChildren(ctx context.Context, ouDN string) ([]*OU, err
 		TimeLimit: om.timeout,
 	}
 
-	result, err := om.client.Search(ctx, searchReq)
+	result, err := om.client.Search(om.ctx, searchReq)
 	if err != nil {
 		return nil, WrapError("get_ou_children", err)
 	}
@@ -597,8 +614,8 @@ func (om *OUManager) isOUProtected(securityDescriptor string) bool {
 	// Try to decode base64 (security descriptors are often base64 encoded in LDAP)
 	if decoded, err := base64.StdEncoding.DecodeString(securityDescriptor); err == nil {
 		// Look for patterns that might indicate protection
-		// This is a very simplified heuristic
-		return len(decoded) > 100 // Protected OUs typically have longer security descriptors
+		// This is a very simplified heuristic - protected OUs have additional ACLs
+		return len(decoded) > ProtectedOUDescriptorMinLength
 	}
 
 	return false
@@ -624,7 +641,7 @@ func (om *OUManager) ListOUsByContainer(ctx context.Context, containerDN string)
 		TimeLimit:  om.timeout,
 	}
 
-	result, err := om.client.Search(ctx, searchReq)
+	result, err := om.client.Search(om.ctx, searchReq)
 	if err != nil {
 		return nil, WrapError("list_ous_by_container", err)
 	}
@@ -646,7 +663,7 @@ func (om *OUManager) GetOUStats(ctx context.Context) (map[string]int, error) {
 	stats := make(map[string]int)
 
 	// Count total OUs
-	allOUs, err := om.SearchOUs(ctx, "", "")
+	allOUs, err := om.SearchOUs("", "")
 	if err != nil {
 		return nil, WrapError("get_ou_stats", err)
 	}

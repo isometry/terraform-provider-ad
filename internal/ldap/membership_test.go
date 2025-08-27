@@ -209,8 +209,6 @@ func (m *MockGroupMembershipClient) WhoAmI(ctx context.Context) (*WhoAmIResult, 
 	// Return a default result for testing
 	return &WhoAmIResult{
 		AuthzID: "u:CN=Test User,CN=Users,DC=example,DC=com",
-		DN:      "CN=Test User,CN=Users,DC=example,DC=com",
-		Format:  "dn",
 	}, nil
 }
 
@@ -329,11 +327,11 @@ func (m *MockGroupMembershipClient) ClearOperationLog() {
 }
 
 // Test helper to create a test membership manager.
-func createTestMembershipManager(_ *testing.T) (*GroupMembershipManager, *MockGroupMembershipClient) {
+func createTestMembershipManager(t *testing.T) (*GroupMembershipManager, *MockGroupMembershipClient) {
 	client := NewMockGroupMembershipClient()
 	baseDN := "DC=example,DC=com"
 
-	gmm := NewGroupMembershipManager(client, baseDN)
+	gmm := NewGroupMembershipManager(t.Context(), client, baseDN)
 	gmm.SetTimeout(5 * time.Second)
 
 	return gmm, client
@@ -343,7 +341,7 @@ func TestNewGroupMembershipManager(t *testing.T) {
 	client := NewMockGroupMembershipClient()
 	baseDN := "DC=example,DC=com"
 
-	gmm := NewGroupMembershipManager(client, baseDN)
+	gmm := NewGroupMembershipManager(t.Context(), client, baseDN)
 
 	if gmm.client != client {
 		t.Error("Client not set correctly")
@@ -380,8 +378,7 @@ func TestGetGroupMembers(t *testing.T) {
 	group := client.groups[groupGUID]
 	group.Members = []string{member2DN, member1DN} // Unsorted to test sorting
 
-	ctx := context.Background()
-	members, err := gmm.GetGroupMembers(ctx, groupGUID)
+	members, err := gmm.GetGroupMembers(groupGUID)
 
 	if err != nil {
 		t.Fatalf("GetGroupMembers failed: %v", err)
@@ -401,8 +398,7 @@ func TestGetGroupMembersEmptyGroup(t *testing.T) {
 	groupDN := "CN=EmptyGroup,OU=Groups,DC=example,DC=com"
 	client.AddMockGroup(groupGUID, groupDN, "EmptyGroup", "emptygroup")
 
-	ctx := context.Background()
-	members, err := gmm.GetGroupMembers(ctx, groupGUID)
+	members, err := gmm.GetGroupMembers(groupGUID)
 
 	if err != nil {
 		t.Fatalf("GetGroupMembers failed: %v", err)
@@ -438,8 +434,7 @@ func TestAddGroupMembers(t *testing.T) {
 		user2SAM, // SAM format
 	}
 
-	ctx := context.Background()
-	err := gmm.AddGroupMembers(ctx, groupGUID, membersToAdd)
+	err := gmm.AddGroupMembers(groupGUID, membersToAdd)
 
 	if err != nil {
 		t.Fatalf("AddGroupMembers failed: %v", err)
@@ -477,8 +472,7 @@ func TestAddGroupMembersWithConflicts(t *testing.T) {
 	// Try to add both users (user1 should conflict, user2 should succeed)
 	membersToAdd := []string{user1DN, user2DN}
 
-	ctx := context.Background()
-	err := gmm.AddGroupMembers(ctx, groupGUID, membersToAdd)
+	err := gmm.AddGroupMembers(groupGUID, membersToAdd)
 
 	// Should succeed despite conflict (graceful handling)
 	if err != nil {
@@ -521,8 +515,7 @@ func TestRemoveGroupMembers(t *testing.T) {
 		user2DN,             // DN format for user2
 	}
 
-	ctx := context.Background()
-	err := gmm.RemoveGroupMembers(ctx, groupGUID, membersToRemove)
+	err := gmm.RemoveGroupMembers(groupGUID, membersToRemove)
 
 	if err != nil {
 		t.Fatalf("RemoveGroupMembers failed: %v", err)
@@ -556,8 +549,7 @@ func TestRemoveAllGroupMembers(t *testing.T) {
 	// Remove all members
 	membersToRemove := []string{user1DN, user2DN}
 
-	ctx := context.Background()
-	err := gmm.RemoveGroupMembers(ctx, groupGUID, membersToRemove)
+	err := gmm.RemoveGroupMembers(groupGUID, membersToRemove)
 
 	if err != nil {
 		t.Fatalf("RemoveGroupMembers failed: %v", err)
@@ -599,8 +591,7 @@ func TestCalculateMembershipDelta(t *testing.T) {
 		user4DN,             // DN format (new member)
 	}
 
-	ctx := context.Background()
-	delta, err := gmm.CalculateMembershipDelta(ctx, groupGUID, desiredMembers)
+	delta, err := gmm.CalculateMembershipDelta(groupGUID, desiredMembers)
 
 	if err != nil {
 		t.Fatalf("CalculateMembershipDelta failed: %v", err)
@@ -649,8 +640,7 @@ func TestCalculateMembershipDeltaNoChanges(t *testing.T) {
 		user2DN,             // DN format for user2
 	}
 
-	ctx := context.Background()
-	delta, err := gmm.CalculateMembershipDelta(ctx, groupGUID, desiredMembers)
+	delta, err := gmm.CalculateMembershipDelta(groupGUID, desiredMembers)
 
 	if err != nil {
 		t.Fatalf("CalculateMembershipDelta failed: %v", err)
@@ -693,8 +683,7 @@ func TestSetGroupMembers(t *testing.T) {
 		"user1@example.com", // UPN format for user1
 	}
 
-	ctx := context.Background()
-	err := gmm.SetGroupMembers(ctx, groupGUID, desiredMembers)
+	err := gmm.SetGroupMembers(groupGUID, desiredMembers)
 
 	if err != nil {
 		t.Fatalf("SetGroupMembers failed: %v", err)
@@ -731,8 +720,7 @@ func TestSetGroupMembersEmptyDesiredList(t *testing.T) {
 	// Set empty membership
 	desiredMembers := []string{}
 
-	ctx := context.Background()
-	err := gmm.SetGroupMembers(ctx, groupGUID, desiredMembers)
+	err := gmm.SetGroupMembers(groupGUID, desiredMembers)
 
 	if err != nil {
 		t.Fatalf("SetGroupMembers failed: %v", err)
@@ -827,8 +815,7 @@ func TestGetMembershipStats(t *testing.T) {
 	group := client.groups[groupGUID]
 	group.Members = []string{user1DN, user2DN}
 
-	ctx := context.Background()
-	stats, err := gmm.GetMembershipStats(ctx, groupGUID)
+	stats, err := gmm.GetMembershipStats(groupGUID)
 
 	if err != nil {
 		t.Fatalf("GetMembershipStats failed: %v", err)
@@ -886,10 +873,8 @@ func TestAntiDriftScenario(t *testing.T) {
 	// This should NOT result in any membership changes
 	desiredMembers := []string{userUPN}
 
-	ctx := context.Background()
-
 	// Test 1: Calculate delta - should show no changes needed
-	delta, err := gmm.CalculateMembershipDelta(ctx, groupGUID, desiredMembers)
+	delta, err := gmm.CalculateMembershipDelta(groupGUID, desiredMembers)
 	if err != nil {
 		t.Fatalf("CalculateMembershipDelta failed: %v", err)
 	}
@@ -901,7 +886,7 @@ func TestAntiDriftScenario(t *testing.T) {
 	// Test 2: SetGroupMembers should be a no-op
 	client.ClearOperationLog()
 
-	err = gmm.SetGroupMembers(ctx, groupGUID, desiredMembers)
+	err = gmm.SetGroupMembers(groupGUID, desiredMembers)
 	if err != nil {
 		t.Fatalf("SetGroupMembers failed: %v", err)
 	}
@@ -938,11 +923,10 @@ func TestBatchOperationsLargeSet(t *testing.T) {
 		client.AddMockObject(userDN, "", "", "", fmt.Sprintf("user%d", i))
 	}
 
-	ctx := context.Background()
 	client.ClearOperationLog()
 
 	// Add all users - should be done in batches
-	err := gmm.AddGroupMembers(ctx, groupGUID, largeUserSet)
+	err := gmm.AddGroupMembers(groupGUID, largeUserSet)
 
 	if err != nil {
 		t.Fatalf("AddGroupMembers with large set failed: %v", err)
@@ -1027,7 +1011,7 @@ func TestSetBaseDN(t *testing.T) {
 func BenchmarkNormalizeLargeSet(b *testing.B) {
 	client := NewMockGroupMembershipClient()
 	baseDN := "DC=example,DC=com"
-	gmm := NewGroupMembershipManager(client, baseDN)
+	gmm := NewGroupMembershipManager(context.Background(), client, baseDN)
 
 	// Setup test data
 	testMembers := make([]string, 100)
@@ -1048,7 +1032,7 @@ func BenchmarkNormalizeLargeSet(b *testing.B) {
 func BenchmarkCalculateMembershipDelta(b *testing.B) {
 	client := NewMockGroupMembershipClient()
 	baseDN := "DC=example,DC=com"
-	gmm := NewGroupMembershipManager(client, baseDN)
+	gmm := NewGroupMembershipManager(context.Background(), client, baseDN)
 
 	// Setup test data
 	groupGUID := "12345678-1234-1234-1234-123456789012"
@@ -1070,10 +1054,8 @@ func BenchmarkCalculateMembershipDelta(b *testing.B) {
 	// Desired membership (last 50 users)
 	desiredMembers := testMembers[50:]
 
-	ctx := context.Background()
-
 	for b.Loop() {
-		_, err := gmm.CalculateMembershipDelta(ctx, groupGUID, desiredMembers)
+		_, err := gmm.CalculateMembershipDelta(groupGUID, desiredMembers)
 		if err != nil {
 			b.Fatalf("Delta calculation failed: %v", err)
 		}

@@ -248,11 +248,14 @@ func (d *GroupsDataSource) Configure(ctx context.Context, req datasource.Configu
 		)
 		return
 	}
-	d.groupManager = ldapclient.NewGroupManager(client, baseDN)
+	d.groupManager = ldapclient.NewGroupManager(ctx, client, baseDN)
 }
 
 func (d *GroupsDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
 	var data GroupsDataSourceModel
+
+	// Initialize logging subsystem for consistent logging
+	ctx = initializeLogging(ctx)
 
 	// Read Terraform configuration data into the model
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
@@ -284,7 +287,7 @@ func (d *GroupsDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 	})
 
 	// Perform the search
-	groups, err := d.groupManager.SearchGroupsWithFilter(ctx, searchFilter)
+	groups, err := d.groupManager.SearchGroupsWithFilter(searchFilter)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Searching Groups",

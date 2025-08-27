@@ -314,11 +314,14 @@ func (d *UsersDataSource) Configure(ctx context.Context, req datasource.Configur
 		)
 		return
 	}
-	d.userReader = ldapclient.NewUserReader(client, baseDN)
+	d.userReader = ldapclient.NewUserReader(ctx, client, baseDN)
 }
 
 func (d *UsersDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
 	var data UsersDataSourceModel
+
+	// Initialize logging subsystem for consistent logging
+	ctx = initializeLogging(ctx)
 
 	// Read Terraform configuration data into the model
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
@@ -355,7 +358,7 @@ func (d *UsersDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	})
 
 	// Perform the search
-	users, err := d.userReader.SearchUsersWithFilter(ctx, searchFilter)
+	users, err := d.userReader.SearchUsersWithFilter(searchFilter)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Searching Users",

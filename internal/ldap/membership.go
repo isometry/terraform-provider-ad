@@ -8,6 +8,23 @@ import (
 	"time"
 )
 
+// Active Directory membership operation limits.
+const (
+	// ADMemberBatchSize is the recommended batch size for Active Directory member operations.
+	//
+	// Active Directory has a practical limit of approximately 1000 members that can be
+	// processed in a single LDAP modify operation. This limit exists to:
+	//   - Prevent LDAP server resource exhaustion
+	//   - Avoid transaction timeout issues
+	//   - Maintain reasonable response times
+	//   - Ensure reliable replication across domain controllers
+	//
+	// Operations exceeding this limit may fail with LDAP error codes like:
+	//   - LDAP_ADMIN_LIMIT_EXCEEDED (11)
+	//   - LDAP_SIZELIMIT_EXCEEDED (4)
+	ADMemberBatchSize = 1000
+)
+
 // MembershipDelta represents the changes needed to achieve desired membership state.
 type MembershipDelta struct {
 	ToAdd    []string // Members to add (normalized DNs)
@@ -17,6 +34,7 @@ type MembershipDelta struct {
 // GroupMembershipManager handles bulk Active Directory group membership operations
 // with anti-drift prevention through identifier normalization.
 type GroupMembershipManager struct {
+	ctx          context.Context
 	client       Client
 	groupManager *GroupManager
 	normalizer   *MemberNormalizer
@@ -24,10 +42,11 @@ type GroupMembershipManager struct {
 }
 
 // NewGroupMembershipManager creates a new group membership manager instance.
-func NewGroupMembershipManager(client Client, baseDN string) *GroupMembershipManager {
+func NewGroupMembershipManager(ctx context.Context, client Client, baseDN string) *GroupMembershipManager {
 	return &GroupMembershipManager{
+		ctx:          ctx,
 		client:       client,
-		groupManager: NewGroupManager(client, baseDN),
+		groupManager: NewGroupManager(ctx, client, baseDN),
 		normalizer:   NewMemberNormalizer(client, baseDN),
 		timeout:      30 * time.Second,
 	}
@@ -42,13 +61,13 @@ func (gmm *GroupMembershipManager) SetTimeout(timeout time.Duration) {
 
 // SetGroupMembers sets the complete membership of a group, replacing all existing members.
 // This is the primary anti-drift operation - it ensures the group has exactly the specified members.
-func (gmm *GroupMembershipManager) SetGroupMembers(ctx context.Context, groupGUID string, members []string) error {
+func (gmm *GroupMembershipManager) SetGroupMembers(groupGUID string, members []string) error {
 	if groupGUID == "" {
 		return fmt.Errorf("group GUID cannot be empty")
 	}
 
 	// Calculate what changes are needed
-	delta, err := gmm.CalculateMembershipDelta(ctx, groupGUID, members)
+	delta, err := gmm.CalculateMembershipDelta(groupGUID, members)
 	if err != nil {
 		return WrapError("calculate_membership_delta", err)
 	}
@@ -60,13 +79,13 @@ func (gmm *GroupMembershipManager) SetGroupMembers(ctx context.Context, groupGUI
 
 	// Apply changes: remove first, then add to avoid conflicts
 	if len(delta.ToRemove) > 0 {
-		if err := gmm.RemoveGroupMembers(ctx, groupGUID, delta.ToRemove); err != nil {
+		if err := gmm.RemoveGroupMembers(groupGUID, delta.ToRemove); err != nil {
 			return WrapError("remove_members_for_set", err)
 		}
 	}
 
 	if len(delta.ToAdd) > 0 {
-		if err := gmm.AddGroupMembers(ctx, groupGUID, delta.ToAdd); err != nil {
+		if err := gmm.AddGroupMembers(groupGUID, delta.ToAdd); err != nil {
 			return WrapError("add_members_for_set", err)
 		}
 	}
@@ -75,13 +94,13 @@ func (gmm *GroupMembershipManager) SetGroupMembers(ctx context.Context, groupGUI
 }
 
 // GetGroupMembers retrieves all members of a group as normalized DNs.
-func (gmm *GroupMembershipManager) GetGroupMembers(ctx context.Context, groupGUID string) ([]string, error) {
+func (gmm *GroupMembershipManager) GetGroupMembers(groupGUID string) ([]string, error) {
 	if groupGUID == "" {
 		return nil, fmt.Errorf("group GUID cannot be empty")
 	}
 
 	// Use the existing GroupManager method which returns DNs
-	memberDNs, err := gmm.groupManager.GetMembers(ctx, groupGUID)
+	memberDNs, err := gmm.groupManager.GetMembers(groupGUID)
 	if err != nil {
 		return nil, WrapError("get_group_members", err)
 	}
@@ -98,8 +117,8 @@ func (gmm *GroupMembershipManager) GetGroupMembers(ctx context.Context, groupGUI
 }
 
 // AddGroupMembers adds new members to a group using batch operations.
-// Handles Active Directory's ~1000 member per operation limit.
-func (gmm *GroupMembershipManager) AddGroupMembers(ctx context.Context, groupGUID string, members []string) error {
+// Uses ADMemberBatchSize to respect Active Directory's member operation limits.
+func (gmm *GroupMembershipManager) AddGroupMembers(groupGUID string, members []string) error {
 	if groupGUID == "" {
 		return fmt.Errorf("group GUID cannot be empty")
 	}
@@ -109,7 +128,7 @@ func (gmm *GroupMembershipManager) AddGroupMembers(ctx context.Context, groupGUI
 	}
 
 	// Get group DN for operations
-	group, err := gmm.groupManager.GetGroup(ctx, groupGUID)
+	group, err := gmm.groupManager.GetGroup(groupGUID)
 	if err != nil {
 		return WrapError("get_group_for_add_members", err)
 	}
@@ -127,11 +146,11 @@ func (gmm *GroupMembershipManager) AddGroupMembers(ctx context.Context, groupGUI
 	}
 
 	// Perform batch add operations respecting AD limits
-	return gmm.batchAddMembers(ctx, group.DistinguishedName, uniqueDNs)
+	return gmm.batchAddMembers(group.DistinguishedName, uniqueDNs)
 }
 
 // RemoveGroupMembers removes members from a group using batch operations.
-func (gmm *GroupMembershipManager) RemoveGroupMembers(ctx context.Context, groupGUID string, members []string) error {
+func (gmm *GroupMembershipManager) RemoveGroupMembers(groupGUID string, members []string) error {
 	if groupGUID == "" {
 		return fmt.Errorf("group GUID cannot be empty")
 	}
@@ -141,7 +160,7 @@ func (gmm *GroupMembershipManager) RemoveGroupMembers(ctx context.Context, group
 	}
 
 	// Get current group state
-	group, err := gmm.groupManager.GetGroup(ctx, groupGUID)
+	group, err := gmm.groupManager.GetGroup(groupGUID)
 	if err != nil {
 		return WrapError("get_group_for_remove_members", err)
 	}
@@ -162,18 +181,18 @@ func (gmm *GroupMembershipManager) RemoveGroupMembers(ctx context.Context, group
 	newMembers := gmm.calculateNewMembership(group.MemberDNs, toRemoveDNs)
 
 	// Replace entire member list - more reliable than individual deletions
-	return gmm.replaceMemberList(ctx, group.DistinguishedName, newMembers)
+	return gmm.replaceMemberList(group.DistinguishedName, newMembers)
 }
 
 // CalculateMembershipDelta compares desired membership with current state
 // and returns the changes needed to achieve the desired state.
-func (gmm *GroupMembershipManager) CalculateMembershipDelta(ctx context.Context, groupGUID string, desiredMembers []string) (*MembershipDelta, error) {
+func (gmm *GroupMembershipManager) CalculateMembershipDelta(groupGUID string, desiredMembers []string) (*MembershipDelta, error) {
 	if groupGUID == "" {
 		return nil, fmt.Errorf("group GUID cannot be empty")
 	}
 
 	// Get current members
-	currentMembers, err := gmm.GetGroupMembers(ctx, groupGUID)
+	currentMembers, err := gmm.GetGroupMembers(groupGUID)
 	if err != nil {
 		return nil, WrapError("get_current_members", err)
 	}
@@ -201,14 +220,14 @@ func (gmm *GroupMembershipManager) CalculateMembershipDelta(ctx context.Context,
 }
 
 // batchAddMembers adds members in batches to respect Active Directory limits.
-func (gmm *GroupMembershipManager) batchAddMembers(ctx context.Context, groupDN string, memberDNs []string) error {
-	const batchSize = 1000 // Active Directory recommended batch size
+func (gmm *GroupMembershipManager) batchAddMembers(groupDN string, memberDNs []string) error {
+	batchSize := ADMemberBatchSize
 
 	for i := 0; i < len(memberDNs); i += batchSize {
 		end := min(i+batchSize, len(memberDNs))
 
 		batch := memberDNs[i:end]
-		if err := gmm.addMembersBatch(ctx, groupDN, batch); err != nil {
+		if err := gmm.addMembersBatch(groupDN, batch); err != nil {
 			return fmt.Errorf("failed to add member batch %d-%d: %w", i+1, end, err)
 		}
 	}
@@ -217,7 +236,7 @@ func (gmm *GroupMembershipManager) batchAddMembers(ctx context.Context, groupDN 
 }
 
 // addMembersBatch adds a single batch of members with conflict handling.
-func (gmm *GroupMembershipManager) addMembersBatch(ctx context.Context, groupDN string, memberDNs []string) error {
+func (gmm *GroupMembershipManager) addMembersBatch(groupDN string, memberDNs []string) error {
 	if len(memberDNs) == 0 {
 		return nil
 	}
@@ -227,11 +246,11 @@ func (gmm *GroupMembershipManager) addMembersBatch(ctx context.Context, groupDN 
 		AddAttributes: map[string][]string{"member": memberDNs},
 	}
 
-	err := gmm.client.Modify(ctx, modReq)
+	err := gmm.client.Modify(gmm.ctx, modReq)
 	if err != nil {
 		// Handle "member already exists" conflicts by adding individually
 		if IsConflictError(err) {
-			return gmm.addMembersIndividually(ctx, groupDN, memberDNs)
+			return gmm.addMembersIndividually(groupDN, memberDNs)
 		}
 		return err
 	}
@@ -240,7 +259,7 @@ func (gmm *GroupMembershipManager) addMembersBatch(ctx context.Context, groupDN 
 }
 
 // addMembersIndividually adds members one by one to handle conflicts gracefully.
-func (gmm *GroupMembershipManager) addMembersIndividually(ctx context.Context, groupDN string, memberDNs []string) error {
+func (gmm *GroupMembershipManager) addMembersIndividually(groupDN string, memberDNs []string) error {
 	var lastNonConflictErr error
 	successCount := 0
 
@@ -250,7 +269,7 @@ func (gmm *GroupMembershipManager) addMembersIndividually(ctx context.Context, g
 			AddAttributes: map[string][]string{"member": {memberDN}},
 		}
 
-		if err := gmm.client.Modify(ctx, modReq); err != nil {
+		if err := gmm.client.Modify(gmm.ctx, modReq); err != nil {
 			if IsConflictError(err) {
 				// Member already exists - this is expected in anti-drift scenarios
 				continue
@@ -270,7 +289,7 @@ func (gmm *GroupMembershipManager) addMembersIndividually(ctx context.Context, g
 }
 
 // replaceMemberList replaces the entire member list using a single LDAP operation.
-func (gmm *GroupMembershipManager) replaceMemberList(ctx context.Context, groupDN string, newMembers []string) error {
+func (gmm *GroupMembershipManager) replaceMemberList(groupDN string, newMembers []string) error {
 	modReq := &ModifyRequest{
 		DN:                groupDN,
 		ReplaceAttributes: make(map[string][]string),
@@ -285,7 +304,7 @@ func (gmm *GroupMembershipManager) replaceMemberList(ctx context.Context, groupD
 		modReq.ReplaceAttributes["member"] = newMembers
 	}
 
-	return gmm.client.Modify(ctx, modReq)
+	return gmm.client.Modify(gmm.ctx, modReq)
 }
 
 // extractUniqueDNs extracts unique DNs from a normalization result map.
@@ -380,12 +399,12 @@ func (gmm *GroupMembershipManager) ValidateMembers(members []string) error {
 }
 
 // GetMembershipStats returns statistics about group membership operations.
-func (gmm *GroupMembershipManager) GetMembershipStats(ctx context.Context, groupGUID string) (map[string]any, error) {
+func (gmm *GroupMembershipManager) GetMembershipStats(groupGUID string) (map[string]any, error) {
 	if groupGUID == "" {
 		return nil, fmt.Errorf("group GUID cannot be empty")
 	}
 
-	group, err := gmm.groupManager.GetGroup(ctx, groupGUID)
+	group, err := gmm.groupManager.GetGroup(groupGUID)
 	if err != nil {
 		return nil, WrapError("get_group_for_stats", err)
 	}

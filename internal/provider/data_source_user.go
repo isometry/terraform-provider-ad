@@ -404,11 +404,14 @@ func (d *UserDataSource) Configure(ctx context.Context, req datasource.Configure
 		)
 		return
 	}
-	d.userReader = ldapclient.NewUserReader(client, baseDN)
+	d.userReader = ldapclient.NewUserReader(ctx, client, baseDN)
 }
 
 func (d *UserDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
 	var data UserDataSourceModel
+
+	// Initialize logging subsystem for consistent logging
+	ctx = initializeLogging(ctx)
 
 	// Read Terraform configuration data into the model
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
@@ -460,7 +463,7 @@ func (d *UserDataSource) retrieveUser(ctx context.Context, data *UserDataSourceM
 		tflog.Debug(ctx, "Looking up user by objectGUID", map[string]any{
 			"guid": guid,
 		})
-		return d.userReader.GetUserByGUID(ctx, guid)
+		return d.userReader.GetUserByGUID(guid)
 	}
 
 	// DN lookup
@@ -469,7 +472,7 @@ func (d *UserDataSource) retrieveUser(ctx context.Context, data *UserDataSourceM
 		tflog.Debug(ctx, "Looking up user by DN", map[string]any{
 			"dn": dn,
 		})
-		return d.userReader.GetUserByDN(ctx, dn)
+		return d.userReader.GetUserByDN(dn)
 	}
 
 	// UPN lookup
@@ -478,7 +481,7 @@ func (d *UserDataSource) retrieveUser(ctx context.Context, data *UserDataSourceM
 		tflog.Debug(ctx, "Looking up user by UPN", map[string]any{
 			"upn": upn,
 		})
-		return d.userReader.GetUserByUPN(ctx, upn)
+		return d.userReader.GetUserByUPN(upn)
 	}
 
 	// SAM account name lookup
@@ -487,7 +490,7 @@ func (d *UserDataSource) retrieveUser(ctx context.Context, data *UserDataSourceM
 		tflog.Debug(ctx, "Looking up user by SAM account name", map[string]any{
 			"sam_account_name": samAccountName,
 		})
-		return d.userReader.GetUserBySAM(ctx, samAccountName)
+		return d.userReader.GetUserBySAM(samAccountName)
 	}
 
 	// SID lookup
@@ -496,7 +499,7 @@ func (d *UserDataSource) retrieveUser(ctx context.Context, data *UserDataSourceM
 		tflog.Debug(ctx, "Looking up user by SID", map[string]any{
 			"sid": sid,
 		})
-		return d.userReader.GetUserBySID(ctx, sid)
+		return d.userReader.GetUserBySID(sid)
 	}
 
 	return nil, fmt.Errorf("no valid lookup method provided")

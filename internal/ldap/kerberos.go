@@ -30,44 +30,44 @@ func performKerberosAuthWithContext(ctx context.Context, conn *ldap.Conn, cfg *C
 		"host":     serverInfo.Host,
 	}
 
-	LogKerberosEvent(ctx, "authentication_attempt", kerberosFields)
+	tflog.Info(ctx, "Kerberos authentication attempt", kerberosFields)
 
 	// Validate Kerberos configuration
-	tflog.SubsystemDebug(ctx, "kerberos", "Validating Kerberos configuration", kerberosFields)
+	tflog.Debug(ctx, "Validating Kerberos configuration", kerberosFields)
 	if err := prepareKerberosConfigWithContext(ctx, cfg); err != nil {
-		LogKerberosEvent(ctx, "configuration_validation_failed", map[string]any{
+		tflog.Error(ctx, "Kerberos configuration validation failed", map[string]any{
 			"error": err.Error(),
 		})
 		return fmt.Errorf("kerberos configuration error: %w", err)
 	}
 
 	// Create GSSAPI client based on available credentials
-	tflog.SubsystemDebug(ctx, "kerberos", "Creating GSSAPI client", kerberosFields)
+	tflog.Debug(ctx, "Creating GSSAPI client", kerberosFields)
 	gssapiClient, err := createGSSAPIClientWithContext(ctx, cfg)
 	if err != nil {
-		LogKerberosEvent(ctx, "gssapi_client_creation_failed", map[string]any{
+		tflog.Error(ctx, "Kerberos GSSAPI client creation failed", map[string]any{
 			"error":       err.Error(),
 			"duration_ms": time.Since(start).Milliseconds(),
 		})
 		return fmt.Errorf("failed to create GSSAPI client: %w", err)
 	}
 	defer func() {
-		tflog.SubsystemDebug(ctx, "kerberos", "Cleaning up GSSAPI security context")
+		tflog.Debug(ctx, "Cleaning up GSSAPI security context")
 		if deleteErr := gssapiClient.DeleteSecContext(); deleteErr != nil {
-			tflog.SubsystemWarn(ctx, "kerberos", "Failed to delete security context", map[string]any{
+			tflog.Warn(ctx, "Failed to delete security context", map[string]any{
 				"error": deleteErr.Error(),
 			})
 		}
 	}()
 
-	LogKerberosEvent(ctx, "gssapi_client_created", map[string]any{
+	tflog.Debug(ctx, "Kerberos GSSAPI client created", map[string]any{
 		"duration_ms": time.Since(start).Milliseconds(),
 	})
 
 	// Build service principal name from connection info
 	spn, err := buildServicePrincipalWithContext(ctx, cfg, serverInfo)
 	if err != nil {
-		LogKerberosEvent(ctx, "spn_build_failed", map[string]any{
+		tflog.Error(ctx, "Kerberos SPN build failed", map[string]any{
 			"error":       err.Error(),
 			"duration_ms": time.Since(start).Milliseconds(),
 		})
@@ -75,7 +75,7 @@ func performKerberosAuthWithContext(ctx context.Context, conn *ldap.Conn, cfg *C
 	}
 
 	kerberosFields["spn"] = spn
-	tflog.SubsystemInfo(ctx, "kerberos", "Attempting GSSAPI bind", kerberosFields)
+	tflog.Info(ctx, "Attempting GSSAPI bind", kerberosFields)
 
 	// Perform the GSSAPI bind
 	bindStart := time.Now()
@@ -87,11 +87,11 @@ func performKerberosAuthWithContext(ctx context.Context, conn *ldap.Conn, cfg *C
 
 	if err != nil {
 		kerberosFields["error"] = err.Error()
-		LogKerberosEvent(ctx, "authentication_failed", kerberosFields)
+		tflog.Error(ctx, "Kerberos authentication failed", kerberosFields)
 		return fmt.Errorf("GSSAPI bind failed: %w", err)
 	}
 
-	LogKerberosEvent(ctx, "authentication_successful", kerberosFields)
+	tflog.Info(ctx, "Kerberos authentication successful", kerberosFields)
 	return nil
 }
 
@@ -109,13 +109,13 @@ func createGSSAPIClientWithContext(ctx context.Context, cfg *ConnectionConfig) (
 		krb5confPath = "/etc/krb5.conf"
 	}
 
-	tflog.SubsystemDebug(ctx, "kerberos", "Checking Kerberos configuration file", map[string]any{
+	tflog.Debug(ctx, "Checking Kerberos configuration file", map[string]any{
 		"krb5_conf_path": krb5confPath,
 	})
 
 	// Check if the krb5.conf file exists before proceeding
 	if !fileExists(krb5confPath) {
-		LogKerberosEvent(ctx, "krb5_conf_not_found", map[string]any{
+		tflog.Error(ctx, "Kerberos krb5.conf not found", map[string]any{
 			"path": krb5confPath,
 		})
 		return nil, fmt.Errorf("kerberos configuration file not found at %s. "+
@@ -125,25 +125,25 @@ func createGSSAPIClientWithContext(ctx context.Context, cfg *ConnectionConfig) (
 			krb5confPath, krb5confPath, generateExampleKrb5Conf(cfg))
 	}
 
-	LogKerberosEvent(ctx, "krb5_conf_found", map[string]any{
+	tflog.Debug(ctx, "Kerberos krb5.conf found", map[string]any{
 		"path": krb5confPath,
 	})
 
 	// Priority 1: Explicit credential cache
 	if cfg.KerberosCCache != "" && fileExists(cfg.KerberosCCache) {
-		LogKerberosEvent(ctx, "credentials_selected", map[string]any{
+		tflog.Debug(ctx, "Kerberos credentials selected", map[string]any{
 			"method": "explicit_ccache",
 			"path":   cfg.KerberosCCache,
 		})
 		client, err := gssapi.NewClientFromCCache(cfg.KerberosCCache, krb5confPath, krb5client.DisablePAFXFAST(true))
 		if err != nil {
-			LogKerberosEvent(ctx, "credential_cache_failed", map[string]any{
+			tflog.Error(ctx, "Kerberos credential cache failed", map[string]any{
 				"path":  cfg.KerberosCCache,
 				"error": err.Error(),
 			})
 			return nil, err
 		}
-		LogKerberosEvent(ctx, "credential_cache_loaded", map[string]any{
+		tflog.Debug(ctx, "Kerberos credential cache loaded", map[string]any{
 			"path": cfg.KerberosCCache,
 		})
 		return client, nil
@@ -152,19 +152,19 @@ func createGSSAPIClientWithContext(ctx context.Context, cfg *ConnectionConfig) (
 	// Priority 2: Default credential cache (if exists)
 	defaultCCache := getDefaultCCachePath()
 	if fileExists(defaultCCache) {
-		LogKerberosEvent(ctx, "credentials_selected", map[string]any{
+		tflog.Debug(ctx, "Kerberos credentials selected", map[string]any{
 			"method": "default_ccache",
 			"path":   defaultCCache,
 		})
 		client, err := gssapi.NewClientFromCCache(defaultCCache, krb5confPath, krb5client.DisablePAFXFAST(true))
 		if err != nil {
-			LogKerberosEvent(ctx, "credential_cache_failed", map[string]any{
+			tflog.Error(ctx, "Kerberos credential cache failed", map[string]any{
 				"path":  defaultCCache,
 				"error": err.Error(),
 			})
 			return nil, err
 		}
-		LogKerberosEvent(ctx, "credential_cache_loaded", map[string]any{
+		tflog.Debug(ctx, "Kerberos credential cache loaded", map[string]any{
 			"path": defaultCCache,
 		})
 		return client, nil
@@ -172,7 +172,7 @@ func createGSSAPIClientWithContext(ctx context.Context, cfg *ConnectionConfig) (
 
 	// Priority 3: Explicit keytab
 	if cfg.KerberosKeytab != "" && fileExists(cfg.KerberosKeytab) {
-		LogKerberosEvent(ctx, "credentials_selected", map[string]any{
+		tflog.Debug(ctx, "Kerberos credentials selected", map[string]any{
 			"method":   "explicit_keytab",
 			"path":     cfg.KerberosKeytab,
 			"username": cfg.Username,
@@ -180,13 +180,13 @@ func createGSSAPIClientWithContext(ctx context.Context, cfg *ConnectionConfig) (
 		})
 		client, err := gssapi.NewClientWithKeytab(cfg.Username, cfg.KerberosRealm, cfg.KerberosKeytab, krb5confPath, krb5client.DisablePAFXFAST(true))
 		if err != nil {
-			LogKerberosEvent(ctx, "keytab_failed", map[string]any{
+			tflog.Error(ctx, "Kerberos keytab failed", map[string]any{
 				"path":  cfg.KerberosKeytab,
 				"error": err.Error(),
 			})
 			return nil, err
 		}
-		LogKerberosEvent(ctx, "keytab_loaded", map[string]any{
+		tflog.Debug(ctx, "Kerberos keytab loaded", map[string]any{
 			"path": cfg.KerberosKeytab,
 		})
 		return client, nil
@@ -196,7 +196,7 @@ func createGSSAPIClientWithContext(ctx context.Context, cfg *ConnectionConfig) (
 	if cfg.Username != "" {
 		defaultKeytab := getDefaultKeytabPath()
 		if fileExists(defaultKeytab) {
-			LogKerberosEvent(ctx, "credentials_selected", map[string]any{
+			tflog.Debug(ctx, "Kerberos credentials selected", map[string]any{
 				"method":   "default_keytab",
 				"path":     defaultKeytab,
 				"username": cfg.Username,
@@ -204,13 +204,13 @@ func createGSSAPIClientWithContext(ctx context.Context, cfg *ConnectionConfig) (
 			})
 			client, err := gssapi.NewClientWithKeytab(cfg.Username, cfg.KerberosRealm, defaultKeytab, krb5confPath, krb5client.DisablePAFXFAST(true))
 			if err != nil {
-				LogKerberosEvent(ctx, "keytab_failed", map[string]any{
+				tflog.Error(ctx, "Kerberos keytab failed", map[string]any{
 					"path":  defaultKeytab,
 					"error": err.Error(),
 				})
 				return nil, err
 			}
-			LogKerberosEvent(ctx, "keytab_loaded", map[string]any{
+			tflog.Debug(ctx, "Kerberos keytab loaded", map[string]any{
 				"path": defaultKeytab,
 			})
 			return client, nil
@@ -219,28 +219,28 @@ func createGSSAPIClientWithContext(ctx context.Context, cfg *ConnectionConfig) (
 
 	// Priority 5: Password authentication
 	if cfg.Username != "" && cfg.Password != "" {
-		LogKerberosEvent(ctx, "credentials_selected", map[string]any{
+		tflog.Debug(ctx, "Kerberos credentials selected", map[string]any{
 			"method":   "password",
 			"username": cfg.Username,
 			"realm":    cfg.KerberosRealm,
 		})
 		client, err := gssapi.NewClientWithPassword(cfg.Username, cfg.KerberosRealm, cfg.Password, krb5confPath, krb5client.DisablePAFXFAST(true))
 		if err != nil {
-			LogKerberosEvent(ctx, "password_auth_failed", map[string]any{
+			tflog.Error(ctx, "Kerberos password auth failed", map[string]any{
 				"username": cfg.Username,
 				"realm":    cfg.KerberosRealm,
 				"error":    err.Error(),
 			})
 			return nil, err
 		}
-		LogKerberosEvent(ctx, "password_auth_success", map[string]any{
+		tflog.Debug(ctx, "Kerberos password auth success", map[string]any{
 			"username": cfg.Username,
 			"realm":    cfg.KerberosRealm,
 		})
 		return client, nil
 	}
 
-	LogKerberosEvent(ctx, "no_credentials_found", map[string]any{
+	tflog.Error(ctx, "Kerberos no credentials found", map[string]any{
 		"checked_explicit_ccache": cfg.KerberosCCache != "",
 		"checked_default_ccache":  fileExists(getDefaultCCachePath()),
 		"checked_explicit_keytab": cfg.KerberosKeytab != "",
@@ -260,26 +260,26 @@ func buildServicePrincipal(cfg *ConnectionConfig, serverInfo *ServerInfo) (strin
 // buildServicePrincipalWithContext constructs the LDAP service principal name with logging context.
 func buildServicePrincipalWithContext(ctx context.Context, cfg *ConnectionConfig, serverInfo *ServerInfo) (string, error) {
 	if cfg == nil {
-		tflog.SubsystemError(ctx, "kerberos", "Configuration is required for service principal")
+		tflog.Error(ctx, "Configuration is required for service principal")
 		return "", fmt.Errorf("configuration is required for service principal")
 	}
 
 	// Use explicit SPN override if provided
 	if cfg.KerberosSPN != "" {
-		tflog.SubsystemDebug(ctx, "kerberos", "Using explicit SPN override", map[string]any{
+		tflog.Debug(ctx, "Using explicit SPN override", map[string]any{
 			"spn": cfg.KerberosSPN,
 		})
 		return cfg.KerberosSPN, nil
 	}
 
 	if serverInfo == nil {
-		tflog.SubsystemError(ctx, "kerberos", "Server info is required for service principal")
+		tflog.Error(ctx, "Server info is required for service principal")
 		return "", fmt.Errorf("server info is required for service principal")
 	}
 
 	hostname := serverInfo.Host
 	if hostname == "" {
-		tflog.SubsystemError(ctx, "kerberos", "Hostname is required for service principal")
+		tflog.Error(ctx, "Hostname is required for service principal")
 		return "", fmt.Errorf("hostname is required for service principal")
 	}
 
@@ -287,14 +287,14 @@ func buildServicePrincipalWithContext(ctx context.Context, cfg *ConnectionConfig
 	if colonPos := strings.Index(hostname, ":"); colonPos != -1 {
 		originalHostname := hostname
 		hostname = hostname[:colonPos]
-		tflog.SubsystemDebug(ctx, "kerberos", "Removed port from hostname for SPN", map[string]any{
+		tflog.Debug(ctx, "Removed port from hostname for SPN", map[string]any{
 			"original_hostname": originalHostname,
 			"cleaned_hostname":  hostname,
 		})
 	}
 
 	spn := fmt.Sprintf("ldap/%s", hostname)
-	tflog.SubsystemDebug(ctx, "kerberos", "Built service principal name", map[string]any{
+	tflog.Debug(ctx, "Built service principal name", map[string]any{
 		"spn":      spn,
 		"hostname": hostname,
 	})

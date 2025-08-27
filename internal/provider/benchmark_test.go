@@ -21,7 +21,7 @@ func BenchmarkGroupSearch(b *testing.B) {
 	defer helper.Close()
 
 	ctx := context.Background()
-	groupManager := ldap.NewGroupManager(helper.client, helper.config.BaseDN)
+	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN)
 
 	// Create test groups
 	testGroups, err := helper.CreateTestGroups(ctx, 100)
@@ -36,7 +36,7 @@ func BenchmarkGroupSearch(b *testing.B) {
 	b.Run("SearchByFilter", func(b *testing.B) {
 		filter := "(objectClass=group)"
 		for b.Loop() {
-			_, err := groupManager.SearchGroups(ctx, filter, []string{"objectGUID", "name"})
+			_, err := groupManager.SearchGroups(filter, []string{"objectGUID", "name"})
 			if err != nil {
 				b.Fatalf("Search failed: %v", err)
 			}
@@ -46,7 +46,7 @@ func BenchmarkGroupSearch(b *testing.B) {
 	b.Run("GetByID", func(b *testing.B) {
 		groupID := testGroups[0] // Use first test group
 		for b.Loop() {
-			_, err := groupManager.GetGroup(ctx, groupID)
+			_, err := groupManager.GetGroup(groupID)
 			if err != nil {
 				b.Fatalf("GetGroup failed: %v", err)
 			}
@@ -79,10 +79,10 @@ func BenchmarkGroupMembership(b *testing.B) {
 	defer helper.CleanupTestGroups(ctx, memberGroups)
 
 	// Convert member group IDs to DNs
-	groupManager := ldap.NewGroupManager(helper.client, helper.config.BaseDN)
+	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN)
 	memberDNs := make([]string, len(memberGroups))
 	for i, groupID := range memberGroups {
-		group, err := groupManager.GetGroup(ctx, groupID)
+		group, err := groupManager.GetGroup(groupID)
 		if err != nil {
 			b.Fatalf("Failed to get member group %d: %v", i, err)
 		}
@@ -91,8 +91,8 @@ func BenchmarkGroupMembership(b *testing.B) {
 
 	// Add members to first test group
 	mainGroupID := testGroups[0]
-	membershipManager := ldap.NewGroupMembershipManager(helper.client, helper.config.BaseDN)
-	err = membershipManager.SetGroupMembers(ctx, mainGroupID, memberDNs)
+	membershipManager := ldap.NewGroupMembershipManager(ctx, helper.client, helper.config.BaseDN)
+	err = membershipManager.SetGroupMembers(mainGroupID, memberDNs)
 	if err != nil {
 		b.Fatalf("Failed to set members: %v", err)
 	}
@@ -101,7 +101,7 @@ func BenchmarkGroupMembership(b *testing.B) {
 
 	b.Run("GetMembers", func(b *testing.B) {
 		for b.Loop() {
-			_, err := membershipManager.GetGroupMembers(ctx, mainGroupID)
+			_, err := membershipManager.GetGroupMembers(mainGroupID)
 			if err != nil {
 				b.Fatalf("GetMembers failed: %v", err)
 			}
@@ -114,14 +114,14 @@ func BenchmarkGroupMembership(b *testing.B) {
 
 		for i := 0; b.Loop(); i++ {
 			// Add member
-			err := membershipManager.AddGroupMembers(ctx, targetGroupID, []string{memberDN})
+			err := membershipManager.AddGroupMembers(targetGroupID, []string{memberDN})
 			if err != nil {
 				b.Logf("AddMember may have failed (expected for duplicate adds): %v", err)
 			}
 
 			// Remove member for next iteration (except last one)
 			if i < b.N-1 {
-				err = membershipManager.RemoveGroupMembers(ctx, targetGroupID, []string{memberDN})
+				err = membershipManager.RemoveGroupMembers(targetGroupID, []string{memberDN})
 				if err != nil {
 					b.Logf("RemoveMember may have failed: %v", err)
 				}
@@ -140,14 +140,14 @@ func BenchmarkUserSearch(b *testing.B) {
 	defer helper.Close()
 
 	ctx := context.Background()
-	userReader := ldap.NewUserReader(helper.client, helper.config.BaseDN)
+	userReader := ldap.NewUserReader(ctx, helper.client, helper.config.BaseDN)
 
 	b.ResetTimer()
 
 	b.Run("SearchByFilter", func(b *testing.B) {
 		filter := "(objectClass=user)"
 		for b.Loop() {
-			_, err := userReader.SearchUsers(ctx, filter, []string{"objectGUID", "userPrincipalName"})
+			_, err := userReader.SearchUsers(filter, []string{"objectGUID", "userPrincipalName"})
 			if err != nil {
 				b.Fatalf("Search failed: %v", err)
 			}
@@ -157,7 +157,7 @@ func BenchmarkUserSearch(b *testing.B) {
 	b.Run("GetByUPN", func(b *testing.B) {
 		upn := "Administrator@" + helper.config.Domain
 		for b.Loop() {
-			_, err := userReader.GetUserByUPN(ctx, upn)
+			_, err := userReader.GetUserByUPN(upn)
 			if err != nil && !ldap.IsNotFoundError(err) {
 				b.Fatalf("GetByUPN failed: %v", err)
 			}
@@ -269,8 +269,8 @@ func BenchmarkNormalizer(b *testing.B) {
 	}
 	defer helper.CleanupTestGroups(ctx, testGroups)
 
-	groupManager := ldap.NewGroupManager(helper.client, helper.config.BaseDN)
-	group, err := groupManager.GetGroup(ctx, testGroups[0])
+	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN)
+	group, err := groupManager.GetGroup(testGroups[0])
 	if err != nil {
 		b.Fatalf("Failed to get test group: %v", err)
 	}
@@ -317,7 +317,7 @@ func BenchmarkMemoryUsage(b *testing.B) {
 	defer helper.Close()
 
 	ctx := context.Background()
-	groupManager := ldap.NewGroupManager(helper.client, helper.config.BaseDN)
+	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN)
 
 	// Create a large number of test groups
 	testGroups, err := helper.CreateTestGroups(ctx, 500)
@@ -331,7 +331,7 @@ func BenchmarkMemoryUsage(b *testing.B) {
 	b.Run("LargeResultSet", func(b *testing.B) {
 		for b.Loop() {
 			filter := "(objectClass=group)"
-			results, err := groupManager.SearchGroups(ctx, filter, []string{
+			results, err := groupManager.SearchGroups(filter, []string{
 				"objectGUID", "distinguishedName", "name", "sAMAccountName",
 				"description", "groupType", "member",
 			})
@@ -359,14 +359,14 @@ func BenchmarkErrorHandling(b *testing.B) {
 	defer helper.Close()
 
 	ctx := context.Background()
-	groupManager := ldap.NewGroupManager(helper.client, helper.config.BaseDN)
+	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN)
 
 	b.ResetTimer()
 
 	b.Run("NotFoundErrors", func(b *testing.B) {
 		nonExistentGUID := "550e8400-e29b-41d4-a716-446655440000"
 		for b.Loop() {
-			_, err := groupManager.GetGroup(ctx, nonExistentGUID)
+			_, err := groupManager.GetGroup(nonExistentGUID)
 			if err == nil {
 				b.Fatal("Expected not found error")
 			}
@@ -379,7 +379,7 @@ func BenchmarkErrorHandling(b *testing.B) {
 	b.Run("InvalidFilter", func(b *testing.B) {
 		invalidFilter := "(invalid filter syntax"
 		for b.Loop() {
-			_, err := groupManager.SearchGroups(ctx, invalidFilter, []string{"objectGUID"})
+			_, err := groupManager.SearchGroups(invalidFilter, []string{"objectGUID"})
 			if err == nil {
 				b.Fatal("Expected filter error")
 			}
@@ -397,7 +397,7 @@ func BenchmarkConcurrency(b *testing.B) {
 	defer helper.Close()
 
 	ctx := context.Background()
-	groupManager := ldap.NewGroupManager(helper.client, helper.config.BaseDN)
+	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN)
 
 	// Create test groups
 	testGroups, err := helper.CreateTestGroups(ctx, 10)
@@ -413,7 +413,7 @@ func BenchmarkConcurrency(b *testing.B) {
 			i := 0
 			for pb.Next() {
 				groupID := testGroups[i%len(testGroups)]
-				_, err := groupManager.GetGroup(ctx, groupID)
+				_, err := groupManager.GetGroup(groupID)
 				if err != nil {
 					b.Fatalf("Concurrent read failed: %v", err)
 				}
@@ -426,7 +426,7 @@ func BenchmarkConcurrency(b *testing.B) {
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
 				filter := "(objectClass=group)"
-				_, err := groupManager.SearchGroups(ctx, filter, []string{"objectGUID"})
+				_, err := groupManager.SearchGroups(filter, []string{"objectGUID"})
 				if err != nil {
 					b.Fatalf("Concurrent search failed: %v", err)
 				}
@@ -458,7 +458,7 @@ func BenchmarkPerformanceRegression(b *testing.B) {
 			maxTime: maxTime,
 			testFunc: func(b *testing.B) {
 				ctx := context.Background()
-				groupManager := ldap.NewGroupManager(helper.client, helper.config.BaseDN)
+				groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN)
 
 				// Create a test group
 				testGroups, err := helper.CreateTestGroups(ctx, 1)
@@ -473,7 +473,7 @@ func BenchmarkPerformanceRegression(b *testing.B) {
 				start := time.Now()
 
 				for b.Loop() {
-					_, err := groupManager.GetGroup(ctx, groupID)
+					_, err := groupManager.GetGroup(groupID)
 					if err != nil {
 						b.Fatalf("GetGroup failed: %v", err)
 					}

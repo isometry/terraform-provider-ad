@@ -23,6 +23,13 @@ const (
 	IdentifierTypeSAM                    // SAM Account Name (DOMAIN\username)
 )
 
+// Member normalizer configuration.
+const (
+	// DefaultNormalizerCacheSize is the default maximum number of cached normalization entries.
+	// This prevents unbounded memory growth while providing good cache hit rates.
+	DefaultNormalizerCacheSize = 1000
+)
+
 // String returns the string representation of the identifier type.
 func (i IdentifierType) String() string {
 	switch i {
@@ -91,9 +98,9 @@ func NewMemberNormalizer(client Client, baseDN string) *MemberNormalizer {
 		guidHandler:  NewGUIDHandler(),
 		baseDN:       baseDN,
 		cache:        make(map[string]*CacheEntry),
-		cacheTTL:     15 * time.Minute, // Cache results for 15 minutes
-		maxCacheSize: 1000,             // Maximum cache entries
-		timeout:      30 * time.Second, // LDAP operation timeout
+		cacheTTL:     15 * time.Minute,           // Cache results for 15 minutes
+		maxCacheSize: DefaultNormalizerCacheSize, // Maximum cache entries
+		timeout:      30 * time.Second,           // LDAP operation timeout
 	}
 }
 

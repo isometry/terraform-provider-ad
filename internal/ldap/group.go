@@ -125,6 +125,7 @@ type UpdateGroupRequest struct {
 
 // GroupManager handles Active Directory group operations.
 type GroupManager struct {
+	ctx         context.Context
 	client      Client
 	guidHandler *GUIDHandler
 	sidHandler  *SIDHandler
@@ -134,8 +135,9 @@ type GroupManager struct {
 }
 
 // NewGroupManager creates a new group manager instance.
-func NewGroupManager(client Client, baseDN string) *GroupManager {
+func NewGroupManager(ctx context.Context, client Client, baseDN string) *GroupManager {
 	return &GroupManager{
+		ctx:         ctx,
 		client:      client,
 		guidHandler: NewGUIDHandler(),
 		sidHandler:  NewSIDHandler(),
@@ -254,7 +256,7 @@ func (gm *GroupManager) ValidateGroupRequest(req *CreateGroupRequest) error {
 }
 
 // CreateGroup creates a new Active Directory group.
-func (gm *GroupManager) CreateGroup(ctx context.Context, req *CreateGroupRequest) (*Group, error) {
+func (gm *GroupManager) CreateGroup(req *CreateGroupRequest) (*Group, error) {
 	if err := gm.ValidateGroupRequest(req); err != nil {
 		return nil, WrapError("create_group_validation", err)
 	}
@@ -292,12 +294,12 @@ func (gm *GroupManager) CreateGroup(ctx context.Context, req *CreateGroupRequest
 		Attributes: attributes,
 	}
 
-	if err := gm.client.Add(ctx, addReq); err != nil {
+	if err := gm.client.Add(gm.ctx, addReq); err != nil {
 		return nil, WrapError("create_group", err)
 	}
 
 	// Retrieve the created group to get its GUID and other computed attributes
-	group, err := gm.getGroupByDN(ctx, groupDN)
+	group, err := gm.getGroupByDN(groupDN)
 	if err != nil {
 		return nil, WrapError("retrieve_created_group", err)
 	}
@@ -306,7 +308,7 @@ func (gm *GroupManager) CreateGroup(ctx context.Context, req *CreateGroupRequest
 }
 
 // GetGroup retrieves a group by its objectGUID.
-func (gm *GroupManager) GetGroup(ctx context.Context, guid string) (*Group, error) {
+func (gm *GroupManager) GetGroup(guid string) (*Group, error) {
 	if guid == "" {
 		return nil, fmt.Errorf("group GUID cannot be empty")
 	}
@@ -330,7 +332,7 @@ func (gm *GroupManager) GetGroup(ctx context.Context, guid string) (*Group, erro
 	}
 	searchReq.TimeLimit = gm.timeout
 
-	result, err := gm.client.Search(ctx, searchReq)
+	result, err := gm.client.Search(gm.ctx, searchReq)
 	if err != nil {
 		return nil, WrapError("search_group_by_guid", err)
 	}
@@ -348,16 +350,16 @@ func (gm *GroupManager) GetGroup(ctx context.Context, guid string) (*Group, erro
 }
 
 // GetGroupByDN retrieves a group by its distinguished name.
-func (gm *GroupManager) GetGroupByDN(ctx context.Context, dn string) (*Group, error) {
+func (gm *GroupManager) GetGroupByDN(dn string) (*Group, error) {
 	if dn == "" {
 		return nil, fmt.Errorf("group DN cannot be empty")
 	}
 
-	return gm.getGroupByDN(ctx, dn)
+	return gm.getGroupByDN(dn)
 }
 
 // getGroupByDN is the internal implementation for DN-based group retrieval.
-func (gm *GroupManager) getGroupByDN(ctx context.Context, dn string) (*Group, error) {
+func (gm *GroupManager) getGroupByDN(dn string) (*Group, error) {
 	searchReq := &SearchRequest{
 		BaseDN: dn,
 		Scope:  ScopeBaseObject,
@@ -371,7 +373,7 @@ func (gm *GroupManager) getGroupByDN(ctx context.Context, dn string) (*Group, er
 		TimeLimit: gm.timeout,
 	}
 
-	result, err := gm.client.Search(ctx, searchReq)
+	result, err := gm.client.Search(gm.ctx, searchReq)
 	if err != nil {
 		return nil, WrapError("search_group_by_dn", err)
 	}
@@ -389,7 +391,7 @@ func (gm *GroupManager) getGroupByDN(ctx context.Context, dn string) (*Group, er
 }
 
 // UpdateGroup updates an existing group.
-func (gm *GroupManager) UpdateGroup(ctx context.Context, guid string, req *UpdateGroupRequest) (*Group, error) {
+func (gm *GroupManager) UpdateGroup(guid string, req *UpdateGroupRequest) (*Group, error) {
 	if guid == "" {
 		return nil, fmt.Errorf("group GUID cannot be empty")
 	}
@@ -399,7 +401,7 @@ func (gm *GroupManager) UpdateGroup(ctx context.Context, guid string, req *Updat
 	}
 
 	// Get current group to determine DN and validate changes
-	currentGroup, err := gm.GetGroup(ctx, guid)
+	currentGroup, err := gm.GetGroup(guid)
 	if err != nil {
 		return nil, WrapError("get_current_group", err)
 	}
@@ -485,7 +487,7 @@ func (gm *GroupManager) UpdateGroup(ctx context.Context, guid string, req *Updat
 	if req.Container != nil && !strings.EqualFold(*req.Container, currentGroup.Container) {
 		// Move the group to the new container
 		var err error
-		movedGroup, err = gm.MoveGroup(ctx, guid, *req.Container)
+		movedGroup, err = gm.MoveGroup(guid, *req.Container)
 		if err != nil {
 			return nil, WrapError("move_group", err)
 		}
@@ -508,12 +510,12 @@ func (gm *GroupManager) UpdateGroup(ctx context.Context, guid string, req *Updat
 	}
 
 	// Apply modifications
-	if err := gm.client.Modify(ctx, modReq); err != nil {
+	if err := gm.client.Modify(gm.ctx, modReq); err != nil {
 		return nil, WrapError("modify_group", err)
 	}
 
 	// Retrieve final updated group
-	updatedGroup, err := gm.GetGroup(ctx, guid)
+	updatedGroup, err := gm.GetGroup(guid)
 	if err != nil {
 		return nil, WrapError("retrieve_updated_group", err)
 	}
@@ -522,7 +524,7 @@ func (gm *GroupManager) UpdateGroup(ctx context.Context, guid string, req *Updat
 }
 
 // MoveGroup moves a group to a different organizational unit.
-func (gm *GroupManager) MoveGroup(ctx context.Context, groupGUID string, newContainerDN string) (*Group, error) {
+func (gm *GroupManager) MoveGroup(groupGUID string, newContainerDN string) (*Group, error) {
 	if groupGUID == "" {
 		return nil, fmt.Errorf("group GUID cannot be empty")
 	}
@@ -532,7 +534,7 @@ func (gm *GroupManager) MoveGroup(ctx context.Context, groupGUID string, newCont
 	}
 
 	// Get the current group to obtain its DN and CN
-	group, err := gm.GetGroup(ctx, groupGUID)
+	group, err := gm.GetGroup(groupGUID)
 	if err != nil {
 		return nil, WrapError("get_group_for_move", err)
 	}
@@ -565,13 +567,13 @@ func (gm *GroupManager) MoveGroup(ctx context.Context, groupGUID string, newCont
 	}
 
 	// Execute the move operation
-	if err := gm.client.ModifyDN(ctx, modifyDNReq); err != nil {
+	if err := gm.client.ModifyDN(gm.ctx, modifyDNReq); err != nil {
 		return nil, WrapError("move_group", err)
 	}
 
 	// Retrieve the group from its new location to get updated DN
 	// The objectGUID remains the same, so we can still use it
-	movedGroup, err := gm.GetGroup(ctx, groupGUID)
+	movedGroup, err := gm.GetGroup(groupGUID)
 	if err != nil {
 		return nil, WrapError("get_moved_group", err)
 	}
@@ -580,13 +582,13 @@ func (gm *GroupManager) MoveGroup(ctx context.Context, groupGUID string, newCont
 }
 
 // DeleteGroup deletes a group by its objectGUID.
-func (gm *GroupManager) DeleteGroup(ctx context.Context, guid string) error {
+func (gm *GroupManager) DeleteGroup(guid string) error {
 	if guid == "" {
 		return fmt.Errorf("group GUID cannot be empty")
 	}
 
 	// Get group to determine DN
-	group, err := gm.GetGroup(ctx, guid)
+	group, err := gm.GetGroup(guid)
 	if err != nil {
 		// Check if it's a "not found" error
 		if ldapErr, ok := err.(*LDAPError); ok {
@@ -599,7 +601,7 @@ func (gm *GroupManager) DeleteGroup(ctx context.Context, guid string) error {
 	}
 
 	// Delete the group
-	if err := gm.client.Delete(ctx, group.DistinguishedName); err != nil {
+	if err := gm.client.Delete(gm.ctx, group.DistinguishedName); err != nil {
 		return WrapError("delete_group", err)
 	}
 
@@ -607,7 +609,7 @@ func (gm *GroupManager) DeleteGroup(ctx context.Context, guid string) error {
 }
 
 // AddMembers adds members to a group.
-func (gm *GroupManager) AddMembers(ctx context.Context, groupGUID string, members []string) error {
+func (gm *GroupManager) AddMembers(groupGUID string, members []string) error {
 	if groupGUID == "" {
 		return fmt.Errorf("group GUID cannot be empty")
 	}
@@ -617,7 +619,7 @@ func (gm *GroupManager) AddMembers(ctx context.Context, groupGUID string, member
 	}
 
 	// Get group DN
-	group, err := gm.GetGroup(ctx, groupGUID)
+	group, err := gm.GetGroup(groupGUID)
 	if err != nil {
 		return WrapError("get_group_for_add_members", err)
 	}
@@ -640,11 +642,11 @@ func (gm *GroupManager) AddMembers(ctx context.Context, groupGUID string, member
 		AddAttributes: map[string][]string{"member": dnList},
 	}
 
-	if err := gm.client.Modify(ctx, modReq); err != nil {
+	if err := gm.client.Modify(gm.ctx, modReq); err != nil {
 		// Handle case where some members might already exist
 		if IsConflictError(err) {
 			// Try adding members one by one to identify which ones fail
-			return gm.addMembersIndividually(ctx, group.DistinguishedName, dnList)
+			return gm.addMembersIndividually(group.DistinguishedName, dnList)
 		}
 		return WrapError("add_members", err)
 	}
@@ -653,7 +655,7 @@ func (gm *GroupManager) AddMembers(ctx context.Context, groupGUID string, member
 }
 
 // RemoveMembers removes members from a group.
-func (gm *GroupManager) RemoveMembers(ctx context.Context, groupGUID string, members []string) error {
+func (gm *GroupManager) RemoveMembers(groupGUID string, members []string) error {
 	if groupGUID == "" {
 		return fmt.Errorf("group GUID cannot be empty")
 	}
@@ -663,7 +665,7 @@ func (gm *GroupManager) RemoveMembers(ctx context.Context, groupGUID string, mem
 	}
 
 	// Get group DN
-	group, err := gm.GetGroup(ctx, groupGUID)
+	group, err := gm.GetGroup(groupGUID)
 	if err != nil {
 		return WrapError("get_group_for_remove_members", err)
 	}
@@ -712,7 +714,7 @@ func (gm *GroupManager) RemoveMembers(ctx context.Context, groupGUID string, mem
 		modReq.ReplaceAttributes["member"] = newMembers
 	}
 
-	if err := gm.client.Modify(ctx, modReq); err != nil {
+	if err := gm.client.Modify(gm.ctx, modReq); err != nil {
 		return WrapError("remove_members", err)
 	}
 
@@ -720,12 +722,12 @@ func (gm *GroupManager) RemoveMembers(ctx context.Context, groupGUID string, mem
 }
 
 // GetMembers retrieves all members of a group.
-func (gm *GroupManager) GetMembers(ctx context.Context, groupGUID string) ([]string, error) {
+func (gm *GroupManager) GetMembers(groupGUID string) ([]string, error) {
 	if groupGUID == "" {
 		return nil, fmt.Errorf("group GUID cannot be empty")
 	}
 
-	group, err := gm.GetGroup(ctx, groupGUID)
+	group, err := gm.GetGroup(groupGUID)
 	if err != nil {
 		return nil, WrapError("get_group_for_members", err)
 	}
@@ -734,7 +736,7 @@ func (gm *GroupManager) GetMembers(ctx context.Context, groupGUID string) ([]str
 }
 
 // SearchGroupsWithFilter searches for groups using user-friendly filter criteria.
-func (gm *GroupManager) SearchGroupsWithFilter(ctx context.Context, filter *GroupSearchFilter) ([]*Group, error) {
+func (gm *GroupManager) SearchGroupsWithFilter(filter *GroupSearchFilter) ([]*Group, error) {
 	start := time.Now()
 
 	filterFields := map[string]any{
@@ -743,8 +745,8 @@ func (gm *GroupManager) SearchGroupsWithFilter(ctx context.Context, filter *Grou
 
 	if filter == nil {
 		filterFields["filter_type"] = "empty"
-		tflog.SubsystemDebug(ctx, "ldap", "SearchGroupsWithFilter called with nil filter, using default search", filterFields)
-		return gm.SearchGroups(ctx, "", nil)
+		tflog.Debug(gm.ctx, "SearchGroupsWithFilter called with nil filter, using default search", filterFields)
+		return gm.SearchGroups("", nil)
 	}
 
 	// Add filter details to logging fields
@@ -770,13 +772,26 @@ func (gm *GroupManager) SearchGroupsWithFilter(ctx context.Context, filter *Grou
 		filterFields["has_members"] = *filter.HasMembers
 	}
 
-	tflog.SubsystemDebug(ctx, "ldap", "Starting SearchGroupsWithFilter", filterFields)
+	tflog.Debug(gm.ctx, "Starting SearchGroupsWithFilter", filterFields)
 
 	// Validate filter values
 	if err := gm.validateSearchFilter(filter); err != nil {
+		filterFields["operation"] = "validate_search_filter"
 		filterFields["error"] = err.Error()
 		filterFields["duration_ms"] = time.Since(start).Milliseconds()
-		LogLDAPError(ctx, "ldap", "validate_search_filter", err, filterFields)
+
+		// Add LDAP-specific error information if available
+		if ldapErr, ok := err.(*ldap.Error); ok {
+			filterFields["ldap_result_code"] = ldapErr.ResultCode
+			if ldapErr.MatchedDN != "" {
+				filterFields["ldap_matched_dn"] = ldapErr.MatchedDN
+			}
+			if ldapErr.Err != nil {
+				filterFields["ldap_diagnostic_message"] = ldapErr.Err.Error()
+			}
+		}
+
+		tflog.Error(gm.ctx, "LDAP validate search filter operation failed", filterFields)
 		return nil, WrapError("validate_search_filter", err)
 	}
 
@@ -791,28 +806,41 @@ func (gm *GroupManager) SearchGroupsWithFilter(ctx context.Context, filter *Grou
 	}
 	filterFields["search_base_dn"] = searchBaseDN
 
-	tflog.SubsystemDebug(ctx, "ldap", "Filter validation complete, executing search", filterFields)
+	tflog.Debug(gm.ctx, "Filter validation complete, executing search", filterFields)
 
 	// Perform search using existing SearchGroups method with custom base DN
-	groups, err := gm.searchGroupsInContainer(ctx, searchBaseDN, ldapFilter, nil)
+	groups, err := gm.searchGroupsInContainer(searchBaseDN, ldapFilter, nil)
 
 	duration := time.Since(start)
 	filterFields["duration_ms"] = duration.Milliseconds()
 
 	if err != nil {
+		filterFields["operation"] = "search_groups_with_filter"
 		filterFields["error"] = err.Error()
-		LogLDAPError(ctx, "ldap", "search_groups_with_filter", err, filterFields)
+
+		// Add LDAP-specific error information if available
+		if ldapErr, ok := err.(*ldap.Error); ok {
+			filterFields["ldap_result_code"] = ldapErr.ResultCode
+			if ldapErr.MatchedDN != "" {
+				filterFields["ldap_matched_dn"] = ldapErr.MatchedDN
+			}
+			if ldapErr.Err != nil {
+				filterFields["ldap_diagnostic_message"] = ldapErr.Err.Error()
+			}
+		}
+
+		tflog.Error(gm.ctx, "LDAP search groups with filter operation failed", filterFields)
 		return nil, err
 	}
 
 	filterFields["groups_found"] = len(groups)
-	tflog.SubsystemInfo(ctx, "ldap", "SearchGroupsWithFilter completed", filterFields)
+	tflog.Info(gm.ctx, "SearchGroupsWithFilter completed", filterFields)
 
 	return groups, nil
 }
 
 // SearchGroups searches for groups using various criteria.
-func (gm *GroupManager) SearchGroups(ctx context.Context, filter string, attributes []string) ([]*Group, error) {
+func (gm *GroupManager) SearchGroups(filter string, attributes []string) ([]*Group, error) {
 	start := time.Now()
 
 	originalFilter := filter
@@ -832,7 +860,7 @@ func (gm *GroupManager) SearchGroups(ctx context.Context, filter string, attribu
 		"timeout":         gm.timeout.String(),
 	}
 
-	tflog.SubsystemDebug(ctx, "ldap", "Starting SearchGroups", searchFields)
+	tflog.Debug(gm.ctx, "Starting SearchGroups", searchFields)
 
 	if len(attributes) == 0 {
 		attributes = []string{
@@ -840,7 +868,7 @@ func (gm *GroupManager) SearchGroups(ctx context.Context, filter string, attribu
 			"description", "groupType", "mail", "mailNickname", "whenCreated", "whenChanged",
 		}
 		searchFields["attributes"] = attributes
-		tflog.SubsystemTrace(ctx, "ldap", "Using default attributes for group search", searchFields)
+		tflog.Trace(gm.ctx, "Using default attributes for group search", searchFields)
 	}
 
 	searchReq := &SearchRequest{
@@ -851,18 +879,31 @@ func (gm *GroupManager) SearchGroups(ctx context.Context, filter string, attribu
 		TimeLimit:  gm.timeout,
 	}
 
-	tflog.SubsystemDebug(ctx, "ldap", "Executing paged search for groups", searchFields)
+	tflog.Debug(gm.ctx, "Executing paged search for groups", searchFields)
 
-	result, err := gm.client.SearchWithPaging(ctx, searchReq)
+	result, err := gm.client.SearchWithPaging(gm.ctx, searchReq)
 	if err != nil {
+		searchFields["operation"] = "search_groups"
 		searchFields["error"] = err.Error()
 		searchFields["duration_ms"] = time.Since(start).Milliseconds()
-		LogLDAPError(ctx, "ldap", "search_groups", err, searchFields)
+
+		// Add LDAP-specific error information if available
+		if ldapErr, ok := err.(*ldap.Error); ok {
+			searchFields["ldap_result_code"] = ldapErr.ResultCode
+			if ldapErr.MatchedDN != "" {
+				searchFields["ldap_matched_dn"] = ldapErr.MatchedDN
+			}
+			if ldapErr.Err != nil {
+				searchFields["ldap_diagnostic_message"] = ldapErr.Err.Error()
+			}
+		}
+
+		tflog.Error(gm.ctx, "LDAP search groups operation failed", searchFields)
 		return nil, WrapError("search_groups", err)
 	}
 
 	searchFields["raw_entries_found"] = len(result.Entries)
-	tflog.SubsystemTrace(ctx, "ldap", "Raw LDAP search completed, processing entries", searchFields)
+	tflog.Trace(gm.ctx, "Raw LDAP search completed, processing entries", searchFields)
 
 	groups := make([]*Group, 0, len(result.Entries))
 	processErrors := 0
@@ -876,7 +917,7 @@ func (gm *GroupManager) SearchGroups(ctx context.Context, filter string, attribu
 				"entry_dn":    entry.DN,
 				"error":       err.Error(),
 			}
-			tflog.SubsystemWarn(ctx, "ldap", "Failed to convert LDAP entry to group, skipping", errorFields)
+			tflog.Warn(gm.ctx, "Failed to convert LDAP entry to group, skipping", errorFields)
 			continue
 		}
 		groups = append(groups, group)
@@ -888,7 +929,7 @@ func (gm *GroupManager) SearchGroups(ctx context.Context, filter string, attribu
 	searchFields["process_errors"] = processErrors
 	searchFields["success_rate"] = float64(len(groups)) / float64(len(result.Entries)) * 100
 
-	tflog.SubsystemInfo(ctx, "ldap", "SearchGroups completed", searchFields)
+	tflog.Info(gm.ctx, "SearchGroups completed", searchFields)
 
 	return groups, nil
 }
@@ -960,7 +1001,7 @@ func (gm *GroupManager) entryToGroup(entry *ldap.Entry) (*Group, error) {
 }
 
 // addMembersIndividually adds members one by one to handle partial conflicts.
-func (gm *GroupManager) addMembersIndividually(ctx context.Context, groupDN string, memberDNs []string) error {
+func (gm *GroupManager) addMembersIndividually(groupDN string, memberDNs []string) error {
 	var lastNonConflictErr error
 	successCount := 0
 	conflictCount := 0
@@ -971,7 +1012,7 @@ func (gm *GroupManager) addMembersIndividually(ctx context.Context, groupDN stri
 			AddAttributes: map[string][]string{"member": {memberDN}},
 		}
 
-		if err := gm.client.Modify(ctx, modReq); err != nil {
+		if err := gm.client.Modify(gm.ctx, modReq); err != nil {
 			if IsConflictError(err) {
 				// Member already exists, count as conflict but continue
 				conflictCount++
@@ -1031,7 +1072,7 @@ func (gm *GroupManager) validateScopeChange(currentScope, newScope GroupScope) e
 }
 
 // ListGroupsByContainer lists all groups in a specific container.
-func (gm *GroupManager) ListGroupsByContainer(ctx context.Context, containerDN string) ([]*Group, error) {
+func (gm *GroupManager) ListGroupsByContainer(containerDN string) ([]*Group, error) {
 	if containerDN == "" {
 		containerDN = gm.baseDN
 	}
@@ -1050,7 +1091,7 @@ func (gm *GroupManager) ListGroupsByContainer(ctx context.Context, containerDN s
 		TimeLimit:  gm.timeout,
 	}
 
-	result, err := gm.client.Search(ctx, searchReq)
+	result, err := gm.client.Search(gm.ctx, searchReq)
 	if err != nil {
 		return nil, WrapError("list_groups_by_container", err)
 	}
@@ -1184,7 +1225,7 @@ func (gm *GroupManager) buildLDAPFilter(filter *GroupSearchFilter) string {
 }
 
 // searchGroupsInContainer searches for groups in a specific container using LDAP filter.
-func (gm *GroupManager) searchGroupsInContainer(ctx context.Context, baseDN, filter string, attributes []string) ([]*Group, error) {
+func (gm *GroupManager) searchGroupsInContainer(baseDN, filter string, attributes []string) ([]*Group, error) {
 	start := time.Now()
 
 	originalFilter := filter
@@ -1204,7 +1245,7 @@ func (gm *GroupManager) searchGroupsInContainer(ctx context.Context, baseDN, fil
 		"timeout":         gm.timeout.String(),
 	}
 
-	tflog.SubsystemDebug(ctx, "ldap", "Starting searchGroupsInContainer", searchFields)
+	tflog.Debug(gm.ctx, "Starting searchGroupsInContainer", searchFields)
 
 	if len(attributes) == 0 {
 		attributes = []string{
@@ -1212,7 +1253,7 @@ func (gm *GroupManager) searchGroupsInContainer(ctx context.Context, baseDN, fil
 			"description", "groupType", "mail", "mailNickname", "whenCreated", "whenChanged",
 		}
 		searchFields["attributes"] = attributes
-		tflog.SubsystemTrace(ctx, "ldap", "Using default attributes for container group search", searchFields)
+		tflog.Trace(gm.ctx, "Using default attributes for container group search", searchFields)
 	}
 
 	searchReq := &SearchRequest{
@@ -1223,18 +1264,31 @@ func (gm *GroupManager) searchGroupsInContainer(ctx context.Context, baseDN, fil
 		TimeLimit:  gm.timeout,
 	}
 
-	tflog.SubsystemDebug(ctx, "ldap", "Executing paged search in container", searchFields)
+	tflog.Debug(gm.ctx, "Executing paged search in container", searchFields)
 
-	result, err := gm.client.SearchWithPaging(ctx, searchReq)
+	result, err := gm.client.SearchWithPaging(gm.ctx, searchReq)
 	if err != nil {
+		searchFields["operation"] = "search_groups_in_container"
 		searchFields["error"] = err.Error()
 		searchFields["duration_ms"] = time.Since(start).Milliseconds()
-		LogLDAPError(ctx, "ldap", "search_groups_in_container", err, searchFields)
+
+		// Add LDAP-specific error information if available
+		if ldapErr, ok := err.(*ldap.Error); ok {
+			searchFields["ldap_result_code"] = ldapErr.ResultCode
+			if ldapErr.MatchedDN != "" {
+				searchFields["ldap_matched_dn"] = ldapErr.MatchedDN
+			}
+			if ldapErr.Err != nil {
+				searchFields["ldap_diagnostic_message"] = ldapErr.Err.Error()
+			}
+		}
+
+		tflog.Error(gm.ctx, "LDAP search groups in container operation failed", searchFields)
 		return nil, WrapError("search_groups_in_container", err)
 	}
 
 	searchFields["raw_entries_found"] = len(result.Entries)
-	tflog.SubsystemTrace(ctx, "ldap", "Container search completed, processing entries", searchFields)
+	tflog.Trace(gm.ctx, "Container search completed, processing entries", searchFields)
 
 	groups := make([]*Group, 0, len(result.Entries))
 	processErrors := 0
@@ -1249,7 +1303,7 @@ func (gm *GroupManager) searchGroupsInContainer(ctx context.Context, baseDN, fil
 				"container":   baseDN,
 				"error":       err.Error(),
 			}
-			tflog.SubsystemWarn(ctx, "ldap", "Failed to convert LDAP entry to group in container search, skipping", errorFields)
+			tflog.Warn(gm.ctx, "Failed to convert LDAP entry to group in container search, skipping", errorFields)
 			continue
 		}
 		groups = append(groups, group)
@@ -1265,17 +1319,17 @@ func (gm *GroupManager) searchGroupsInContainer(ctx context.Context, baseDN, fil
 		searchFields["success_rate"] = 100.0
 	}
 
-	tflog.SubsystemInfo(ctx, "ldap", "searchGroupsInContainer completed", searchFields)
+	tflog.Info(gm.ctx, "searchGroupsInContainer completed", searchFields)
 
 	return groups, nil
 }
 
 // GetGroupStats returns statistics about groups in the directory.
-func (gm *GroupManager) GetGroupStats(ctx context.Context) (map[string]int, error) {
+func (gm *GroupManager) GetGroupStats() (map[string]int, error) {
 	stats := make(map[string]int)
 
 	// Count total groups
-	allGroups, err := gm.SearchGroups(ctx, "", []string{"groupType"})
+	allGroups, err := gm.SearchGroups("", []string{"groupType"})
 	if err != nil {
 		return nil, WrapError("get_group_stats", err)
 	}
@@ -1293,7 +1347,7 @@ func (gm *GroupManager) GetGroupStats(ctx context.Context) (map[string]int, erro
 
 // GetFlattenedUserMembers returns a flattened list of user members from a group,
 // recursively traversing nested groups to return only users (not groups).
-func (gm *GroupManager) GetFlattenedUserMembers(ctx context.Context, groupGUID string) ([]string, error) {
+func (gm *GroupManager) GetFlattenedUserMembers(groupGUID string) ([]string, error) {
 	if groupGUID == "" {
 		return nil, fmt.Errorf("group GUID cannot be empty")
 	}
@@ -1304,7 +1358,7 @@ func (gm *GroupManager) GetFlattenedUserMembers(ctx context.Context, groupGUID s
 	userDNs := make(map[string]bool)
 
 	// Start recursive traversal
-	if err := gm.flattenGroupMembersRecursive(ctx, groupGUID, processedGroups, userDNs); err != nil {
+	if err := gm.flattenGroupMembersRecursive(groupGUID, processedGroups, userDNs); err != nil {
 		return nil, WrapError("flatten_group_members", err)
 	}
 
@@ -1319,7 +1373,7 @@ func (gm *GroupManager) GetFlattenedUserMembers(ctx context.Context, groupGUID s
 
 // flattenGroupMembersRecursive recursively processes group members, adding users to the userDNs set
 // and recursively processing nested groups.
-func (gm *GroupManager) flattenGroupMembersRecursive(ctx context.Context, groupGUID string, processedGroups map[string]bool, userDNs map[string]bool) error {
+func (gm *GroupManager) flattenGroupMembersRecursive(groupGUID string, processedGroups map[string]bool, userDNs map[string]bool) error {
 	// Check if we've already processed this group (prevent infinite loops)
 	if processedGroups[groupGUID] {
 		return nil
@@ -1327,7 +1381,7 @@ func (gm *GroupManager) flattenGroupMembersRecursive(ctx context.Context, groupG
 	processedGroups[groupGUID] = true
 
 	// Get the group
-	group, err := gm.GetGroup(ctx, groupGUID)
+	group, err := gm.GetGroup(groupGUID)
 	if err != nil {
 		return fmt.Errorf("failed to get group %s: %w", groupGUID, err)
 	}
@@ -1337,7 +1391,7 @@ func (gm *GroupManager) flattenGroupMembersRecursive(ctx context.Context, groupG
 		// Check if this member is a group or user by searching for it
 		// First try to find it as a group
 		groupFilter := fmt.Sprintf("(&(objectClass=group)(distinguishedName=%s))", ldap.EscapeFilter(memberDN))
-		groupResults, err := gm.client.Search(ctx, &SearchRequest{
+		groupResults, err := gm.client.Search(gm.ctx, &SearchRequest{
 			BaseDN:     gm.baseDN,
 			Scope:      ScopeWholeSubtree,
 			Filter:     groupFilter,
@@ -1347,7 +1401,7 @@ func (gm *GroupManager) flattenGroupMembersRecursive(ctx context.Context, groupG
 		})
 		if err != nil {
 			// Log warning and continue with next member
-			tflog.Warn(ctx, "Failed to search for member as group", map[string]any{
+			tflog.Warn(gm.ctx, "Failed to search for member as group", map[string]any{
 				"member_dn": memberDN,
 				"error":     err.Error(),
 			})
@@ -1358,7 +1412,7 @@ func (gm *GroupManager) flattenGroupMembersRecursive(ctx context.Context, groupG
 			// This member is a group, recursively process its members
 			memberGroupGUID, err := gm.guidHandler.ExtractGUID(groupResults.Entries[0])
 			if err != nil {
-				tflog.Warn(ctx, "Failed to extract GUID from member group", map[string]any{
+				tflog.Warn(gm.ctx, "Failed to extract GUID from member group", map[string]any{
 					"member_dn": memberDN,
 					"error":     err.Error(),
 				})
@@ -1366,8 +1420,8 @@ func (gm *GroupManager) flattenGroupMembersRecursive(ctx context.Context, groupG
 			}
 
 			// Recursively process this group
-			if err := gm.flattenGroupMembersRecursive(ctx, memberGroupGUID, processedGroups, userDNs); err != nil {
-				tflog.Warn(ctx, "Failed to recursively process member group", map[string]any{
+			if err := gm.flattenGroupMembersRecursive(memberGroupGUID, processedGroups, userDNs); err != nil {
+				tflog.Warn(gm.ctx, "Failed to recursively process member group", map[string]any{
 					"member_group_guid": memberGroupGUID,
 					"member_dn":         memberDN,
 					"error":             err.Error(),
@@ -1377,7 +1431,7 @@ func (gm *GroupManager) flattenGroupMembersRecursive(ctx context.Context, groupG
 		} else {
 			// This member is not a group, check if it's a user
 			userFilter := fmt.Sprintf("(&(objectClass=user)(distinguishedName=%s))", ldap.EscapeFilter(memberDN))
-			userResults, err := gm.client.Search(ctx, &SearchRequest{
+			userResults, err := gm.client.Search(gm.ctx, &SearchRequest{
 				BaseDN:     gm.baseDN,
 				Scope:      ScopeWholeSubtree,
 				Filter:     userFilter,
@@ -1386,7 +1440,7 @@ func (gm *GroupManager) flattenGroupMembersRecursive(ctx context.Context, groupG
 				TimeLimit:  gm.timeout,
 			})
 			if err != nil {
-				tflog.Warn(ctx, "Failed to search for member as user", map[string]any{
+				tflog.Warn(gm.ctx, "Failed to search for member as user", map[string]any{
 					"member_dn": memberDN,
 					"error":     err.Error(),
 				})
@@ -1398,7 +1452,7 @@ func (gm *GroupManager) flattenGroupMembersRecursive(ctx context.Context, groupG
 				userDNs[memberDN] = true
 			} else {
 				// Neither group nor user, log and skip
-				tflog.Debug(ctx, "Member is neither group nor user, skipping", map[string]any{
+				tflog.Debug(gm.ctx, "Member is neither group nor user, skipping", map[string]any{
 					"member_dn": memberDN,
 				})
 			}

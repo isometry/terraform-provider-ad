@@ -140,6 +140,7 @@ type User struct {
 // UserReader handles read-only Active Directory user operations.
 // This provides comprehensive user data retrieval without modification capabilities.
 type UserReader struct {
+	ctx         context.Context
 	client      Client
 	guidHandler *GUIDHandler
 	sidHandler  *SIDHandler
@@ -149,8 +150,9 @@ type UserReader struct {
 }
 
 // NewUserReader creates a new user reader instance.
-func NewUserReader(client Client, baseDN string) *UserReader {
+func NewUserReader(ctx context.Context, client Client, baseDN string) *UserReader {
 	return &UserReader{
+		ctx:         ctx,
 		client:      client,
 		guidHandler: NewGUIDHandler(),
 		sidHandler:  NewSIDHandler(),
@@ -168,7 +170,7 @@ func (ur *UserReader) SetTimeout(timeout time.Duration) {
 
 // GetUser retrieves a user by various identifier types.
 // Supports lookup by DN, GUID, SID, UPN, or SAM account name.
-func (ur *UserReader) GetUser(ctx context.Context, identifier string) (*User, error) {
+func (ur *UserReader) GetUser(identifier string) (*User, error) {
 	if identifier == "" {
 		return nil, fmt.Errorf("user identifier cannot be empty")
 	}
@@ -178,31 +180,31 @@ func (ur *UserReader) GetUser(ctx context.Context, identifier string) (*User, er
 
 	switch idType {
 	case IdentifierTypeDN:
-		return ur.getUserByDN(ctx, identifier)
+		return ur.getUserByDN(identifier)
 	case IdentifierTypeGUID:
-		return ur.getUserByGUID(ctx, identifier)
+		return ur.getUserByGUID(identifier)
 	case IdentifierTypeSID:
-		return ur.getUserBySID(ctx, identifier)
+		return ur.getUserBySID(identifier)
 	case IdentifierTypeUPN:
-		return ur.getUserByUPN(ctx, identifier)
+		return ur.getUserByUPN(identifier)
 	case IdentifierTypeSAM:
-		return ur.getUserBySAM(ctx, identifier)
+		return ur.getUserBySAM(identifier)
 	default:
 		return nil, fmt.Errorf("unable to determine identifier type for: %s", identifier)
 	}
 }
 
 // GetUserByDN retrieves a user by distinguished name.
-func (ur *UserReader) GetUserByDN(ctx context.Context, dn string) (*User, error) {
+func (ur *UserReader) GetUserByDN(dn string) (*User, error) {
 	if dn == "" {
 		return nil, fmt.Errorf("user DN cannot be empty")
 	}
 
-	return ur.getUserByDN(ctx, dn)
+	return ur.getUserByDN(dn)
 }
 
 // GetUserByGUID retrieves a user by objectGUID.
-func (ur *UserReader) GetUserByGUID(ctx context.Context, guid string) (*User, error) {
+func (ur *UserReader) GetUserByGUID(guid string) (*User, error) {
 	if guid == "" {
 		return nil, fmt.Errorf("user GUID cannot be empty")
 	}
@@ -212,38 +214,38 @@ func (ur *UserReader) GetUserByGUID(ctx context.Context, guid string) (*User, er
 		return nil, fmt.Errorf("invalid GUID format: %s", guid)
 	}
 
-	return ur.getUserByGUID(ctx, guid)
+	return ur.getUserByGUID(guid)
 }
 
 // GetUserBySID retrieves a user by security identifier (SID).
-func (ur *UserReader) GetUserBySID(ctx context.Context, sid string) (*User, error) {
+func (ur *UserReader) GetUserBySID(sid string) (*User, error) {
 	if sid == "" {
 		return nil, fmt.Errorf("user SID cannot be empty")
 	}
 
-	return ur.getUserBySID(ctx, sid)
+	return ur.getUserBySID(sid)
 }
 
 // GetUserByUPN retrieves a user by User Principal Name.
-func (ur *UserReader) GetUserByUPN(ctx context.Context, upn string) (*User, error) {
+func (ur *UserReader) GetUserByUPN(upn string) (*User, error) {
 	if upn == "" {
 		return nil, fmt.Errorf("user UPN cannot be empty")
 	}
 
-	return ur.getUserByUPN(ctx, upn)
+	return ur.getUserByUPN(upn)
 }
 
 // GetUserBySAM retrieves a user by SAM account name.
-func (ur *UserReader) GetUserBySAM(ctx context.Context, samAccountName string) (*User, error) {
+func (ur *UserReader) GetUserBySAM(samAccountName string) (*User, error) {
 	if samAccountName == "" {
 		return nil, fmt.Errorf("SAM account name cannot be empty")
 	}
 
-	return ur.getUserBySAM(ctx, samAccountName)
+	return ur.getUserBySAM(samAccountName)
 }
 
 // SearchUsers searches for users using LDAP filter with pagination support.
-func (ur *UserReader) SearchUsers(ctx context.Context, filter string, attributes []string) ([]*User, error) {
+func (ur *UserReader) SearchUsers(filter string, attributes []string) ([]*User, error) {
 	if filter == "" {
 		filter = "(&(objectClass=user)(!(objectClass=computer)))"
 	} else {
@@ -263,7 +265,7 @@ func (ur *UserReader) SearchUsers(ctx context.Context, filter string, attributes
 		TimeLimit:  ur.timeout,
 	}
 
-	result, err := ur.client.SearchWithPaging(ctx, searchReq)
+	result, err := ur.client.SearchWithPaging(ur.ctx, searchReq)
 	if err != nil {
 		return nil, WrapError("search_users", err)
 	}
@@ -282,9 +284,9 @@ func (ur *UserReader) SearchUsers(ctx context.Context, filter string, attributes
 }
 
 // SearchUsersWithFilter searches for users using user-friendly filter criteria.
-func (ur *UserReader) SearchUsersWithFilter(ctx context.Context, filter *UserSearchFilter) ([]*User, error) {
+func (ur *UserReader) SearchUsersWithFilter(filter *UserSearchFilter) ([]*User, error) {
 	if filter == nil {
-		return ur.SearchUsers(ctx, "", nil)
+		return ur.SearchUsers("", nil)
 	}
 
 	// Validate filter values
@@ -305,11 +307,11 @@ func (ur *UserReader) SearchUsersWithFilter(ctx context.Context, filter *UserSea
 	}
 
 	// Perform search using existing SearchUsers method with custom base DN
-	return ur.searchUsersInContainer(ctx, searchBaseDN, ldapFilter, nil)
+	return ur.searchUsersInContainer(searchBaseDN, ldapFilter, nil)
 }
 
 // getUserByDN is the internal implementation for DN-based user retrieval.
-func (ur *UserReader) getUserByDN(ctx context.Context, dn string) (*User, error) {
+func (ur *UserReader) getUserByDN(dn string) (*User, error) {
 	searchReq := &SearchRequest{
 		BaseDN:     dn,
 		Scope:      ScopeBaseObject,
@@ -319,7 +321,7 @@ func (ur *UserReader) getUserByDN(ctx context.Context, dn string) (*User, error)
 		TimeLimit:  ur.timeout,
 	}
 
-	result, err := ur.client.Search(ctx, searchReq)
+	result, err := ur.client.Search(ur.ctx, searchReq)
 	if err != nil {
 		return nil, WrapError("search_user_by_dn", err)
 	}
@@ -337,7 +339,7 @@ func (ur *UserReader) getUserByDN(ctx context.Context, dn string) (*User, error)
 }
 
 // getUserByGUID is the internal implementation for GUID-based user retrieval.
-func (ur *UserReader) getUserByGUID(ctx context.Context, guid string) (*User, error) {
+func (ur *UserReader) getUserByGUID(guid string) (*User, error) {
 	// Create GUID search request
 	searchReq, err := ur.guidHandler.GenerateGUIDSearchRequest(ur.baseDN, guid)
 	if err != nil {
@@ -349,7 +351,7 @@ func (ur *UserReader) getUserByGUID(ctx context.Context, guid string) (*User, er
 	searchReq.Attributes = ur.getAllUserAttributes()
 	searchReq.TimeLimit = ur.timeout
 
-	result, err := ur.client.Search(ctx, searchReq)
+	result, err := ur.client.Search(ur.ctx, searchReq)
 	if err != nil {
 		return nil, WrapError("search_user_by_guid", err)
 	}
@@ -367,7 +369,7 @@ func (ur *UserReader) getUserByGUID(ctx context.Context, guid string) (*User, er
 }
 
 // getUserBySID is the internal implementation for SID-based user retrieval.
-func (ur *UserReader) getUserBySID(ctx context.Context, sid string) (*User, error) {
+func (ur *UserReader) getUserBySID(sid string) (*User, error) {
 	searchReq := &SearchRequest{
 		BaseDN:     ur.baseDN,
 		Scope:      ScopeWholeSubtree,
@@ -377,7 +379,7 @@ func (ur *UserReader) getUserBySID(ctx context.Context, sid string) (*User, erro
 		TimeLimit:  ur.timeout,
 	}
 
-	result, err := ur.client.Search(ctx, searchReq)
+	result, err := ur.client.Search(ur.ctx, searchReq)
 	if err != nil {
 		return nil, WrapError("search_user_by_sid", err)
 	}
@@ -395,7 +397,7 @@ func (ur *UserReader) getUserBySID(ctx context.Context, sid string) (*User, erro
 }
 
 // getUserByUPN is the internal implementation for UPN-based user retrieval.
-func (ur *UserReader) getUserByUPN(ctx context.Context, upn string) (*User, error) {
+func (ur *UserReader) getUserByUPN(upn string) (*User, error) {
 	searchReq := &SearchRequest{
 		BaseDN:     ur.baseDN,
 		Scope:      ScopeWholeSubtree,
@@ -405,7 +407,7 @@ func (ur *UserReader) getUserByUPN(ctx context.Context, upn string) (*User, erro
 		TimeLimit:  ur.timeout,
 	}
 
-	result, err := ur.client.Search(ctx, searchReq)
+	result, err := ur.client.Search(ur.ctx, searchReq)
 	if err != nil {
 		return nil, WrapError("search_user_by_upn", err)
 	}
@@ -423,7 +425,7 @@ func (ur *UserReader) getUserByUPN(ctx context.Context, upn string) (*User, erro
 }
 
 // getUserBySAM is the internal implementation for SAM-based user retrieval.
-func (ur *UserReader) getUserBySAM(ctx context.Context, samAccountName string) (*User, error) {
+func (ur *UserReader) getUserBySAM(samAccountName string) (*User, error) {
 	// Handle DOMAIN\username format
 	if strings.Contains(samAccountName, "\\") {
 		parts := strings.SplitN(samAccountName, "\\", 2)
@@ -441,7 +443,7 @@ func (ur *UserReader) getUserBySAM(ctx context.Context, samAccountName string) (
 		TimeLimit:  ur.timeout,
 	}
 
-	result, err := ur.client.Search(ctx, searchReq)
+	result, err := ur.client.Search(ur.ctx, searchReq)
 	if err != nil {
 		return nil, WrapError("search_user_by_sam", err)
 	}
@@ -459,7 +461,7 @@ func (ur *UserReader) getUserBySAM(ctx context.Context, samAccountName string) (
 }
 
 // searchUsersInContainer searches for users in a specific container using LDAP filter.
-func (ur *UserReader) searchUsersInContainer(ctx context.Context, baseDN, filter string, attributes []string) ([]*User, error) {
+func (ur *UserReader) searchUsersInContainer(baseDN, filter string, attributes []string) ([]*User, error) {
 	if filter == "" {
 		filter = "(&(objectClass=user)(!(objectClass=computer)))"
 	} else {
@@ -479,7 +481,7 @@ func (ur *UserReader) searchUsersInContainer(ctx context.Context, baseDN, filter
 		TimeLimit:  ur.timeout,
 	}
 
-	result, err := ur.client.SearchWithPaging(ctx, searchReq)
+	result, err := ur.client.SearchWithPaging(ur.ctx, searchReq)
 	if err != nil {
 		return nil, WrapError("search_users_in_container", err)
 	}
@@ -802,11 +804,11 @@ func (ur *UserReader) buildLDAPFilter(filter *UserSearchFilter) (string, error) 
 }
 
 // GetUserStats returns statistics about users in the directory.
-func (ur *UserReader) GetUserStats(ctx context.Context) (map[string]int, error) {
+func (ur *UserReader) GetUserStats() (map[string]int, error) {
 	stats := make(map[string]int)
 
 	// Count total users
-	allUsers, err := ur.SearchUsers(ctx, "", []string{"userAccountControl"})
+	allUsers, err := ur.SearchUsers("", []string{"userAccountControl"})
 	if err != nil {
 		return nil, WrapError("get_user_stats", err)
 	}
