@@ -2,22 +2,22 @@
 page_title: "Resource ad_group_membership"
 description: |-
   Manages the membership of an Active Directory group. This resource allows you to define the complete set of members for a group, with automatic anti-drift protection through identifier normalization.
-  Anti-Drift Protection: This resource automatically normalizes all member identifiers to distinguished names (DNs) to prevent configuration drift. For example, specifying a member as john@example.com (UPN) in your configuration will not cause drift even if Active Directory stores it as CN=John Doe,OU=Users,DC=example,DC=com (DN).
+  Anti-Drift Protection: This resource automatically normalizes all member identifiers to distinguished names (DNs) internally while preserving your original configuration. The members attribute retains exactly what you configure, while members_normalized shows the DNs used for Active Directory operations.
   Supported Identifier Formats:
-  Distinguished Name (DN): CN=John Doe,OU=Users,DC=example,DC=comUser Principal Name (UPN): john@example.comSAM Account Name: DOMAIN\john or johnObject GUID: 550e8400-e29b-41d4-a716-446655440000Security Identifier (SID): S-1-5-21-123456789-123456789-123456789-1001
+  Distinguished Name (DN): CN=John Doe,OU=Users,DC=example,DC=comObject GUID: 550e8400-e29b-41d4-a716-446655440000User Principal Name (UPN): john@example.comSAM Account Name: DOMAIN\john or johnSecurity Identifier (SID): S-1-5-21-123456789-123456789-123456789-1001
 ---
 
 # Resource (ad_group_membership)
 
 Manages the membership of an Active Directory group. This resource allows you to define the complete set of members for a group, with automatic anti-drift protection through identifier normalization.
 
-**Anti-Drift Protection**: This resource automatically normalizes all member identifiers to distinguished names (DNs) to prevent configuration drift. For example, specifying a member as `john@example.com` (UPN) in your configuration will not cause drift even if Active Directory stores it as `CN=John Doe,OU=Users,DC=example,DC=com` (DN).
+**Anti-Drift Protection**: This resource automatically normalizes all member identifiers to distinguished names (DNs) internally while preserving your original configuration. The `members` attribute retains exactly what you configure, while `members_normalized` shows the DNs used for Active Directory operations.
 
 **Supported Identifier Formats**:
 - Distinguished Name (DN): `CN=John Doe,OU=Users,DC=example,DC=com`
+- Object GUID: `550e8400-e29b-41d4-a716-446655440000`
 - User Principal Name (UPN): `john@example.com`
 - SAM Account Name: `DOMAIN\john` or `john`
-- Object GUID: `550e8400-e29b-41d4-a716-446655440000`
 - Security Identifier (SID): `S-1-5-21-123456789-123456789-123456789-1001`
 
 This resource provides complete control over Active Directory group membership with intelligent anti-drift protection through automatic identifier normalization. It manages the entire membership set, ensuring that only the specified members are present in the group.
@@ -400,8 +400,9 @@ resource "ad_group_membership" "validated" {
 ### Required
 
 - `group_id` (String) The objectGUID of the group whose membership is being managed. This must be the GUID of an existing Active Directory group.
-- `members` (Set of Dynamic) Set of group member identifiers. Members can be specified using any supported identifier format (DN, UPN, SAM, GUID, or SID). The resource automatically normalizes all identifiers to distinguished names to prevent configuration drift. **Note**: This resource manages the complete membership set - members not listed here will be removed from the group.
+- `members` (Set of String) Set of group member identifiers. Members can be specified using any supported identifier format: Distinguished Name (DN), Object GUID, User Principal Name (UPN), SAM Account Name, or Security Identifier (SID). This attribute preserves your original configuration exactly as specified. **Note**: This resource manages the complete membership set - members not listed here will be removed from the group.
 
 ### Read-Only
 
 - `id` (String) The resource identifier, which is the objectGUID of the group. This is the same value as `group_id`.
+- `members_normalized` (Set of String) The normalized distinguished names (DNs) of all group members. This computed attribute shows the actual DNs used for Active Directory operations, derived from the identifiers specified in the `members` attribute.

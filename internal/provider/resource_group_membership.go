@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -14,12 +15,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
-	customtypes "github.com/isometry/terraform-provider-ad/internal/provider/types"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &GroupMembershipResource{}
 var _ resource.ResourceWithImportState = &GroupMembershipResource{}
+var _ resource.ResourceWithModifyPlan = &GroupMembershipResource{}
 
 func NewGroupMembershipResource() resource.Resource {
 	return &GroupMembershipResource{}
@@ -32,9 +33,10 @@ type GroupMembershipResource struct {
 
 // GroupMembershipResourceModel describes the resource data model.
 type GroupMembershipResourceModel struct {
-	ID      types.String                 `tfsdk:"id"`       // Group objectGUID (same as group_id)
-	GroupID types.String                 `tfsdk:"group_id"` // Group objectGUID (required)
-	Members customtypes.DNStringSetValue `tfsdk:"members"`  // Set of member identifiers (required)
+	ID                types.String `tfsdk:"id"`                 // Group objectGUID (same as group_id)
+	GroupID           types.String `tfsdk:"group_id"`           // Group objectGUID (required)
+	Members           types.Set    `tfsdk:"members"`            // Set of member identifiers (required, user-provided)
+	MembersNormalized types.Set    `tfsdk:"members_normalized"` // Set of normalized DNs (computed)
 }
 
 func (r *GroupMembershipResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -44,13 +46,13 @@ func (r *GroupMembershipResource) Metadata(ctx context.Context, req resource.Met
 func (r *GroupMembershipResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages the membership of an Active Directory group. This resource allows you to define the complete set of members for a group, with automatic anti-drift protection through identifier normalization.\n\n" +
-			"**Anti-Drift Protection**: This resource automatically normalizes all member identifiers to distinguished names (DNs) to prevent configuration drift. " +
-			"For example, specifying a member as `john@example.com` (UPN) in your configuration will not cause drift even if Active Directory stores it as `CN=John Doe,OU=Users,DC=example,DC=com` (DN).\n\n" +
+			"**Anti-Drift Protection**: This resource automatically normalizes all member identifiers to distinguished names (DNs) internally while preserving your original configuration. " +
+			"The `members` attribute retains exactly what you configure, while `members_normalized` shows the DNs used for Active Directory operations.\n\n" +
 			"**Supported Identifier Formats**:\n" +
 			"- Distinguished Name (DN): `CN=John Doe,OU=Users,DC=example,DC=com`\n" +
+			"- Object GUID: `550e8400-e29b-41d4-a716-446655440000`\n" +
 			"- User Principal Name (UPN): `john@example.com`\n" +
 			"- SAM Account Name: `DOMAIN\\john` or `john`\n" +
-			"- Object GUID: `550e8400-e29b-41d4-a716-446655440000`\n" +
 			"- Security Identifier (SID): `S-1-5-21-123456789-123456789-123456789-1001`",
 
 		Attributes: map[string]schema.Attribute{
@@ -69,12 +71,19 @@ func (r *GroupMembershipResource) Schema(ctx context.Context, req resource.Schem
 				},
 			},
 			"members": schema.SetAttribute{
-				MarkdownDescription: "Set of group member identifiers. Members can be specified using any supported identifier format (DN, UPN, SAM, GUID, or SID). " +
-					"The resource automatically normalizes all identifiers to distinguished names to prevent configuration drift. " +
+				MarkdownDescription: "Set of group member identifiers. Members can be specified using any supported identifier format: " +
+					"Distinguished Name (DN), Object GUID, User Principal Name (UPN), SAM Account Name, or Security Identifier (SID). " +
+					"This attribute preserves your original configuration exactly as specified. " +
 					"**Note**: This resource manages the complete membership set - members not listed here will be removed from the group.",
 				Required:    true,
 				ElementType: types.StringType,
-				CustomType:  customtypes.DNStringSetType{},
+			},
+			"members_normalized": schema.SetAttribute{
+				MarkdownDescription: "The normalized distinguished names (DNs) of all group members. " +
+					"This computed attribute shows the actual DNs used for Active Directory operations, " +
+					"derived from the identifiers specified in the `members` attribute.",
+				Computed:    true,
+				ElementType: types.StringType,
 			},
 		},
 	}
@@ -96,6 +105,106 @@ func (r *GroupMembershipResource) Configure(ctx context.Context, req resource.Co
 	}
 
 	r.client = client
+}
+
+// ModifyPlan implements resource.ResourceWithModifyPlan to normalize members
+// during the planning phase, populating members_normalized for use in CRUD operations.
+func (r *GroupMembershipResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// Only process if we have a plan (not during destroy)
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+
+	var plan GroupMembershipResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Always re-normalize members_normalized based on the current members in the plan
+	// This ensures that when members change, members_normalized is updated accordingly
+
+	// Extract member identifiers from the plan
+	var members []string
+	resp.Diagnostics.Append(plan.Members.ElementsAs(ctx, &members, false)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	tflog.Debug(ctx, "Normalizing member identifiers during planning", map[string]any{
+		"group_id":     plan.GroupID.ValueString(),
+		"member_count": len(members),
+		"members":      members,
+	})
+
+	// Handle empty members list
+	if len(members) == 0 {
+		plan.MembersNormalized = types.SetValueMust(types.StringType, []attr.Value{})
+		resp.Diagnostics.Append(resp.Plan.Set(ctx, plan)...)
+		return
+	}
+
+	// Normalize member identifiers to DNs using MemberNormalizer
+	baseDN, err := r.client.GetBaseDN(ctx)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error Getting Base DN During Planning",
+			fmt.Sprintf("Could not get base DN from LDAP client for member normalization: %s", err.Error()),
+		)
+		return
+	}
+
+	// Create normalizer
+	normalizer := ldapclient.NewMemberNormalizer(r.client, baseDN)
+
+	// Normalize all identifiers to DNs
+	normalizedMap, err := normalizer.NormalizeToDNBatch(members)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error Normalizing Member Identifiers During Planning",
+			fmt.Sprintf("Could not normalize member identifiers: %s", err.Error()),
+		)
+		return
+	}
+
+	// Extract normalized DNs in same order as input
+	normalizedMembers := make([]string, 0, len(members))
+	var failedIdentifiers []string
+	for _, member := range members {
+		if dn, ok := normalizedMap[member]; ok {
+			normalizedMembers = append(normalizedMembers, dn)
+		} else {
+			failedIdentifiers = append(failedIdentifiers, member)
+		}
+	}
+
+	// Report any identifiers that failed normalization
+	if len(failedIdentifiers) > 0 {
+		resp.Diagnostics.AddError(
+			"Failed to Normalize Member Identifiers During Planning",
+			fmt.Sprintf("Could not normalize the following member identifiers: %v. "+
+				"Please verify these identifiers exist in Active Directory and are valid.",
+				failedIdentifiers),
+		)
+		return
+	}
+
+	// Create the normalized members set and update the plan
+	membersNormalizedSet, diags := types.SetValueFrom(ctx, types.StringType, normalizedMembers)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	plan.MembersNormalized = membersNormalizedSet
+
+	tflog.Debug(ctx, "Normalized member identifiers during planning", map[string]any{
+		"group_id":           plan.GroupID.ValueString(),
+		"members":            members,
+		"normalized_members": normalizedMembers,
+	})
+
+	// Save the updated plan
+	resp.Diagnostics.Append(resp.Plan.Set(ctx, plan)...)
 }
 
 // getMembershipManager creates a GroupMembershipManager from the client.
@@ -136,32 +245,21 @@ func (r *GroupMembershipResource) Create(ctx context.Context, req resource.Creat
 		return
 	}
 
-	// Extract member identifiers from the set
-	var members []string
-	resp.Diagnostics.Append(data.Members.ElementsAs(ctx, &members, false)...)
+	// Extract normalized member DNs from the plan (populated by ModifyPlan)
+	var normalizedMembers []string
+	resp.Diagnostics.Append(data.MembersNormalized.ElementsAs(ctx, &normalizedMembers, false)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	tflog.Debug(ctx, "Setting group members", map[string]any{
-		"group_id":     data.GroupID.ValueString(),
-		"member_count": len(members),
-		"members":      members,
+	tflog.Debug(ctx, "Setting group members using normalized DNs from plan", map[string]any{
+		"group_id":           data.GroupID.ValueString(),
+		"member_count":       len(normalizedMembers),
+		"normalized_members": normalizedMembers,
 	})
 
-	// Validate member identifiers (only if we have members)
-	if len(members) > 0 {
-		if err := membershipManager.ValidateMembers(members); err != nil {
-			resp.Diagnostics.AddError(
-				"Invalid Member Identifiers",
-				fmt.Sprintf("One or more member identifiers are invalid: %s", err.Error()),
-			)
-			return
-		}
-	}
-
-	// Set the complete membership using the anti-drift operation
-	err = membershipManager.SetGroupMembers(data.GroupID.ValueString(), members)
+	// Set the complete membership using normalized DNs
+	err = membershipManager.SetGroupMembers(data.GroupID.ValueString(), normalizedMembers)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Setting Group Members",
@@ -173,19 +271,9 @@ func (r *GroupMembershipResource) Create(ctx context.Context, req resource.Creat
 	// Set the ID to be the same as group_id for resource tracking
 	data.ID = data.GroupID
 
-	// Refresh the state to get normalized member DNs
-	err = r.refreshMembershipState(ctx, membershipManager, &data)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error Refreshing Membership State",
-			"Group membership was created but could not refresh state: "+err.Error(),
-		)
-		return
-	}
-
 	tflog.Debug(ctx, "Created AD group membership", map[string]any{
 		"group_id":           data.GroupID.ValueString(),
-		"normalized_members": data.Members,
+		"normalized_members": normalizedMembers,
 	})
 
 	// Save data into Terraform state
@@ -279,32 +367,21 @@ func (r *GroupMembershipResource) Update(ctx context.Context, req resource.Updat
 		return
 	}
 
-	// Extract new member identifiers from the plan
-	var members []string
-	resp.Diagnostics.Append(data.Members.ElementsAs(ctx, &members, false)...)
+	// Extract normalized member DNs from the plan (populated by ModifyPlan)
+	var normalizedMembers []string
+	resp.Diagnostics.Append(data.MembersNormalized.ElementsAs(ctx, &normalizedMembers, false)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	tflog.Debug(ctx, "Updating group members", map[string]any{
-		"group_id":     data.GroupID.ValueString(),
-		"member_count": len(members),
-		"members":      members,
+	tflog.Debug(ctx, "Updating group members using normalized DNs from plan", map[string]any{
+		"group_id":           data.GroupID.ValueString(),
+		"member_count":       len(normalizedMembers),
+		"normalized_members": normalizedMembers,
 	})
 
-	// Validate member identifiers (only if we have members)
-	if len(members) > 0 {
-		if err := membershipManager.ValidateMembers(members); err != nil {
-			resp.Diagnostics.AddError(
-				"Invalid Member Identifiers",
-				fmt.Sprintf("One or more member identifiers are invalid: %s", err.Error()),
-			)
-			return
-		}
-	}
-
-	// Set the complete membership (this handles the delta calculation internally)
-	err = membershipManager.SetGroupMembers(data.GroupID.ValueString(), members)
+	// Set the complete membership using normalized DNs
+	err = membershipManager.SetGroupMembers(data.GroupID.ValueString(), normalizedMembers)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Updating Group Members",
@@ -313,19 +390,9 @@ func (r *GroupMembershipResource) Update(ctx context.Context, req resource.Updat
 		return
 	}
 
-	// Refresh the state to get normalized member DNs
-	err = r.refreshMembershipState(ctx, membershipManager, &data)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error Refreshing Membership State",
-			"Group membership was updated but could not refresh state: "+err.Error(),
-		)
-		return
-	}
-
 	tflog.Debug(ctx, "Updated AD group membership", map[string]any{
 		"group_id":           data.GroupID.ValueString(),
-		"normalized_members": data.Members,
+		"normalized_members": normalizedMembers,
 	})
 
 	// Save updated data into Terraform state
@@ -425,22 +492,21 @@ func (r *GroupMembershipResource) ImportState(ctx context.Context, req resource.
 	data.ID = types.StringValue(groupGUID)
 	data.GroupID = types.StringValue(groupGUID)
 
-	// Convert current members to a custom DN set
+	// For import, set both Members and MembersNormalized to the DNs from AD
+	// Users can then update their configuration to use their preferred identifier format
 	if len(currentMembers) > 0 {
-		membersSet, diags := customtypes.DNStringSet(ctx, currentMembers)
+		membersSet, diags := types.SetValueFrom(ctx, types.StringType, currentMembers)
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {
 			return
 		}
 		data.Members = membersSet
+		data.MembersNormalized = membersSet
 	} else {
 		// Empty membership
-		emptySet, diags := customtypes.DNStringSet(ctx, []string{})
-		resp.Diagnostics.Append(diags...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
+		emptySet := types.SetValueMust(types.StringType, []attr.Value{})
 		data.Members = emptySet
+		data.MembersNormalized = emptySet
 	}
 
 	tflog.Debug(ctx, "Imported AD group membership", map[string]any{
@@ -456,7 +522,8 @@ func (r *GroupMembershipResource) ImportState(ctx context.Context, req resource.
 }
 
 // refreshMembershipState updates the model with current membership from Active Directory.
-// This ensures the state contains normalized DNs and reflects the actual AD state.
+// This updates ONLY the MembersNormalized attribute with current AD state,
+// preserving the user's original configuration in the Members attribute.
 func (r *GroupMembershipResource) refreshMembershipState(ctx context.Context, membershipManager *ldapclient.GroupMembershipManager, model *GroupMembershipResourceModel) error {
 	// Get current members from AD (already normalized as DNs)
 	currentMembers, err := membershipManager.GetGroupMembers(model.GroupID.ValueString())
@@ -464,13 +531,14 @@ func (r *GroupMembershipResource) refreshMembershipState(ctx context.Context, me
 		return fmt.Errorf("could not get current group members: %w", err)
 	}
 
-	// Convert to custom DN set
-	membersSet, diags := customtypes.DNStringSet(ctx, currentMembers)
-	if diags.HasError() {
-		return fmt.Errorf("could not create members DN set: %v", diags.Errors())
-	}
+	// DO NOT touch model.Members - preserve user's original configuration!
 
-	model.Members = membersSet
+	// Only update MembersNormalized with current AD state
+	membersNormalizedSet, diags := types.SetValueFrom(ctx, types.StringType, currentMembers)
+	if diags.HasError() {
+		return fmt.Errorf("could not create normalized members set: %v", diags.Errors())
+	}
+	model.MembersNormalized = membersNormalizedSet
 
 	tflog.Trace(ctx, "Refreshed membership state", map[string]any{
 		"group_id":           model.GroupID.ValueString(),

@@ -417,21 +417,13 @@ func TestAddGroupMembers(t *testing.T) {
 	groupDN := "CN=TestGroup,OU=Groups,DC=example,DC=com"
 	client.AddMockGroup(groupGUID, groupDN, "TestGroup", "testgroup")
 
-	// Add mock objects for normalization
+	// Test adding members using DN format only
 	user1DN := "CN=User1,OU=Users,DC=example,DC=com"
-	user1GUID := "11111111-1111-1111-1111-111111111111"
-	user1UPN := "user1@example.com"
-	client.AddMockObject(user1DN, user1GUID, "", user1UPN, "user1")
-
 	user2DN := "CN=User2,OU=Users,DC=example,DC=com"
-	user2SAM := "EXAMPLE\\user2"
-	client.AddMockObject(user2DN, "", "", "", "user2")
 
-	// Test adding members using different identifier formats
 	membersToAdd := []string{
-		user1DN,  // DN format
-		user1UPN, // UPN format
-		user2SAM, // SAM format
+		user1DN, // DN format
+		user2DN, // DN format
 	}
 
 	err := gmm.AddGroupMembers(groupGUID, membersToAdd)
@@ -442,7 +434,7 @@ func TestAddGroupMembers(t *testing.T) {
 
 	// Verify members were added
 	group := client.groups[groupGUID]
-	expectedMembers := []string{user1DN, user2DN} // Should be normalized to DNs
+	expectedMembers := []string{user1DN, user2DN}
 	sort.Strings(group.Members)
 	sort.Strings(expectedMembers)
 
@@ -497,22 +489,19 @@ func TestRemoveGroupMembers(t *testing.T) {
 	groupDN := "CN=TestGroup,OU=Groups,DC=example,DC=com"
 	client.AddMockGroup(groupGUID, groupDN, "TestGroup", "testgroup")
 
-	// Add mock objects
+	// Add mock users
 	user1DN := "CN=User1,OU=Users,DC=example,DC=com"
 	user2DN := "CN=User2,OU=Users,DC=example,DC=com"
 	user3DN := "CN=User3,OU=Users,DC=example,DC=com"
-	client.AddMockObject(user1DN, "", "", "user1@example.com", "user1")
-	client.AddMockObject(user2DN, "", "", "", "user2")
-	client.AddMockObject(user3DN, "", "", "", "user3")
 
 	// Pre-populate group with all users
 	group := client.groups[groupGUID]
 	group.Members = []string{user1DN, user2DN, user3DN}
 
-	// Remove user1 and user2 using different identifier formats
+	// Remove user1 and user2 using DN format
 	membersToRemove := []string{
-		"user1@example.com", // UPN format for user1
-		user2DN,             // DN format for user2
+		user1DN, // DN format for user1
+		user2DN, // DN format for user2
 	}
 
 	err := gmm.RemoveGroupMembers(groupGUID, membersToRemove)
@@ -569,26 +558,21 @@ func TestCalculateMembershipDelta(t *testing.T) {
 	groupDN := "CN=TestGroup,OU=Groups,DC=example,DC=com"
 	client.AddMockGroup(groupGUID, groupDN, "TestGroup", "testgroup")
 
-	// Add mock objects
+	// Add mock users
 	user1DN := "CN=User1,OU=Users,DC=example,DC=com"
 	user2DN := "CN=User2,OU=Users,DC=example,DC=com"
 	user3DN := "CN=User3,OU=Users,DC=example,DC=com"
 	user4DN := "CN=User4,OU=Users,DC=example,DC=com"
 
-	client.AddMockObject(user1DN, "", "", "", "user1")
-	client.AddMockObject(user2DN, "", "", "user2@example.com", "user2")
-	client.AddMockObject(user3DN, "", "", "", "user3")
-	client.AddMockObject(user4DN, "", "", "", "user4")
-
 	// Current group has user1 and user2
 	group := client.groups[groupGUID]
 	group.Members = []string{user1DN, user2DN}
 
-	// Desired state: user2, user3, user4 (using mixed identifier formats)
+	// Desired state: user2, user3, user4 (using DN format only)
 	desiredMembers := []string{
-		"user2@example.com", // UPN format (existing member)
-		user3DN,             // DN format (new member)
-		user4DN,             // DN format (new member)
+		user2DN, // DN format (existing member)
+		user3DN, // DN format (new member)
+		user4DN, // DN format (new member)
 	}
 
 	delta, err := gmm.CalculateMembershipDelta(groupGUID, desiredMembers)
@@ -623,21 +607,18 @@ func TestCalculateMembershipDeltaNoChanges(t *testing.T) {
 	groupDN := "CN=TestGroup,OU=Groups,DC=example,DC=com"
 	client.AddMockGroup(groupGUID, groupDN, "TestGroup", "testgroup")
 
-	// Add mock objects
+	// Add mock users
 	user1DN := "CN=User1,OU=Users,DC=example,DC=com"
 	user2DN := "CN=User2,OU=Users,DC=example,DC=com"
-
-	client.AddMockObject(user1DN, "", "", "user1@example.com", "user1")
-	client.AddMockObject(user2DN, "", "", "", "user2")
 
 	// Current group has user1 and user2
 	group := client.groups[groupGUID]
 	group.Members = []string{user1DN, user2DN}
 
-	// Desired state: same members but in different identifier formats
+	// Desired state: same members in DN format
 	desiredMembers := []string{
-		"user1@example.com", // UPN format for user1
-		user2DN,             // DN format for user2
+		user1DN, // DN format for user1
+		user2DN, // DN format for user2
 	}
 
 	delta, err := gmm.CalculateMembershipDelta(groupGUID, desiredMembers)
@@ -664,23 +645,18 @@ func TestSetGroupMembers(t *testing.T) {
 	groupDN := "CN=TestGroup,OU=Groups,DC=example,DC=com"
 	client.AddMockGroup(groupGUID, groupDN, "TestGroup", "testgroup")
 
-	// Add mock objects
+	// Add mock users
 	user1DN := "CN=User1,OU=Users,DC=example,DC=com"
 	user2DN := "CN=User2,OU=Users,DC=example,DC=com"
-	user3DN := "CN=User3,OU=Users,DC=example,DC=com"
-
-	client.AddMockObject(user1DN, "", "", "user1@example.com", "user1")
-	client.AddMockObject(user2DN, "", "", "", "user2")
-	client.AddMockObject(user3DN, "", "", "", "user3")
 
 	// Start with user1 in the group
 	group := client.groups[groupGUID]
 	group.Members = []string{user1DN}
 
-	// Set membership to user2 and user3
+	// Set membership to user1 and user2 using DN format
 	desiredMembers := []string{
-		user2DN,             // DN format
-		"user1@example.com", // UPN format for user1
+		user1DN, // DN format for user1
+		user2DN, // DN format for user2
 	}
 
 	err := gmm.SetGroupMembers(groupGUID, desiredMembers)
@@ -690,7 +666,7 @@ func TestSetGroupMembers(t *testing.T) {
 	}
 
 	// Verify final membership
-	expectedMembers := []string{user1DN, user2DN} // Normalized to DNs
+	expectedMembers := []string{user1DN, user2DN}
 	sort.Strings(group.Members)
 	sort.Strings(expectedMembers)
 
@@ -747,31 +723,38 @@ func TestValidateMembers(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:        "Valid UPN",
+			name:        "Valid complex DN",
+			members:     []string{"CN=John Doe,OU=Users,OU=IT,DC=example,DC=com"},
+			expectError: false,
+		},
+		{
+			name:        "Multiple valid DNs",
+			members:     []string{"CN=User1,OU=Users,DC=example,DC=com", "CN=User2,OU=Users,DC=example,DC=com"},
+			expectError: false,
+		},
+		{
+			name:        "Invalid UPN (not accepted)",
 			members:     []string{"user@example.com"},
-			expectError: false,
+			expectError: true,
+			errorMsg:    "invalid member DN",
 		},
 		{
-			name:        "Valid SAM",
+			name:        "Invalid SAM (not accepted)",
 			members:     []string{"DOMAIN\\user"},
-			expectError: false,
-		},
-		{
-			name:        "Mixed valid formats",
-			members:     []string{"CN=User1,OU=Users,DC=example,DC=com", "user2@example.com", "DOMAIN\\user3"},
-			expectError: false,
+			expectError: true,
+			errorMsg:    "invalid member DN",
 		},
 		{
 			name:        "Invalid identifier",
 			members:     []string{"@invalid@format@"},
 			expectError: true,
-			errorMsg:    "unknown identifier format",
+			errorMsg:    "invalid member DN",
 		},
 		{
 			name:        "Empty string",
 			members:     []string{""},
 			expectError: true,
-			errorMsg:    "identifier cannot be empty",
+			errorMsg:    "invalid member DN",
 		},
 		{
 			name:        "Empty list",
@@ -841,15 +824,15 @@ func TestGetMembershipStats(t *testing.T) {
 		t.Errorf("Expected 2 member DNs, got %d", len(memberDNs))
 	}
 
-	// Should include cache stats
-	if _, exists := stats["cache_stats"]; !exists {
-		t.Error("Expected cache_stats in response")
+	// Should not include cache stats since normalization is external now
+	if _, exists := stats["cache_stats"]; exists {
+		t.Error("Did not expect cache_stats in response since normalization is external")
 	}
 }
 
-func TestAntiDriftScenario(t *testing.T) {
-	// This test simulates a real anti-drift scenario where the same user
-	// is specified in different identifier formats but should be treated as one user
+func TestSimplifiedDNOnlyApproach(t *testing.T) {
+	// This test verifies that the simplified GroupMembershipManager only accepts DNs
+	// and no longer performs internal normalization
 	gmm, client := createTestMembershipManager(t)
 
 	// Setup test data
@@ -857,52 +840,43 @@ func TestAntiDriftScenario(t *testing.T) {
 	groupDN := "CN=TestGroup,OU=Groups,DC=example,DC=com"
 	client.AddMockGroup(groupGUID, groupDN, "TestGroup", "testgroup")
 
-	// Add mock user with multiple identifiers
+	// Add mock user
 	userDN := "CN=John Doe,OU=Users,DC=example,DC=com"
-	userGUID := "22222222-2222-2222-2222-222222222222"
-	userSID := "S-1-5-21-123456789-123456789-123456789-1001"
-	userUPN := "john.doe@example.com"
-
-	client.AddMockObject(userDN, userGUID, userSID, userUPN, "john.doe")
 
 	// Initial state: group has the user by DN
 	group := client.groups[groupGUID]
 	group.Members = []string{userDN}
 
-	// Terraform config specifies the same user by UPN
-	// This should NOT result in any membership changes
-	desiredMembers := []string{userUPN}
+	// Test 1: Using DN format should work
+	desiredMembers := []string{userDN}
 
-	// Test 1: Calculate delta - should show no changes needed
 	delta, err := gmm.CalculateMembershipDelta(groupGUID, desiredMembers)
 	if err != nil {
-		t.Fatalf("CalculateMembershipDelta failed: %v", err)
+		t.Fatalf("CalculateMembershipDelta with DN failed: %v", err)
 	}
 
+	// Should show no changes needed
 	if len(delta.ToAdd) != 0 || len(delta.ToRemove) != 0 {
-		t.Errorf("Anti-drift failed: expected no changes, got ToAdd=%v, ToRemove=%v", delta.ToAdd, delta.ToRemove)
+		t.Errorf("Expected no changes for identical DN, got ToAdd=%v, ToRemove=%v", delta.ToAdd, delta.ToRemove)
 	}
 
-	// Test 2: SetGroupMembers should be a no-op
-	client.ClearOperationLog()
+	// Test 2: Using non-DN format should fail validation
+	userUPN := "john.doe@example.com"
+	nonDNMembers := []string{userUPN}
 
-	err = gmm.SetGroupMembers(groupGUID, desiredMembers)
-	if err != nil {
-		t.Fatalf("SetGroupMembers failed: %v", err)
+	_, err = gmm.CalculateMembershipDelta(groupGUID, nonDNMembers)
+	if err == nil {
+		t.Error("Expected validation error for non-DN format, but got none")
+	} else if !strings.Contains(err.Error(), "invalid member DN") {
+		t.Errorf("Expected validation error about invalid DN, got: %v", err)
 	}
 
-	// Should have only performed search operations, no modifications
-	log := client.GetOperationLog()
-	for _, operation := range log {
-		if strings.Contains(operation, "Modify:") {
-			t.Errorf("Unexpected modify operation in anti-drift scenario: %s", operation)
-		}
-	}
-
-	// Final membership should still be the original DN
-	finalMembers := group.Members
-	if len(finalMembers) != 1 || finalMembers[0] != userDN {
-		t.Errorf("Anti-drift failed: expected final members [%s], got %v", userDN, finalMembers)
+	// Test 3: SetGroupMembers should also reject non-DN formats
+	err = gmm.SetGroupMembers(groupGUID, nonDNMembers)
+	if err == nil {
+		t.Error("Expected validation error for non-DN format in SetGroupMembers, but got none")
+	} else if !strings.Contains(err.Error(), "invalid member DN") {
+		t.Errorf("Expected validation error about invalid DN, got: %v", err)
 	}
 }
 
@@ -956,19 +930,11 @@ func TestBatchOperationsLargeSet(t *testing.T) {
 func TestClearNormalizationCache(t *testing.T) {
 	gmm, _ := createTestMembershipManager(t)
 
-	// This is mostly a smoke test to ensure the method exists and doesn't panic
+	// This is now a no-op method kept for backward compatibility
+	// Should not panic
 	gmm.ClearNormalizationCache()
 
-	// Verify cache is cleared by checking stats
-	stats := gmm.normalizer.CacheStats()
-	totalEntries, ok := stats["total_entries"].(int)
-	if !ok {
-		t.Fatalf("Expected total_entries to be an int, got %T", stats["total_entries"])
-	}
-
-	if totalEntries != 0 {
-		t.Errorf("Expected cache to be empty after clear, got %d entries", totalEntries)
-	}
+	// No verification needed since it's a no-op
 }
 
 func TestGetSupportedIdentifierFormats(t *testing.T) {
@@ -980,14 +946,10 @@ func TestGetSupportedIdentifierFormats(t *testing.T) {
 		t.Error("Expected non-empty list of supported formats")
 	}
 
-	// Check that expected formats are included
-	expectedFormats := []string{"DN", "GUID", "SID", "UPN", "SAM"}
-
-	formatStr := strings.Join(formats, " ")
-	for _, expected := range expectedFormats {
-		if !strings.Contains(formatStr, expected) {
-			t.Errorf("Expected format '%s' not found in supported formats: %v", expected, formats)
-		}
+	// Should only support DN format now
+	expected := []string{"DN"}
+	if !reflect.DeepEqual(formats, expected) {
+		t.Errorf("Expected only DN format %v, got %v", expected, formats)
 	}
 }
 
@@ -997,34 +959,31 @@ func TestSetBaseDN(t *testing.T) {
 	newBaseDN := "DC=newdomain,DC=com"
 	gmm.SetBaseDN(newBaseDN)
 
-	// Verify both the group manager and normalizer were updated
+	// Verify the group manager was updated
 	if gmm.groupManager.baseDN != newBaseDN {
 		t.Errorf("Expected group manager baseDN %s, got %s", newBaseDN, gmm.groupManager.baseDN)
 	}
 
-	if gmm.normalizer.GetBaseDN() != newBaseDN {
-		t.Errorf("Expected normalizer baseDN %s, got %s", newBaseDN, gmm.normalizer.GetBaseDN())
-	}
+	// No longer need to verify normalizer since it's not part of this manager anymore
 }
 
 // Benchmark tests for performance validation.
-func BenchmarkNormalizeLargeSet(b *testing.B) {
+func BenchmarkValidateLargeSet(b *testing.B) {
 	client := NewMockGroupMembershipClient()
 	baseDN := "DC=example,DC=com"
 	gmm := NewGroupMembershipManager(context.Background(), client, baseDN)
 
-	// Setup test data
+	// Setup test data - all DNs
 	testMembers := make([]string, 100)
 	for i := range 100 {
 		userDN := fmt.Sprintf("CN=User%d,OU=Users,DC=example,DC=com", i)
 		testMembers[i] = userDN
-		client.AddMockObject(userDN, "", "", "", fmt.Sprintf("user%d", i))
 	}
 
 	for b.Loop() {
-		_, err := gmm.normalizer.NormalizeToDNBatch(testMembers)
+		err := gmm.ValidateMembers(testMembers)
 		if err != nil {
-			b.Fatalf("Normalization failed: %v", err)
+			b.Fatalf("Validation failed: %v", err)
 		}
 	}
 }

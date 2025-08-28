@@ -26,6 +26,15 @@ type DNStringSetType struct {
 	basetypes.SetType
 }
 
+// NewDNStringSetType creates a new DNStringSetType with proper element type initialization.
+func NewDNStringSetType() DNStringSetType {
+	return DNStringSetType{
+		SetType: basetypes.SetType{
+			ElemType: basetypes.StringType{},
+		},
+	}
+}
+
 // String returns a human readable string of the type name.
 func (t DNStringSetType) String() string {
 	return "DNStringSetType"

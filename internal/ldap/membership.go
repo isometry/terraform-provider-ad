@@ -32,12 +32,11 @@ type MembershipDelta struct {
 }
 
 // GroupMembershipManager handles bulk Active Directory group membership operations
-// with anti-drift prevention through identifier normalization.
+// with DN-based membership management. All member parameters must be Distinguished Names.
 type GroupMembershipManager struct {
 	ctx          context.Context
 	client       Client
 	groupManager *GroupManager
-	normalizer   *MemberNormalizer
 	timeout      time.Duration
 }
 
@@ -47,7 +46,6 @@ func NewGroupMembershipManager(ctx context.Context, client Client, baseDN string
 		ctx:          ctx,
 		client:       client,
 		groupManager: NewGroupManager(ctx, client, baseDN),
-		normalizer:   NewMemberNormalizer(client, baseDN),
 		timeout:      30 * time.Second,
 	}
 }
@@ -56,18 +54,22 @@ func NewGroupMembershipManager(ctx context.Context, client Client, baseDN string
 func (gmm *GroupMembershipManager) SetTimeout(timeout time.Duration) {
 	gmm.timeout = timeout
 	gmm.groupManager.SetTimeout(timeout)
-	gmm.normalizer.SetTimeout(timeout)
 }
 
 // SetGroupMembers sets the complete membership of a group, replacing all existing members.
-// This is the primary anti-drift operation - it ensures the group has exactly the specified members.
-func (gmm *GroupMembershipManager) SetGroupMembers(groupGUID string, members []string) error {
+// All members must be provided as Distinguished Names (DNs).
+func (gmm *GroupMembershipManager) SetGroupMembers(groupGUID string, memberDNs []string) error {
 	if groupGUID == "" {
 		return fmt.Errorf("group GUID cannot be empty")
 	}
 
+	// Validate that all members are DNs
+	if err := gmm.ValidateMembers(memberDNs); err != nil {
+		return WrapError("validate_member_dns", err)
+	}
+
 	// Calculate what changes are needed
-	delta, err := gmm.CalculateMembershipDelta(groupGUID, members)
+	delta, err := gmm.CalculateMembershipDelta(groupGUID, memberDNs)
 	if err != nil {
 		return WrapError("calculate_membership_delta", err)
 	}
@@ -117,14 +119,20 @@ func (gmm *GroupMembershipManager) GetGroupMembers(groupGUID string) ([]string, 
 }
 
 // AddGroupMembers adds new members to a group using batch operations.
+// All members must be provided as Distinguished Names (DNs).
 // Uses ADMemberBatchSize to respect Active Directory's member operation limits.
-func (gmm *GroupMembershipManager) AddGroupMembers(groupGUID string, members []string) error {
+func (gmm *GroupMembershipManager) AddGroupMembers(groupGUID string, memberDNs []string) error {
 	if groupGUID == "" {
 		return fmt.Errorf("group GUID cannot be empty")
 	}
 
-	if len(members) == 0 {
+	if len(memberDNs) == 0 {
 		return nil // Nothing to add
+	}
+
+	// Validate that all members are DNs
+	if err := gmm.ValidateMembers(memberDNs); err != nil {
+		return WrapError("validate_member_dns", err)
 	}
 
 	// Get group DN for operations
@@ -133,14 +141,8 @@ func (gmm *GroupMembershipManager) AddGroupMembers(groupGUID string, members []s
 		return WrapError("get_group_for_add_members", err)
 	}
 
-	// Normalize all member identifiers to DNs
-	normalizedMembers, err := gmm.normalizer.NormalizeToDNBatch(members)
-	if err != nil {
-		return WrapError("normalize_member_identifiers", err)
-	}
-
 	// Extract unique DNs and sort for consistent processing
-	uniqueDNs := gmm.extractUniqueDNs(normalizedMembers)
+	uniqueDNs := gmm.extractUniqueDNs(memberDNs)
 	if len(uniqueDNs) == 0 {
 		return nil // No valid members to add
 	}
@@ -150,13 +152,19 @@ func (gmm *GroupMembershipManager) AddGroupMembers(groupGUID string, members []s
 }
 
 // RemoveGroupMembers removes members from a group using batch operations.
-func (gmm *GroupMembershipManager) RemoveGroupMembers(groupGUID string, members []string) error {
+// All members must be provided as Distinguished Names (DNs).
+func (gmm *GroupMembershipManager) RemoveGroupMembers(groupGUID string, memberDNs []string) error {
 	if groupGUID == "" {
 		return fmt.Errorf("group GUID cannot be empty")
 	}
 
-	if len(members) == 0 {
+	if len(memberDNs) == 0 {
 		return nil // Nothing to remove
+	}
+
+	// Validate that all members are DNs
+	if err := gmm.ValidateMembers(memberDNs); err != nil {
+		return WrapError("validate_member_dns", err)
 	}
 
 	// Get current group state
@@ -165,14 +173,8 @@ func (gmm *GroupMembershipManager) RemoveGroupMembers(groupGUID string, members 
 		return WrapError("get_group_for_remove_members", err)
 	}
 
-	// Normalize member identifiers to DNs for comparison
-	normalizedMembers, err := gmm.normalizer.NormalizeToDNBatch(members)
-	if err != nil {
-		return WrapError("normalize_member_identifiers", err)
-	}
-
 	// Extract unique DNs to remove
-	toRemoveDNs := gmm.extractUniqueDNs(normalizedMembers)
+	toRemoveDNs := gmm.extractUniqueDNs(memberDNs)
 	if len(toRemoveDNs) == 0 {
 		return nil // No valid members to remove
 	}
@@ -186,9 +188,15 @@ func (gmm *GroupMembershipManager) RemoveGroupMembers(groupGUID string, members 
 
 // CalculateMembershipDelta compares desired membership with current state
 // and returns the changes needed to achieve the desired state.
-func (gmm *GroupMembershipManager) CalculateMembershipDelta(groupGUID string, desiredMembers []string) (*MembershipDelta, error) {
+// All desired members must be provided as Distinguished Names (DNs).
+func (gmm *GroupMembershipManager) CalculateMembershipDelta(groupGUID string, desiredMemberDNs []string) (*MembershipDelta, error) {
 	if groupGUID == "" {
 		return nil, fmt.Errorf("group GUID cannot be empty")
+	}
+
+	// Validate that all desired members are DNs
+	if err := gmm.ValidateMembers(desiredMemberDNs); err != nil {
+		return nil, WrapError("validate_desired_member_dns", err)
 	}
 
 	// Get current members
@@ -197,14 +205,8 @@ func (gmm *GroupMembershipManager) CalculateMembershipDelta(groupGUID string, de
 		return nil, WrapError("get_current_members", err)
 	}
 
-	// Normalize desired members to DNs for comparison
-	normalizedDesired, err := gmm.normalizer.NormalizeToDNBatch(desiredMembers)
-	if err != nil {
-		return nil, WrapError("normalize_desired_members", err)
-	}
-
 	// Extract unique DNs and sort for comparison
-	desiredDNs := gmm.extractUniqueDNs(normalizedDesired)
+	desiredDNs := gmm.extractUniqueDNs(desiredMemberDNs)
 
 	// Sort both sets for efficient comparison
 	sort.Strings(currentMembers)
@@ -307,13 +309,13 @@ func (gmm *GroupMembershipManager) replaceMemberList(groupDN string, newMembers 
 	return gmm.client.Modify(gmm.ctx, modReq)
 }
 
-// extractUniqueDNs extracts unique DNs from a normalization result map.
-func (gmm *GroupMembershipManager) extractUniqueDNs(normalizedMap map[string]string) []string {
+// extractUniqueDNs extracts unique DNs from a list of DN strings.
+func (gmm *GroupMembershipManager) extractUniqueDNs(memberDNs []string) []string {
 	uniqueDNs := make(map[string]bool)
 
-	for _, dn := range normalizedMap {
+	for _, dn := range memberDNs {
 		if dn != "" {
-			// Use lowercase for deduplication while preserving original case
+			// Use original DN for deduplication
 			uniqueDNs[dn] = true
 		}
 	}
@@ -381,17 +383,17 @@ func (gmm *GroupMembershipManager) calculateSetDifferences(current, desired []st
 	return toAdd, toRemove
 }
 
-// ValidateMembers validates that all member identifiers can be resolved.
+// ValidateMembers validates that all member identifiers are valid Distinguished Names.
 // This is useful for pre-validation before applying membership changes.
-func (gmm *GroupMembershipManager) ValidateMembers(members []string) error {
-	if len(members) == 0 {
+func (gmm *GroupMembershipManager) ValidateMembers(memberDNs []string) error {
+	if len(memberDNs) == 0 {
 		return nil
 	}
 
-	// Validate each identifier format
-	for _, member := range members {
-		if err := gmm.normalizer.ValidateIdentifier(member); err != nil {
-			return fmt.Errorf("invalid member identifier '%s': %w", member, err)
+	// Validate each DN format
+	for _, memberDN := range memberDNs {
+		if err := ValidateDNSyntax(memberDN); err != nil {
+			return fmt.Errorf("invalid member DN '%s': %w", memberDN, err)
 		}
 	}
 
@@ -414,25 +416,24 @@ func (gmm *GroupMembershipManager) GetMembershipStats(groupGUID string) (map[str
 		"group_name":   group.Name,
 		"member_count": len(group.MemberDNs),
 		"member_dns":   group.MemberDNs,
-		"cache_stats":  gmm.normalizer.CacheStats(),
 	}
 
 	return stats, nil
 }
 
-// ClearNormalizationCache clears the member normalization cache.
-// Useful for testing or when identifier mappings may have changed.
+// ClearNormalizationCache is deprecated and no-op since normalization is handled externally.
+// Kept for backward compatibility.
 func (gmm *GroupMembershipManager) ClearNormalizationCache() {
-	gmm.normalizer.ClearCache()
+	// No-op - normalization is now handled by the caller
 }
 
 // GetSupportedIdentifierFormats returns the supported member identifier formats.
+// Only Distinguished Names (DNs) are supported by this manager.
 func (gmm *GroupMembershipManager) GetSupportedIdentifierFormats() []string {
-	return gmm.normalizer.GetSupportedFormats()
+	return []string{"DN"}
 }
 
 // SetBaseDN updates the base DN used for searches.
 func (gmm *GroupMembershipManager) SetBaseDN(baseDN string) {
 	gmm.groupManager.baseDN = baseDN
-	gmm.normalizer.SetBaseDN(baseDN)
 }

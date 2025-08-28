@@ -10,6 +10,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
+// Ensure planmodifiers.PlanModifyString is implemented.
+var _ planmodifier.String = &useNameForSAMAccountName{}
+
 var samAccountNameRegex = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 // useNameForSAMAccountName implements the plan modifier.
