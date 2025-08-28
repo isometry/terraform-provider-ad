@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -67,8 +68,7 @@ type UserFilterModel struct {
 	EmailDomain types.String `tfsdk:"email_domain"` // Email domain (e.g., "example.com")
 
 	// Group membership filters (supports nested groups via LDAP_MATCHING_RULE_IN_CHAIN)
-	MemberOf    types.String `tfsdk:"member_of"`     // Filter users who are members of specified group (DN)
-	NotMemberOf types.String `tfsdk:"not_member_of"` // Filter users who are NOT members of specified group (DN)
+	MemberOf types.String `tfsdk:"member_of"` // Filter users who are members of specified group (DN), prefix with ! to negate
 }
 
 // UserDataModel describes a single user in the result set.
@@ -267,19 +267,11 @@ func (d *UsersDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 					"member_of": schema.StringAttribute{
 						MarkdownDescription: "Filter by group membership. Only returns users who are members of the " +
 							"specified group (Distinguished Name). Includes nested group membership. " +
-							"Example: `CN=Domain Users,CN=Users,DC=example,DC=com`",
+							"Prefix with `!` to negate (users NOT in group). " +
+							"Examples: `CN=Domain Users,CN=Users,DC=example,DC=com` or `!CN=Disabled Users,CN=Users,DC=example,DC=com`",
 						Optional: true,
 						Validators: []validator.String{
-							validators.IsValidDN(),
-						},
-					},
-					"not_member_of": schema.StringAttribute{
-						MarkdownDescription: "Filter by group non-membership. Only returns users who are NOT members of the " +
-							"specified group (Distinguished Name). Includes nested group membership. " +
-							"Example: `CN=Disabled Users,CN=Users,DC=example,DC=com`",
-						Optional: true,
-						Validators: []validator.String{
-							validators.IsValidDN(),
+							validators.IsValidDNWithNegation(),
 						},
 					},
 				},
@@ -354,7 +346,6 @@ func (d *UsersDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 		"has_email":     searchFilter.HasEmail,
 		"email_domain":  searchFilter.EmailDomain,
 		"member_of":     searchFilter.MemberOf,
-		"not_member_of": searchFilter.NotMemberOf,
 	})
 
 	// Perform the search
@@ -383,6 +374,14 @@ func (d *UsersDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// parseFilterValue parses a filter value and returns the clean value and whether it should be negated.
+func parseFilterValue(value string) (cleanValue string, negate bool) {
+	if strings.HasPrefix(value, "!") {
+		return strings.TrimPrefix(value, "!"), true
+	}
+	return value, false
 }
 
 // buildSearchFilter converts the Terraform configuration to a UserSearchFilter.
@@ -416,13 +415,17 @@ func (d *UsersDataSource) buildSearchFilter(ctx context.Context, data *UsersData
 			searchFilter.NameContains = filterModel.NameContains.ValueString()
 		}
 
-		// Map organizational filter attributes
+		// Map organizational filter attributes with negation support
 		if !filterModel.Department.IsNull() && filterModel.Department.ValueString() != "" {
-			searchFilter.Department = filterModel.Department.ValueString()
+			departmentValue, negate := parseFilterValue(filterModel.Department.ValueString())
+			searchFilter.Department = departmentValue
+			searchFilter.NegateDepartment = negate
 		}
 
 		if !filterModel.Title.IsNull() && filterModel.Title.ValueString() != "" {
-			searchFilter.Title = filterModel.Title.ValueString()
+			titleValue, negate := parseFilterValue(filterModel.Title.ValueString())
+			searchFilter.Title = titleValue
+			searchFilter.NegateTitle = negate
 		}
 
 		if !filterModel.Manager.IsNull() && filterModel.Manager.ValueString() != "" {
@@ -430,11 +433,15 @@ func (d *UsersDataSource) buildSearchFilter(ctx context.Context, data *UsersData
 		}
 
 		if !filterModel.Company.IsNull() && filterModel.Company.ValueString() != "" {
-			searchFilter.Company = filterModel.Company.ValueString()
+			companyValue, negate := parseFilterValue(filterModel.Company.ValueString())
+			searchFilter.Company = companyValue
+			searchFilter.NegateCompany = negate
 		}
 
 		if !filterModel.Office.IsNull() && filterModel.Office.ValueString() != "" {
-			searchFilter.Office = filterModel.Office.ValueString()
+			officeValue, negate := parseFilterValue(filterModel.Office.ValueString())
+			searchFilter.Office = officeValue
+			searchFilter.NegateOffice = negate
 		}
 
 		// Map status filter attributes
@@ -453,13 +460,11 @@ func (d *UsersDataSource) buildSearchFilter(ctx context.Context, data *UsersData
 			searchFilter.EmailDomain = filterModel.EmailDomain.ValueString()
 		}
 
-		// Map group membership filter attributes
+		// Map group membership filter attributes with negation support
 		if !filterModel.MemberOf.IsNull() && filterModel.MemberOf.ValueString() != "" {
-			searchFilter.MemberOf = filterModel.MemberOf.ValueString()
-		}
-
-		if !filterModel.NotMemberOf.IsNull() && filterModel.NotMemberOf.ValueString() != "" {
-			searchFilter.NotMemberOf = filterModel.NotMemberOf.ValueString()
+			memberOfValue, negate := parseFilterValue(filterModel.MemberOf.ValueString())
+			searchFilter.MemberOf = memberOfValue
+			searchFilter.NegateMemberOf = negate
 		}
 	}
 

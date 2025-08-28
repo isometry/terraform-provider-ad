@@ -43,11 +43,15 @@ type UserSearchFilter struct {
 	NameContains string `json:"nameContains,omitempty"` // Users whose common name contains this string
 
 	// Organizational filters
-	Department string `json:"department,omitempty"` // Department name
-	Title      string `json:"title,omitempty"`      // Job title
-	Company    string `json:"company,omitempty"`    // Company name (exact match)
-	Office     string `json:"office,omitempty"`     // Office location (exact match)
-	Manager    string `json:"manager,omitempty"`    // Manager DN, GUID, UPN, or SAM
+	Department       string `json:"department,omitempty"`       // Department name
+	NegateDepartment bool   `json:"negateDepartment,omitempty"` // Whether to negate the Department filter
+	Title            string `json:"title,omitempty"`            // Job title
+	NegateTitle      bool   `json:"negateTitle,omitempty"`      // Whether to negate the Title filter
+	Company          string `json:"company,omitempty"`          // Company name (exact match)
+	NegateCompany    bool   `json:"negateCompany,omitempty"`    // Whether to negate the Company filter
+	Office           string `json:"office,omitempty"`           // Office location (exact match)
+	NegateOffice     bool   `json:"negateOffice,omitempty"`     // Whether to negate the Office filter
+	Manager          string `json:"manager,omitempty"`          // Manager DN, GUID, UPN, or SAM
 
 	// Status filters
 	Enabled *bool `json:"enabled,omitempty"` // true=enabled accounts, false=disabled accounts, nil=all
@@ -60,8 +64,8 @@ type UserSearchFilter struct {
 	Container string `json:"container,omitempty"` // Specific OU to search, empty for base DN
 
 	// Group membership filters (supports nested groups via LDAP_MATCHING_RULE_IN_CHAIN)
-	MemberOf    string `json:"memberOf,omitempty"`    // Filter users who are members of specified group (DN)
-	NotMemberOf string `json:"notMemberOf,omitempty"` // Filter users who are NOT members of specified group (DN)
+	MemberOf       string `json:"memberOf,omitempty"`       // Filter users who are members of specified group (DN)
+	NegateMemberOf bool   `json:"negateMemberOf,omitempty"` // Whether to negate the MemberOf filter
 }
 
 // User represents an Active Directory user with comprehensive attributes.
@@ -737,10 +741,18 @@ func (ur *UserReader) buildLDAPFilter(filter *UserSearchFilter) (string, error) 
 
 	// Organizational filters
 	if filter.Department != "" {
-		filterParts = append(filterParts, fmt.Sprintf("(department=%s)", ldap.EscapeFilter(filter.Department)))
+		departmentFilter := fmt.Sprintf("(department=%s)", ldap.EscapeFilter(filter.Department))
+		if filter.NegateDepartment {
+			departmentFilter = fmt.Sprintf("(!%s)", departmentFilter)
+		}
+		filterParts = append(filterParts, departmentFilter)
 	}
 	if filter.Title != "" {
-		filterParts = append(filterParts, fmt.Sprintf("(title=%s)", ldap.EscapeFilter(filter.Title)))
+		titleFilter := fmt.Sprintf("(title=%s)", ldap.EscapeFilter(filter.Title))
+		if filter.NegateTitle {
+			titleFilter = fmt.Sprintf("(!%s)", titleFilter)
+		}
+		filterParts = append(filterParts, titleFilter)
 	}
 	if filter.Manager != "" {
 		// Normalize manager identifier to DN
@@ -751,10 +763,18 @@ func (ur *UserReader) buildLDAPFilter(filter *UserSearchFilter) (string, error) 
 		filterParts = append(filterParts, fmt.Sprintf("(manager=%s)", ldap.EscapeFilter(managerDN)))
 	}
 	if filter.Company != "" {
-		filterParts = append(filterParts, fmt.Sprintf("(company=%s)", ldap.EscapeFilter(filter.Company)))
+		companyFilter := fmt.Sprintf("(company=%s)", ldap.EscapeFilter(filter.Company))
+		if filter.NegateCompany {
+			companyFilter = fmt.Sprintf("(!%s)", companyFilter)
+		}
+		filterParts = append(filterParts, companyFilter)
 	}
 	if filter.Office != "" {
-		filterParts = append(filterParts, fmt.Sprintf("(physicalDeliveryOfficeName=%s)", ldap.EscapeFilter(filter.Office)))
+		officeFilter := fmt.Sprintf("(physicalDeliveryOfficeName=%s)", ldap.EscapeFilter(filter.Office))
+		if filter.NegateOffice {
+			officeFilter = fmt.Sprintf("(!%s)", officeFilter)
+		}
+		filterParts = append(filterParts, officeFilter)
 	}
 
 	// Status filters
@@ -785,12 +805,12 @@ func (ur *UserReader) buildLDAPFilter(filter *UserSearchFilter) (string, error) 
 
 	// Group membership filters (supports nested groups via LDAP_MATCHING_RULE_IN_CHAIN)
 	if filter.MemberOf != "" {
-		// Users who are members of the specified group (including nested)
-		filterParts = append(filterParts, fmt.Sprintf("(memberOf:1.2.840.113556.1.4.1941:=%s)", ldap.EscapeFilter(filter.MemberOf)))
-	}
-	if filter.NotMemberOf != "" {
-		// Users who are NOT members of the specified group (including nested)
-		filterParts = append(filterParts, fmt.Sprintf("(!(memberOf:1.2.840.113556.1.4.1941:=%s))", ldap.EscapeFilter(filter.NotMemberOf)))
+		memberOfFilter := fmt.Sprintf("(memberOf:1.2.840.113556.1.4.1941:=%s)", ldap.EscapeFilter(filter.MemberOf))
+		if filter.NegateMemberOf {
+			// Users who are NOT members of the specified group (including nested)
+			memberOfFilter = fmt.Sprintf("(!%s)", memberOfFilter)
+		}
+		filterParts = append(filterParts, memberOfFilter)
 	}
 
 	// Combine all filter parts

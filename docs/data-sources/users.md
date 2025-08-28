@@ -568,11 +568,10 @@ Optional:
 - `enabled` (Boolean) Filter by account status. `true` returns only enabled accounts, `false` returns only disabled accounts. If not specified, returns all accounts.
 - `has_email` (Boolean) Filter by email presence. `true` returns only users with email addresses, `false` returns only users without email addresses. If not specified, returns all users.
 - `manager` (String) Filter by manager. Accepts Distinguished Name, GUID, UPN, or SAM account name.
-- `member_of` (String) Filter by group membership. Only returns users who are members of the specified group (Distinguished Name). Includes nested group membership. Example: `CN=Domain Users,CN=Users,DC=example,DC=com`
+- `member_of` (String) Filter by group membership. Only returns users who are members of the specified group (Distinguished Name). Includes nested group membership. Prefix with `!` to negate (users NOT in group). Examples: `CN=Domain Users,CN=Users,DC=example,DC=com` or `!CN=Disabled Users,CN=Users,DC=example,DC=com`
 - `name_contains` (String) Users whose common name contains this string. Case-insensitive.
 - `name_prefix` (String) Users whose common name starts with this string. Case-insensitive.
 - `name_suffix` (String) Users whose common name ends with this string. Case-insensitive.
-- `not_member_of` (String) Filter by group non-membership. Only returns users who are NOT members of the specified group (Distinguished Name). Includes nested group membership. Example: `CN=Disabled Users,CN=Users,DC=example,DC=com`
 - `office` (String) Filter by office location (exact match, case-insensitive).
 - `title` (String) Filter by job title. Case-insensitive partial match.
 
