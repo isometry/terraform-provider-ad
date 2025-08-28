@@ -298,12 +298,12 @@ resource "ad_group" "debug_group" {
 
 - `container` (String) The distinguished name of the container or organizational unit where the group will be created (e.g., `ou=Groups,dc=example,dc=com`).
 - `name` (String) The name of the group (cn attribute). This is the display name visible in Active Directory.
-- `sam_account_name` (String) The SAM account name (pre-Windows 2000 group name). Must be unique within the domain and follow SAM naming conventions.
 
 ### Optional
 
 - `category` (String) The category of the group. Valid values are `Security` or `Distribution`. Defaults to `Security`.
 - `description` (String) A description for the group. This is optional and can be used to provide additional context about the group's purpose.
+- `sam_account_name` (String) The SAM account name (pre-Windows 2000 group name). Must be unique within the domain. If not specified, defaults to the value of 'name' if it's 64 characters or less and contains only valid characters (letters, numbers, dots, underscores, hyphens).
 - `scope` (String) The scope of the group. Valid values are `Global`, `Universal`, or `DomainLocal`. Defaults to `Global`.
 
 ### Read-Only

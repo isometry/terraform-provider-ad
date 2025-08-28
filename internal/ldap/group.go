@@ -114,13 +114,14 @@ type CreateGroupRequest struct {
 
 // UpdateGroupRequest represents a request to update an existing group.
 type UpdateGroupRequest struct {
-	Name         *string        `json:"name,omitempty"`         // Optional: New group name
-	Description  *string        `json:"description,omitempty"`  // Optional: New description
-	Mail         *string        `json:"mail,omitempty"`         // Optional: New email address
-	MailNickname *string        `json:"mailNickname,omitempty"` // Optional: New mail nickname
-	Scope        *GroupScope    `json:"scope,omitempty"`        // Optional: New scope (limited conversions)
-	Category     *GroupCategory `json:"category,omitempty"`     // Optional: New category
-	Container    *string        `json:"container,omitempty"`    // Optional: New container DN (triggers move)
+	Name           *string        `json:"name,omitempty"`           // Optional: New group name
+	SAMAccountName *string        `json:"samAccountName,omitempty"` // Optional: New SAM account name
+	Description    *string        `json:"description,omitempty"`    // Optional: New description
+	Mail           *string        `json:"mail,omitempty"`           // Optional: New email address
+	MailNickname   *string        `json:"mailNickname,omitempty"`   // Optional: New mail nickname
+	Scope          *GroupScope    `json:"scope,omitempty"`          // Optional: New scope (limited conversions)
+	Category       *GroupCategory `json:"category,omitempty"`       // Optional: New category
+	Container      *string        `json:"container,omitempty"`      // Optional: New container DN (triggers move)
 }
 
 // GroupManager handles Active Directory group operations.
@@ -412,12 +413,38 @@ func (gm *GroupManager) UpdateGroup(guid string, req *UpdateGroupRequest) (*Grou
 		ReplaceAttributes: make(map[string][]string),
 	}
 
-	hasChanges := false
+	// Handle name and/or container changes (both require ModifyDN)
+	needsRename := req.Name != nil && *req.Name != currentGroup.Name
+	needsMove := req.Container != nil && !strings.EqualFold(*req.Container, currentGroup.Container)
 
-	// Handle name change (affects CN)
-	if req.Name != nil && *req.Name != currentGroup.Name {
-		modReq.ReplaceAttributes["cn"] = []string{*req.Name}
-		hasChanges = true
+	var renamedOrMovedGroup *Group
+	if needsRename || needsMove {
+		// Determine the new RDN and container
+		newName := currentGroup.Name
+		if needsRename {
+			newName = *req.Name
+		}
+
+		newContainer := currentGroup.Container
+		if needsMove {
+			newContainer = *req.Container
+		}
+
+		// Use ModifyDN to rename and/or move the group
+		var err error
+		renamedOrMovedGroup, err = gm.renameAndMoveGroup(currentGroup, newName, newContainer)
+		if err != nil {
+			return nil, WrapError("rename_or_move_group", err)
+		}
+	}
+
+	// Track attribute changes separately (for LDAP Modify operation)
+	hasAttributeChanges := false
+
+	// Handle SAM account name change
+	if req.SAMAccountName != nil && *req.SAMAccountName != currentGroup.SAMAccountName {
+		modReq.ReplaceAttributes["sAMAccountName"] = []string{*req.SAMAccountName}
+		hasAttributeChanges = true
 	}
 
 	// Handle description change
@@ -428,7 +455,7 @@ func (gm *GroupManager) UpdateGroup(guid string, req *UpdateGroupRequest) (*Grou
 		} else {
 			modReq.ReplaceAttributes["description"] = []string{*req.Description}
 		}
-		hasChanges = true
+		hasAttributeChanges = true
 	}
 
 	// Handle mail change
@@ -443,7 +470,7 @@ func (gm *GroupManager) UpdateGroup(guid string, req *UpdateGroupRequest) (*Grou
 			}
 			modReq.ReplaceAttributes["mail"] = []string{*req.Mail}
 		}
-		hasChanges = true
+		hasAttributeChanges = true
 	}
 
 	// Handle mail nickname change
@@ -453,7 +480,7 @@ func (gm *GroupManager) UpdateGroup(guid string, req *UpdateGroupRequest) (*Grou
 		} else {
 			modReq.ReplaceAttributes["mailNickname"] = []string{*req.MailNickname}
 		}
-		hasChanges = true
+		hasAttributeChanges = true
 	}
 
 	// Handle scope or category changes (requires groupType recalculation)
@@ -478,46 +505,95 @@ func (gm *GroupManager) UpdateGroup(guid string, req *UpdateGroupRequest) (*Grou
 		newGroupType := CalculateGroupType(newScope, newCategory)
 		if newGroupType != currentGroup.GroupType {
 			modReq.ReplaceAttributes["groupType"] = []string{strconv.FormatInt(int64(newGroupType), 10)}
-			hasChanges = true
+			hasAttributeChanges = true
 		}
 	}
 
-	// Handle container change (requires move operation)
-	var movedGroup *Group
-	if req.Container != nil && !strings.EqualFold(*req.Container, currentGroup.Container) {
-		// Move the group to the new container
-		var err error
-		movedGroup, err = gm.MoveGroup(guid, *req.Container)
-		if err != nil {
-			return nil, WrapError("move_group", err)
-		}
-	}
-
-	if !hasChanges {
-		// No attribute changes needed
-		if movedGroup != nil {
-			// But we did move the group, so return the moved group
-			return movedGroup, nil
-		}
+	// Check if we have any changes at all
+	if !hasAttributeChanges && renamedOrMovedGroup == nil {
 		// No changes at all, return current group
 		return currentGroup, nil
 	}
 
-	// Update the DN for the modify request if the group was moved
-	if movedGroup != nil {
-		// Update the DN for the modify request since the group was moved
-		modReq.DN = movedGroup.DistinguishedName
+	// If we only renamed/moved but have no attribute changes, return the renamed/moved group
+	if !hasAttributeChanges && renamedOrMovedGroup != nil {
+		return renamedOrMovedGroup, nil
 	}
 
-	// Apply modifications
-	if err := gm.client.Modify(gm.ctx, modReq); err != nil {
-		return nil, WrapError("modify_group", err)
+	// Apply attribute modifications if we have any
+	if hasAttributeChanges {
+		// Update the DN for the modify request if the group was renamed/moved
+		if renamedOrMovedGroup != nil {
+			// Update the DN for the modify request since the group was renamed/moved
+			modReq.DN = renamedOrMovedGroup.DistinguishedName
+		}
+
+		// Apply modifications
+		if err := gm.client.Modify(gm.ctx, modReq); err != nil {
+			return nil, WrapError("modify_group", err)
+		}
 	}
 
 	// Retrieve final updated group
 	updatedGroup, err := gm.GetGroup(guid)
 	if err != nil {
 		return nil, WrapError("retrieve_updated_group", err)
+	}
+
+	return updatedGroup, nil
+}
+
+// renameAndMoveGroup handles renaming and/or moving a group using ModifyDN operation.
+func (gm *GroupManager) renameAndMoveGroup(currentGroup *Group, newName, newContainer string) (*Group, error) {
+	// Check if any actual change is needed
+	if newName == currentGroup.Name && strings.EqualFold(newContainer, currentGroup.Container) {
+		// No change needed
+		return currentGroup, nil
+	}
+
+	// Parse the current DN to understand its structure
+	parsedDN, err := ldap.ParseDN(currentGroup.DistinguishedName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse current DN: %w", err)
+	}
+
+	if len(parsedDN.RDNs) == 0 {
+		return nil, fmt.Errorf("invalid DN structure")
+	}
+
+	// Create the new RDN
+	var newRDN string
+	if newName == currentGroup.Name {
+		// Name didn't change, use existing RDN
+		newRDN = parsedDN.RDNs[0].String()
+	} else {
+		// Name changed, create new RDN with escaped name
+		newRDN = fmt.Sprintf("cn=%s", ldap.EscapeFilter(newName))
+	}
+
+	// Determine if we need to specify a new superior (container)
+	var newSuperior string
+	if !strings.EqualFold(newContainer, currentGroup.Container) {
+		newSuperior = newContainer
+	}
+
+	// Create the ModifyDN request
+	modifyDNReq := &ModifyDNRequest{
+		DN:           currentGroup.DistinguishedName,
+		NewRDN:       newRDN,
+		DeleteOldRDN: true,
+		NewSuperior:  newSuperior,
+	}
+
+	// Execute the ModifyDN operation
+	if err := gm.client.ModifyDN(gm.ctx, modifyDNReq); err != nil {
+		return nil, WrapError("modify_dn", err)
+	}
+
+	// Retrieve and return the updated group
+	updatedGroup, err := gm.GetGroup(currentGroup.ObjectGUID)
+	if err != nil {
+		return nil, WrapError("retrieve_renamed_moved_group", err)
 	}
 
 	return updatedGroup, nil

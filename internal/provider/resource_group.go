@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	"github.com/isometry/terraform-provider-ad/internal/provider/planmodifiers"
 	customtypes "github.com/isometry/terraform-provider-ad/internal/provider/types"
 	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
 )
@@ -81,17 +82,20 @@ func (r *GroupResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				},
 			},
 			"sam_account_name": schema.StringAttribute{
-				MarkdownDescription: "The SAM account name (pre-Windows 2000 group name). Must be unique within the domain and follow SAM naming conventions.",
-				Required:            true,
+				MarkdownDescription: "The SAM account name (pre-Windows 2000 group name). Must be unique within the domain. " +
+					"If not specified, defaults to the value of 'name' if it's 64 characters or less " +
+					"and contains only valid characters (letters, numbers, dots, underscores, hyphens).",
+				Optional: true,
+				Computed: true,
 				Validators: []validator.String{
-					stringvalidator.LengthBetween(1, 20),
+					stringvalidator.LengthBetween(1, 64),
 					stringvalidator.RegexMatches(
 						regexp.MustCompile(`^[a-zA-Z0-9._-]+$`),
 						"SAM account name can only contain letters, numbers, dots, underscores, and hyphens",
 					),
 				},
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+					planmodifiers.UseNameForSAMAccountName(false), // false = group (64 char limit)
 				},
 			},
 			"container": schema.StringAttribute{
@@ -354,6 +358,13 @@ func (r *GroupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	if !data.Name.Equal(currentData.Name) {
 		name := data.Name.ValueString()
 		updateReq.Name = &name
+		hasChanges = true
+	}
+
+	// Check for SAM account name changes
+	if !data.SAMAccountName.Equal(currentData.SAMAccountName) {
+		samAccountName := data.SAMAccountName.ValueString()
+		updateReq.SAMAccountName = &samAccountName
 		hasChanges = true
 	}
 
