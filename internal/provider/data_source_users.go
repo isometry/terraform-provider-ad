@@ -18,6 +18,7 @@ import (
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
 	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
+	"github.com/isometry/terraform-provider-ad/internal/utils"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -315,7 +316,7 @@ func (d *UsersDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	var data UsersDataSourceModel
 
 	// Initialize logging subsystem for consistent logging
-	ctx = initializeLogging(ctx)
+	ctx = utils.InitializeLogging(ctx)
 
 	// Read Terraform configuration data into the model
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
@@ -380,8 +381,8 @@ func (d *UsersDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 
 // parseFilterValue parses a filter value and returns the clean value and whether it should be negated.
 func parseFilterValue(value string) (cleanValue string, negate bool) {
-	if strings.HasPrefix(value, "!") {
-		return strings.TrimPrefix(value, "!"), true
+	if after, ok := strings.CutPrefix(value, "!"); ok {
+		return after, true
 	}
 	return value, false
 }

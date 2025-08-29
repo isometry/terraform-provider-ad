@@ -1,4 +1,4 @@
-package provider
+package provider_test
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/isometry/terraform-provider-ad/internal/ldap"
+	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
 )
 
 // Benchmark tests for critical operations
@@ -21,7 +21,7 @@ func BenchmarkGroupSearch(b *testing.B) {
 	defer helper.Close()
 
 	ctx := context.Background()
-	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldap.NewCacheManager())
+	groupManager := ldapclient.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
 
 	// Create test groups
 	testGroups, err := helper.CreateTestGroups(ctx, 100)
@@ -79,7 +79,7 @@ func BenchmarkGroupMembership(b *testing.B) {
 	defer helper.CleanupTestGroups(ctx, memberGroups)
 
 	// Convert member group IDs to DNs
-	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldap.NewCacheManager())
+	groupManager := ldapclient.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
 	memberDNs := make([]string, len(memberGroups))
 	for i, groupID := range memberGroups {
 		group, err := groupManager.GetGroup(groupID)
@@ -91,7 +91,7 @@ func BenchmarkGroupMembership(b *testing.B) {
 
 	// Add members to first test group
 	mainGroupID := testGroups[0]
-	membershipManager := ldap.NewGroupMembershipManager(ctx, helper.client, helper.config.BaseDN, ldap.NewCacheManager())
+	membershipManager := ldapclient.NewGroupMembershipManager(ctx, helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
 	err = membershipManager.SetGroupMembers(mainGroupID, memberDNs)
 	if err != nil {
 		b.Fatalf("Failed to set members: %v", err)
@@ -140,7 +140,7 @@ func BenchmarkUserSearch(b *testing.B) {
 	defer helper.Close()
 
 	ctx := context.Background()
-	userReader := ldap.NewUserReader(ctx, helper.client, helper.config.BaseDN, ldap.NewCacheManager())
+	userReader := ldapclient.NewUserReader(ctx, helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
 
 	b.ResetTimer()
 
@@ -158,7 +158,7 @@ func BenchmarkUserSearch(b *testing.B) {
 		upn := "Administrator@" + helper.config.Domain
 		for b.Loop() {
 			_, err := userReader.GetUserByUPN(upn)
-			if err != nil && !ldap.IsNotFoundError(err) {
+			if err != nil && !ldapclient.IsNotFoundError(err) {
 				b.Fatalf("GetByUPN failed: %v", err)
 			}
 		}
@@ -172,7 +172,7 @@ func BenchmarkConnectionPool(b *testing.B) {
 	}
 
 	config := GetTestConfig()
-	ldapConfig := &ldap.ConnectionConfig{
+	ldapConfig := &ldapclient.ConnectionConfig{
 		Domain:         config.Domain,
 		LDAPURLs:       []string{config.LDAPURL},
 		Username:       config.Username,
@@ -183,7 +183,7 @@ func BenchmarkConnectionPool(b *testing.B) {
 
 	b.Run("ClientCreation", func(b *testing.B) {
 		for b.Loop() {
-			client, err := ldap.NewClient(ldapConfig)
+			client, err := ldapclient.NewClient(ldapConfig)
 			if err != nil {
 				b.Fatalf("Failed to create client: %v", err)
 			}
@@ -192,7 +192,7 @@ func BenchmarkConnectionPool(b *testing.B) {
 	})
 
 	b.Run("ConcurrentConnections", func(b *testing.B) {
-		client, err := ldap.NewClient(ldapConfig)
+		client, err := ldapclient.NewClient(ldapConfig)
 		if err != nil {
 			b.Fatalf("Failed to create client: %v", err)
 		}
@@ -201,9 +201,9 @@ func BenchmarkConnectionPool(b *testing.B) {
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
 				// Test simple LDAP operation
-				req := &ldap.SearchRequest{
+				req := &ldapclient.SearchRequest{
 					BaseDN:     config.BaseDN,
-					Scope:      ldap.ScopeWholeSubtree,
+					Scope:      ldapclient.ScopeWholeSubtree,
 					Filter:     "(objectClass=domain)",
 					Attributes: []string{"distinguishedName"},
 					SizeLimit:  1,
@@ -234,9 +234,9 @@ func BenchmarkPagination(b *testing.B) {
 	for _, pageSize := range pageSizes {
 		b.Run(fmt.Sprintf("PageSize_%d", pageSize), func(b *testing.B) {
 			for b.Loop() {
-				req := &ldap.SearchRequest{
+				req := &ldapclient.SearchRequest{
 					BaseDN:     helper.config.BaseDN,
-					Scope:      ldap.ScopeWholeSubtree,
+					Scope:      ldapclient.ScopeWholeSubtree,
 					Filter:     "(objectClass=*)",
 					Attributes: []string{"objectGUID"},
 					SizeLimit:  pageSize,
@@ -260,7 +260,7 @@ func BenchmarkNormalizer(b *testing.B) {
 	defer helper.Close()
 
 	ctx := context.Background()
-	normalizer := ldap.NewMemberNormalizer(helper.client, helper.config.BaseDN, ldap.NewCacheManager())
+	normalizer := ldapclient.NewMemberNormalizer(helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
 
 	// Create a test group to get its various identifiers
 	testGroups, err := helper.CreateTestGroups(ctx, 1)
@@ -269,7 +269,7 @@ func BenchmarkNormalizer(b *testing.B) {
 	}
 	defer helper.CleanupTestGroups(ctx, testGroups)
 
-	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldap.NewCacheManager())
+	groupManager := ldapclient.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
 	group, err := groupManager.GetGroup(testGroups[0])
 	if err != nil {
 		b.Fatalf("Failed to get test group: %v", err)
@@ -317,7 +317,7 @@ func BenchmarkMemoryUsage(b *testing.B) {
 	defer helper.Close()
 
 	ctx := context.Background()
-	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldap.NewCacheManager())
+	groupManager := ldapclient.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
 
 	// Create a large number of test groups
 	testGroups, err := helper.CreateTestGroups(ctx, 500)
@@ -359,7 +359,7 @@ func BenchmarkErrorHandling(b *testing.B) {
 	defer helper.Close()
 
 	ctx := context.Background()
-	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldap.NewCacheManager())
+	groupManager := ldapclient.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
 
 	b.ResetTimer()
 
@@ -370,7 +370,7 @@ func BenchmarkErrorHandling(b *testing.B) {
 			if err == nil {
 				b.Fatal("Expected not found error")
 			}
-			if !ldap.IsNotFoundError(err) {
+			if !ldapclient.IsNotFoundError(err) {
 				b.Fatalf("Unexpected error type: %v", err)
 			}
 		}
@@ -397,7 +397,7 @@ func BenchmarkConcurrency(b *testing.B) {
 	defer helper.Close()
 
 	ctx := context.Background()
-	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldap.NewCacheManager())
+	groupManager := ldapclient.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
 
 	// Create test groups
 	testGroups, err := helper.CreateTestGroups(ctx, 10)
@@ -458,7 +458,7 @@ func BenchmarkPerformanceRegression(b *testing.B) {
 			maxTime: maxTime,
 			testFunc: func(b *testing.B) {
 				ctx := context.Background()
-				groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldap.NewCacheManager())
+				groupManager := ldapclient.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
 
 				// Create a test group
 				testGroups, err := helper.CreateTestGroups(ctx, 1)

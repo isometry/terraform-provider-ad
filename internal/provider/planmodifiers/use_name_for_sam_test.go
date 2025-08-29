@@ -1,4 +1,4 @@
-package planmodifiers
+package planmodifiers_test
 
 import (
 	"context"
@@ -10,11 +10,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	"github.com/isometry/terraform-provider-ad/internal/provider/planmodifiers"
 )
 
 func TestUseNameForSAMAccountName_Description(t *testing.T) {
 	t.Run("group", func(t *testing.T) {
-		modifier := UseNameForSAMAccountName(false)
+		modifier := planmodifiers.UseNameForSAMAccountName(false)
 		expected := "uses the value of name if sam_account_name is not explicitly configured for group objects"
 
 		actual := modifier.Description(context.Background())
@@ -24,7 +25,7 @@ func TestUseNameForSAMAccountName_Description(t *testing.T) {
 	})
 
 	t.Run("user", func(t *testing.T) {
-		modifier := UseNameForSAMAccountName(true)
+		modifier := planmodifiers.UseNameForSAMAccountName(true)
 		expected := "uses the value of name if sam_account_name is not explicitly configured for user objects"
 
 		actual := modifier.Description(context.Background())
@@ -36,7 +37,7 @@ func TestUseNameForSAMAccountName_Description(t *testing.T) {
 
 func TestUseNameForSAMAccountName_MarkdownDescription(t *testing.T) {
 	t.Run("group", func(t *testing.T) {
-		modifier := UseNameForSAMAccountName(false)
+		modifier := planmodifiers.UseNameForSAMAccountName(false)
 		expected := "uses the value of `name` if `sam_account_name` is not explicitly configured for group objects"
 
 		actual := modifier.MarkdownDescription(context.Background())
@@ -46,7 +47,7 @@ func TestUseNameForSAMAccountName_MarkdownDescription(t *testing.T) {
 	})
 
 	t.Run("user", func(t *testing.T) {
-		modifier := UseNameForSAMAccountName(true)
+		modifier := planmodifiers.UseNameForSAMAccountName(true)
 		expected := "uses the value of `name` if `sam_account_name` is not explicitly configured for user objects"
 
 		actual := modifier.MarkdownDescription(context.Background())
@@ -130,7 +131,7 @@ func TestUseNameForSAMAccountName_PlanModifyString_Groups(t *testing.T) {
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			modifier := UseNameForSAMAccountName(false) // false = group mode
+			modifier := planmodifiers.UseNameForSAMAccountName(false) // false = group mode
 
 			// Convert name value to terraform value
 			nameValue, err := test.nameValue.ToTerraformValue(context.Background())
@@ -276,7 +277,7 @@ func TestUseNameForSAMAccountName_PlanModifyString_Users(t *testing.T) {
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			modifier := UseNameForSAMAccountName(true) // true = user mode
+			modifier := planmodifiers.UseNameForSAMAccountName(true) // true = user mode
 
 			// Convert name value to terraform value
 			nameValue, err := test.nameValue.ToTerraformValue(context.Background())
@@ -356,7 +357,7 @@ func TestUseNameForSAMAccountName_PlanModifyString_Users(t *testing.T) {
 
 func TestUseNameForSAMAccountName_EdgeCases(t *testing.T) {
 	t.Run("exactly_one_character", func(t *testing.T) {
-		modifier := UseNameForSAMAccountName(false) // false = group mode
+		modifier := planmodifiers.UseNameForSAMAccountName(false) // false = group mode
 
 		plan := tfsdk.Plan{
 			Raw: tftypes.NewValue(tftypes.Object{
@@ -399,7 +400,7 @@ func TestUseNameForSAMAccountName_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("empty_name", func(t *testing.T) {
-		modifier := UseNameForSAMAccountName(false) // false = group mode
+		modifier := planmodifiers.UseNameForSAMAccountName(false) // false = group mode
 
 		plan := tfsdk.Plan{
 			Raw: tftypes.NewValue(tftypes.Object{

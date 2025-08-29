@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	"github.com/isometry/terraform-provider-ad/internal/utils"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -22,7 +23,7 @@ func NewWhoAmIDataSource() datasource.DataSource {
 
 // WhoAmIDataSource defines the data source implementation.
 type WhoAmIDataSource struct {
-	client       ldapclient.Client
+	Client       ldapclient.Client
 	cacheManager *ldapclient.CacheManager
 }
 
@@ -70,7 +71,7 @@ func (d *WhoAmIDataSource) Configure(ctx context.Context, req datasource.Configu
 		return
 	}
 
-	d.client = providerData.Client
+	d.Client = providerData.Client
 	d.cacheManager = providerData.CacheManager
 }
 
@@ -78,7 +79,7 @@ func (d *WhoAmIDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 	var data WhoAmIDataSourceModel
 
 	// Initialize logging subsystem for consistent logging
-	ctx = initializeLogging(ctx)
+	ctx = utils.InitializeLogging(ctx)
 
 	// Set up entry/exit logging
 	start := time.Now()
@@ -107,7 +108,7 @@ func (d *WhoAmIDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 	// All attributes are computed, so we don't need to read from config
 
 	// Perform the Who Am I? operation
-	result, err := d.client.WhoAmI(ctx)
+	result, err := d.Client.WhoAmI(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Performing WhoAmI Operation",

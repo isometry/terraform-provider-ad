@@ -20,6 +20,7 @@ import (
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
 	customtypes "github.com/isometry/terraform-provider-ad/internal/provider/types"
 	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
+	"github.com/isometry/terraform-provider-ad/internal/utils"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -139,7 +140,7 @@ func (r *OUResource) Create(ctx context.Context, req resource.CreateRequest, res
 	var data OUResourceModel
 
 	// Initialize logging subsystem for consistent logging
-	ctx = initializeLogging(ctx)
+	ctx = utils.InitializeLogging(ctx)
 
 	// Read Terraform plan data into the model
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -211,7 +212,7 @@ func (r *OUResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 	var data OUResourceModel
 
 	// Initialize logging subsystem for consistent logging
-	ctx = initializeLogging(ctx)
+	ctx = utils.InitializeLogging(ctx)
 
 	// Read Terraform prior state data into the model
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
@@ -263,7 +264,7 @@ func (r *OUResource) Update(ctx context.Context, req resource.UpdateRequest, res
 	var data OUResourceModel
 
 	// Initialize logging subsystem for consistent logging
-	ctx = initializeLogging(ctx)
+	ctx = utils.InitializeLogging(ctx)
 
 	// Read Terraform plan data into the model
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -343,7 +344,7 @@ func (r *OUResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 	var data OUResourceModel
 
 	// Initialize logging subsystem for consistent logging
-	ctx = initializeLogging(ctx)
+	ctx = utils.InitializeLogging(ctx)
 
 	// Read Terraform prior state data into the model
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)

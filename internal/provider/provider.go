@@ -32,10 +32,10 @@ var _ provider.ProviderWithConfigValidators = &ActiveDirectoryProvider{}
 
 // ActiveDirectoryProvider defines the provider implementation.
 type ActiveDirectoryProvider struct {
-	// version is set to the provider version on release, "dev" when the
+	// Version is set to the provider Version on release, "dev" when the
 	// provider is built and ran locally, and "test" when running acceptance
 	// testing.
-	version      string
+	Version      string
 	cacheManager *ldapclient.CacheManager
 }
 
@@ -79,11 +79,13 @@ type ActiveDirectoryProviderModel struct {
 	WarmCache types.Bool `tfsdk:"warm_cache"`
 }
 
+// Metadata returns the provider type name and version.
 func (p *ActiveDirectoryProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
 	resp.TypeName = "ad"
-	resp.Version = p.version
+	resp.Version = p.Version
 }
 
+// Schema defines the provider configuration schema.
 func (p *ActiveDirectoryProvider) Schema(ctx context.Context, req provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "The Active Directory provider enables management of Active Directory resources via LDAP/LDAPS. " +
@@ -269,7 +271,7 @@ func (p *ActiveDirectoryProvider) Configure(ctx context.Context, req provider.Co
 
 	// Log provider initialization
 	tflog.Info(ctx, "Configuring Active Directory provider", map[string]any{
-		"version": p.version,
+		"version": p.Version,
 	})
 
 	// Build configuration from provider config and environment variables
@@ -400,7 +402,7 @@ func (p *ActiveDirectoryProvider) Configure(ctx context.Context, req provider.Co
 func (p *ActiveDirectoryProvider) configureLogging(ctx context.Context) context.Context {
 	// Add persistent fields for all logs
 	ctx = tflog.SetField(ctx, "provider", "ad")
-	ctx = tflog.SetField(ctx, "provider_version", p.version)
+	ctx = tflog.SetField(ctx, "provider_version", p.Version)
 
 	tflog.Debug(ctx, "Active Directory provider logging configured")
 
@@ -563,14 +565,16 @@ func (p *ActiveDirectoryProvider) DataSources(ctx context.Context) []func() data
 
 func (p *ActiveDirectoryProvider) Functions(ctx context.Context) []func() function.Function {
 	return []func() function.Function{
-		// No provider functions defined yet
+		NewBuildHierarchyFunction,
+		NewNormalizeRolesFunction,
 	}
 }
 
+// New returns a factory function for creating new ActiveDirectoryProvider instances.
 func New(version string) func() provider.Provider {
 	return func() provider.Provider {
 		return &ActiveDirectoryProvider{
-			version:      version,
+			Version:      version,
 			cacheManager: nil, // Will be initialized during Configure()
 		}
 	}

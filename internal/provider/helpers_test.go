@@ -1,11 +1,10 @@
-package provider
+package provider_test
 
 import (
 	"context"
 	"fmt"
 	"log"
 	"os"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 
-	"github.com/isometry/terraform-provider-ad/internal/ldap"
+	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
 )
 
 // Test environment configuration constants.
@@ -110,8 +109,8 @@ func testAccPreCheckWithConfig(t *testing.T) *TestConfig {
 	return config
 }
 
-// TestProviderConfig generates provider configuration for tests.
-func TestProviderConfig() string {
+// testProviderConfig generates provider configuration for tests.
+func testProviderConfig() string {
 	config := GetTestConfig()
 
 	var providerConfig strings.Builder
@@ -136,8 +135,8 @@ func TestProviderConfig() string {
 	return providerConfig.String()
 }
 
-// TestDomainDataSource generates a data source for getting domain info.
-func TestDomainDataSource() string {
+// testDomainDataSource generates a data source for getting domain info.
+func testDomainDataSource() string {
 	return "data \"ad_domain\" \"test\" {}"
 }
 
@@ -220,7 +219,7 @@ resource "ad_ou" "test" {
 
 // TestFixture manages test fixtures for cleanup.
 type TestFixture struct {
-	client    ldap.Client
+	client    ldapclient.Client
 	resources []string
 	t         *testing.T
 }
@@ -230,7 +229,7 @@ func NewTestFixture(t *testing.T) *TestFixture {
 	config := testAccPreCheckWithConfig(t)
 
 	// Create LDAP client for cleanup operations
-	ldapConfig := &ldap.ConnectionConfig{
+	ldapConfig := &ldapclient.ConnectionConfig{
 		Domain:         config.Domain,
 		LDAPURLs:       []string{config.LDAPURL},
 		Username:       config.Username,
@@ -239,7 +238,7 @@ func NewTestFixture(t *testing.T) *TestFixture {
 		KerberosRealm:  config.Realm,
 	}
 
-	client, err := ldap.NewClient(ldapConfig)
+	client, err := ldapclient.NewClient(ldapConfig)
 	if err != nil {
 		t.Fatalf("Failed to create LDAP client for test fixture: %v", err)
 	}
@@ -274,8 +273,8 @@ func (f *TestFixture) Cleanup() {
 
 // Test check functions for acceptance tests
 
-// TestCheckGroupExists verifies that a group exists in AD.
-func TestCheckGroupExists(resourceName string) resource.TestCheckFunc {
+// testCheckGroupExists verifies that a group exists in AD.
+func testCheckGroupExists(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
@@ -291,7 +290,7 @@ func TestCheckGroupExists(resourceName string) resource.TestCheckFunc {
 		if config.LDAPURL != "" {
 			ldapURLs = []string{config.LDAPURL}
 		}
-		ldapConfig := &ldap.ConnectionConfig{
+		ldapConfig := &ldapclient.ConnectionConfig{
 			Domain:         config.Domain,
 			LDAPURLs:       ldapURLs,
 			Username:       config.Username,
@@ -300,15 +299,15 @@ func TestCheckGroupExists(resourceName string) resource.TestCheckFunc {
 			KerberosRealm:  config.Realm,
 		}
 
-		client, err := ldap.NewClient(ldapConfig)
+		client, err := ldapclient.NewClient(ldapConfig)
 		if err != nil {
 			return fmt.Errorf("failed to create LDAP client: %v", err)
 		}
 		defer client.Close()
 
 		ctx := context.Background()
-		cacheManager := ldap.NewCacheManager()
-		groupManager := ldap.NewGroupManager(ctx, client, config.BaseDN, cacheManager)
+		cacheManager := ldapclient.NewCacheManager()
+		groupManager := ldapclient.NewGroupManager(ctx, client, config.BaseDN, cacheManager)
 
 		// Try to read the group by GUID (stored in ID)
 		_, err = groupManager.GetGroup(rs.Primary.ID)
@@ -320,14 +319,14 @@ func TestCheckGroupExists(resourceName string) resource.TestCheckFunc {
 	}
 }
 
-// TestCheckGroupDestroy verifies that all test groups are destroyed.
-func TestCheckGroupDestroy(s *terraform.State) error {
+// testCheckGroupDestroy verifies that all test groups are destroyed.
+func testCheckGroupDestroy(s *terraform.State) error {
 	config := GetTestConfig()
 	ldapURLs := []string{}
 	if config.LDAPURL != "" {
 		ldapURLs = []string{config.LDAPURL}
 	}
-	ldapConfig := &ldap.ConnectionConfig{
+	ldapConfig := &ldapclient.ConnectionConfig{
 		Domain:         config.Domain,
 		LDAPURLs:       ldapURLs,
 		Username:       config.Username,
@@ -336,15 +335,15 @@ func TestCheckGroupDestroy(s *terraform.State) error {
 		KerberosRealm:  config.Realm,
 	}
 
-	client, err := ldap.NewClient(ldapConfig)
+	client, err := ldapclient.NewClient(ldapConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create LDAP client: %v", err)
 	}
 	defer client.Close()
 
 	ctx := context.Background()
-	cacheManager := ldap.NewCacheManager()
-	groupManager := ldap.NewGroupManager(ctx, client, config.BaseDN, cacheManager)
+	cacheManager := ldapclient.NewCacheManager()
+	groupManager := ldapclient.NewGroupManager(ctx, client, config.BaseDN, cacheManager)
 
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != "ad_group" {
@@ -358,7 +357,7 @@ func TestCheckGroupDestroy(s *terraform.State) error {
 		}
 
 		// Verify it's a "not found" error, not some other error
-		if !ldap.IsNotFoundError(err) {
+		if !ldapclient.IsNotFoundError(err) {
 			return fmt.Errorf("unexpected error checking group %s: %v", rs.Primary.ID, err)
 		}
 	}
@@ -366,8 +365,8 @@ func TestCheckGroupDestroy(s *terraform.State) error {
 	return nil
 }
 
-// TestCheckGroupDisappears manually deletes a group outside of Terraform.
-func TestCheckGroupDisappears(resourceName string) resource.TestCheckFunc {
+// testCheckGroupDisappears manually deletes a group outside of Terraform.
+func testCheckGroupDisappears(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
@@ -379,7 +378,7 @@ func TestCheckGroupDisappears(resourceName string) resource.TestCheckFunc {
 		if config.LDAPURL != "" {
 			ldapURLs = []string{config.LDAPURL}
 		}
-		ldapConfig := &ldap.ConnectionConfig{
+		ldapConfig := &ldapclient.ConnectionConfig{
 			Domain:         config.Domain,
 			LDAPURLs:       ldapURLs,
 			Username:       config.Username,
@@ -388,15 +387,15 @@ func TestCheckGroupDisappears(resourceName string) resource.TestCheckFunc {
 			KerberosRealm:  config.Realm,
 		}
 
-		client, err := ldap.NewClient(ldapConfig)
+		client, err := ldapclient.NewClient(ldapConfig)
 		if err != nil {
 			return fmt.Errorf("failed to create LDAP client: %v", err)
 		}
 		defer client.Close()
 
 		ctx := context.Background()
-		cacheManager := ldap.NewCacheManager()
-		groupManager := ldap.NewGroupManager(ctx, client, config.BaseDN, cacheManager)
+		cacheManager := ldapclient.NewCacheManager()
+		groupManager := ldapclient.NewGroupManager(ctx, client, config.BaseDN, cacheManager)
 
 		// Delete the group manually using its GUID
 		err = groupManager.DeleteGroup(rs.Primary.ID)
@@ -408,197 +407,11 @@ func TestCheckGroupDisappears(resourceName string) resource.TestCheckFunc {
 	}
 }
 
-// TestCheckOUExists verifies that an OU exists in AD.
-func TestCheckOUExists(resourceName string) resource.TestCheckFunc {
-	return func(s *terraform.State) error {
-		rs, ok := s.RootModule().Resources[resourceName]
-		if !ok {
-			return fmt.Errorf("resource not found: %s", resourceName)
-		}
-
-		if rs.Primary.ID == "" {
-			return fmt.Errorf("resource ID not set")
-		}
-
-		config := GetTestConfig()
-		ldapURLs := []string{}
-		if config.LDAPURL != "" {
-			ldapURLs = []string{config.LDAPURL}
-		}
-		ldapConfig := &ldap.ConnectionConfig{
-			Domain:         config.Domain,
-			LDAPURLs:       ldapURLs,
-			Username:       config.Username,
-			Password:       config.Password,
-			KerberosKeytab: config.Keytab,
-			KerberosRealm:  config.Realm,
-		}
-
-		client, err := ldap.NewClient(ldapConfig)
-		if err != nil {
-			return fmt.Errorf("failed to create LDAP client: %v", err)
-		}
-		defer client.Close()
-
-		ctx := context.Background()
-
-		// Try to read the OU by searching for its GUID
-		guidHandler := ldap.NewGUIDHandler()
-		guidFilter, err := guidHandler.GUIDToSearchFilter(rs.Primary.ID)
-		if err != nil {
-			return fmt.Errorf("invalid GUID format %s: %v", rs.Primary.ID, err)
-		}
-
-		req := &ldap.SearchRequest{
-			BaseDN:     config.BaseDN,
-			Scope:      ldap.ScopeWholeSubtree,
-			Filter:     guidFilter,
-			Attributes: []string{"objectGUID", "distinguishedName", "name", "description"},
-			SizeLimit:  1,
-		}
-
-		result, err := client.Search(ctx, req)
-		if err != nil {
-			return fmt.Errorf("OU %s does not exist: %v", rs.Primary.ID, err)
-		}
-
-		if len(result.Entries) == 0 {
-			return fmt.Errorf("OU %s not found", rs.Primary.ID)
-		}
-
-		return nil
-	}
-}
-
-// TestCheckOUDestroy verifies that all test OUs are destroyed.
-func TestCheckOUDestroy(s *terraform.State) error {
-	config := GetTestConfig()
-	ldapURLs := []string{}
-	if config.LDAPURL != "" {
-		ldapURLs = []string{config.LDAPURL}
-	}
-	ldapConfig := &ldap.ConnectionConfig{
-		Domain:         config.Domain,
-		LDAPURLs:       ldapURLs,
-		Username:       config.Username,
-		Password:       config.Password,
-		KerberosKeytab: config.Keytab,
-		KerberosRealm:  config.Realm,
-	}
-
-	client, err := ldap.NewClient(ldapConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create LDAP client: %v", err)
-	}
-	defer client.Close()
-
-	ctx := context.Background()
-
-	for _, rs := range s.RootModule().Resources {
-		if rs.Type != "ad_ou" {
-			continue
-		}
-
-		// Try to read the OU - it should not exist
-		guidHandler := ldap.NewGUIDHandler()
-		guidFilter, err := guidHandler.GUIDToSearchFilter(rs.Primary.ID)
-		if err != nil {
-			// If GUID format is invalid, skip this check
-			continue
-		}
-
-		req := &ldap.SearchRequest{
-			BaseDN:     config.BaseDN,
-			Scope:      ldap.ScopeWholeSubtree,
-			Filter:     guidFilter,
-			Attributes: []string{"objectGUID"},
-			SizeLimit:  1,
-		}
-
-		result, err := client.Search(ctx, req)
-		if err == nil && len(result.Entries) > 0 {
-			return fmt.Errorf("OU %s still exists", rs.Primary.ID)
-		}
-
-		// Verify it's a "not found" error, not some other error
-		if err != nil && !ldap.IsNotFoundError(err) {
-			return fmt.Errorf("unexpected error checking OU %s: %v", rs.Primary.ID, err)
-		}
-	}
-
-	return nil
-}
-
-// TestCheckGroupMembershipExists verifies that group membership exists.
-func TestCheckGroupMembershipExists(resourceName string) resource.TestCheckFunc {
-	return func(s *terraform.State) error {
-		rs, ok := s.RootModule().Resources[resourceName]
-		if !ok {
-			return fmt.Errorf("resource not found: %s", resourceName)
-		}
-
-		groupID := rs.Primary.Attributes["group_id"]
-		if groupID == "" {
-			return fmt.Errorf("group_id not set in resource %s", resourceName)
-		}
-
-		membersStr := rs.Primary.Attributes["members.#"]
-		if membersStr == "" {
-			return fmt.Errorf("members count not set in resource %s", resourceName)
-		}
-
-		memberCount, err := strconv.Atoi(membersStr)
-		if err != nil {
-			return fmt.Errorf("invalid members count: %v", err)
-		}
-
-		if memberCount == 0 {
-			return fmt.Errorf("no members found in group membership %s", resourceName)
-		}
-
-		config := GetTestConfig()
-		ldapURLs := []string{}
-		if config.LDAPURL != "" {
-			ldapURLs = []string{config.LDAPURL}
-		}
-		ldapConfig := &ldap.ConnectionConfig{
-			Domain:         config.Domain,
-			LDAPURLs:       ldapURLs,
-			Username:       config.Username,
-			Password:       config.Password,
-			KerberosKeytab: config.Keytab,
-			KerberosRealm:  config.Realm,
-		}
-
-		client, err := ldap.NewClient(ldapConfig)
-		if err != nil {
-			return fmt.Errorf("failed to create LDAP client: %v", err)
-		}
-		defer client.Close()
-
-		ctx := context.Background()
-		cacheManager := ldap.NewCacheManager()
-		membershipManager := ldap.NewGroupMembershipManager(ctx, client, config.BaseDN, cacheManager)
-
-		// Verify the group has the expected members
-		members, err := membershipManager.GetGroupMembers(groupID)
-		if err != nil {
-			return fmt.Errorf("failed to get group members: %v", err)
-		}
-
-		if len(members) != memberCount {
-			return fmt.Errorf("expected %d members, found %d", memberCount, len(members))
-		}
-
-		return nil
-	}
-}
-
 // Performance test utilities
 
 // BenchmarkHelper provides utilities for benchmarking operations.
 type BenchmarkHelper struct {
-	client ldap.Client
+	client ldapclient.Client
 	config *TestConfig
 }
 
@@ -611,7 +424,7 @@ func NewBenchmarkHelper(b *testing.B) *BenchmarkHelper {
 	if config.LDAPURL != "" {
 		ldapURLs = []string{config.LDAPURL}
 	}
-	ldapConfig := &ldap.ConnectionConfig{
+	ldapConfig := &ldapclient.ConnectionConfig{
 		Domain:         config.Domain,
 		LDAPURLs:       ldapURLs,
 		Username:       config.Username,
@@ -620,7 +433,7 @@ func NewBenchmarkHelper(b *testing.B) *BenchmarkHelper {
 		KerberosRealm:  config.Realm,
 	}
 
-	client, err := ldap.NewClient(ldapConfig)
+	client, err := ldapclient.NewClient(ldapConfig)
 	if err != nil {
 		b.Fatalf("Failed to create LDAP client: %v", err)
 	}
@@ -638,8 +451,8 @@ func (h *BenchmarkHelper) Close() error {
 
 // CreateTestGroups creates test groups for benchmarking.
 func (h *BenchmarkHelper) CreateTestGroups(ctx context.Context, count int) ([]string, error) {
-	cacheManager := ldap.NewCacheManager()
-	groupManager := ldap.NewGroupManager(context.Background(), h.client, h.config.BaseDN, cacheManager)
+	cacheManager := ldapclient.NewCacheManager()
+	groupManager := ldapclient.NewGroupManager(context.Background(), h.client, h.config.BaseDN, cacheManager)
 	groups := make([]string, 0, count)
 
 	for i := range count {
@@ -647,13 +460,13 @@ func (h *BenchmarkHelper) CreateTestGroups(ctx context.Context, count int) ([]st
 		samName := fmt.Sprintf("BenchGroup%d", i)
 		container := fmt.Sprintf("%s,%s", h.config.Container, h.config.BaseDN)
 
-		req := &ldap.CreateGroupRequest{
+		req := &ldapclient.CreateGroupRequest{
 			Name:           name,
 			SAMAccountName: samName,
 			Container:      container,
 			Description:    "",
-			Scope:          ldap.GroupScopeGlobal,
-			Category:       ldap.GroupCategorySecurity,
+			Scope:          ldapclient.GroupScopeGlobal,
+			Category:       ldapclient.GroupCategorySecurity,
 		}
 
 		group, err := groupManager.CreateGroup(req)
@@ -671,8 +484,8 @@ func (h *BenchmarkHelper) CreateTestGroups(ctx context.Context, count int) ([]st
 
 // CleanupTestGroups removes test groups.
 func (h *BenchmarkHelper) CleanupTestGroups(ctx context.Context, groupIDs []string) {
-	cacheManager := ldap.NewCacheManager()
-	groupManager := ldap.NewGroupManager(context.Background(), h.client, h.config.BaseDN, cacheManager)
+	cacheManager := ldapclient.NewCacheManager()
+	groupManager := ldapclient.NewGroupManager(context.Background(), h.client, h.config.BaseDN, cacheManager)
 
 	for _, groupID := range groupIDs {
 		if err := groupManager.DeleteGroup(groupID); err != nil {
@@ -692,19 +505,19 @@ func getEnvWithDefault(key, defaultValue string) string {
 
 // MockLDAPClient provides a mock LDAP client for unit testing.
 type MockLDAPClient struct {
-	groups       map[string]*ldap.Group
-	users        map[string]*ldap.User
-	ous          map[string]*ldap.OU
-	whoAmIResult *ldap.WhoAmIResult
+	groups       map[string]*ldapclient.Group
+	users        map[string]*ldapclient.User
+	ous          map[string]*ldapclient.OU
+	whoAmIResult *ldapclient.WhoAmIResult
 	err          error
 }
 
 // NewMockLDAPClient creates a new mock LDAP client.
 func NewMockLDAPClient() *MockLDAPClient {
 	return &MockLDAPClient{
-		groups: make(map[string]*ldap.Group),
-		users:  make(map[string]*ldap.User),
-		ous:    make(map[string]*ldap.OU),
+		groups: make(map[string]*ldapclient.Group),
+		users:  make(map[string]*ldapclient.User),
+		ous:    make(map[string]*ldapclient.OU),
 	}
 }
 
@@ -714,22 +527,22 @@ func (m *MockLDAPClient) SetError(err error) {
 }
 
 // AddMockGroup adds a mock group.
-func (m *MockLDAPClient) AddMockGroup(group *ldap.Group) {
+func (m *MockLDAPClient) AddMockGroup(group *ldapclient.Group) {
 	m.groups[group.ObjectGUID] = group
 }
 
 // AddMockUser adds a mock user.
-func (m *MockLDAPClient) AddMockUser(user *ldap.User) {
+func (m *MockLDAPClient) AddMockUser(user *ldapclient.User) {
 	m.users[user.ObjectGUID] = user
 }
 
 // AddMockOU adds a mock organizational unit.
-func (m *MockLDAPClient) AddMockOU(ou *ldap.OU) {
+func (m *MockLDAPClient) AddMockOU(ou *ldapclient.OU) {
 	m.ous[ou.ObjectGUID] = ou
 }
 
 // GetMockGroup retrieves a mock group by ID.
-func (m *MockLDAPClient) GetMockGroup(id string) (*ldap.Group, error) {
+func (m *MockLDAPClient) GetMockGroup(id string) (*ldapclient.Group, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -743,7 +556,7 @@ func (m *MockLDAPClient) GetMockGroup(id string) (*ldap.Group, error) {
 }
 
 // GetMockUser retrieves a mock user by ID.
-func (m *MockLDAPClient) GetMockUser(id string) (*ldap.User, error) {
+func (m *MockLDAPClient) GetMockUser(id string) (*ldapclient.User, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -757,7 +570,7 @@ func (m *MockLDAPClient) GetMockUser(id string) (*ldap.User, error) {
 }
 
 // GetMockOU retrieves a mock OU by ID.
-func (m *MockLDAPClient) GetMockOU(id string) (*ldap.OU, error) {
+func (m *MockLDAPClient) GetMockOU(id string) (*ldapclient.OU, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -771,12 +584,12 @@ func (m *MockLDAPClient) GetMockOU(id string) (*ldap.OU, error) {
 }
 
 // SetWhoAmIResult sets the WhoAmI result to be returned by the mock.
-func (m *MockLDAPClient) SetWhoAmIResult(result *ldap.WhoAmIResult) {
+func (m *MockLDAPClient) SetWhoAmIResult(result *ldapclient.WhoAmIResult) {
 	m.whoAmIResult = result
 }
 
 // WhoAmI returns the mock WhoAmI result.
-func (m *MockLDAPClient) WhoAmI(ctx context.Context) (*ldap.WhoAmIResult, error) {
+func (m *MockLDAPClient) WhoAmI(ctx context.Context) (*ldapclient.WhoAmIResult, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -801,31 +614,31 @@ func (m *MockLDAPClient) BindWithConfig(ctx context.Context) error {
 	return m.err
 }
 
-func (m *MockLDAPClient) Search(ctx context.Context, req *ldap.SearchRequest) (*ldap.SearchResult, error) {
+func (m *MockLDAPClient) Search(ctx context.Context, req *ldapclient.SearchRequest) (*ldapclient.SearchResult, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
 	// Return empty result for now
-	return &ldap.SearchResult{}, nil
+	return &ldapclient.SearchResult{}, nil
 }
 
-func (m *MockLDAPClient) SearchWithPaging(ctx context.Context, req *ldap.SearchRequest) (*ldap.SearchResult, error) {
+func (m *MockLDAPClient) SearchWithPaging(ctx context.Context, req *ldapclient.SearchRequest) (*ldapclient.SearchResult, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
 	// Return empty result for now
-	return &ldap.SearchResult{}, nil
+	return &ldapclient.SearchResult{}, nil
 }
 
-func (m *MockLDAPClient) Add(ctx context.Context, req *ldap.AddRequest) error {
+func (m *MockLDAPClient) Add(ctx context.Context, req *ldapclient.AddRequest) error {
 	return m.err
 }
 
-func (m *MockLDAPClient) Modify(ctx context.Context, req *ldap.ModifyRequest) error {
+func (m *MockLDAPClient) Modify(ctx context.Context, req *ldapclient.ModifyRequest) error {
 	return m.err
 }
 
-func (m *MockLDAPClient) ModifyDN(ctx context.Context, req *ldap.ModifyDNRequest) error {
+func (m *MockLDAPClient) ModifyDN(ctx context.Context, req *ldapclient.ModifyDNRequest) error {
 	return m.err
 }
 
@@ -837,8 +650,8 @@ func (m *MockLDAPClient) Ping(ctx context.Context) error {
 	return m.err
 }
 
-func (m *MockLDAPClient) Stats() ldap.PoolStats {
-	return ldap.PoolStats{}
+func (m *MockLDAPClient) Stats() ldapclient.PoolStats {
+	return ldapclient.PoolStats{}
 }
 
 func (m *MockLDAPClient) GetBaseDN(ctx context.Context) (string, error) {

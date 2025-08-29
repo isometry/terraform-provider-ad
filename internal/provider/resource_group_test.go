@@ -1,4 +1,4 @@
-package provider
+package provider_test
 
 import (
 	"fmt"
@@ -354,7 +354,7 @@ resource "ad_group" "test" {
   sam_account_name = %[2]q
   container        = "%[3]s,${data.ad_domain.test.dn}"
 }
-`, TestProviderConfig(), TestDomainDataSource(), name, samName, DefaultTestContainer)
+`, testProviderConfig(), testDomainDataSource(), name, samName, DefaultTestContainer)
 }
 
 func testAccGroupResourceConfig_withDescription(name, samName, description string) string {
@@ -369,7 +369,7 @@ resource "ad_group" "test" {
   container        = "%[4]s,${data.ad_domain.test.dn}"
   description      = %[3]q
 }
-`, TestProviderConfig(), TestDomainDataSource(), name, samName, description, DefaultTestContainer)
+`, testProviderConfig(), testDomainDataSource(), name, samName, description, DefaultTestContainer)
 }
 
 func testAccGroupResourceConfig_scopeCategory(name, samName, scope, category string) string {
@@ -385,7 +385,7 @@ resource "ad_group" "test" {
   scope            = %[3]q
   category         = %[4]q
 }
-`, TestProviderConfig(), TestDomainDataSource(), name, samName, scope, category, DefaultTestContainer)
+`, testProviderConfig(), testDomainDataSource(), name, samName, scope, category, DefaultTestContainer)
 }
 
 // Helper functions for import testing.
@@ -409,15 +409,15 @@ func testAccGroupImportStateIdFuncDN(s *terraform.State) (string, error) {
 
 // Helper functions for existence and destroy testing.
 func testAccCheckGroupExists(resourceName string) resource.TestCheckFunc {
-	return TestCheckGroupExists(resourceName)
+	return testCheckGroupExists(resourceName)
 }
 
 func testAccCheckGroupDestroy(s *terraform.State) error {
-	return TestCheckGroupDestroy(s)
+	return testCheckGroupDestroy(s)
 }
 
 func testAccCheckGroupDisappears(resourceName string) resource.TestCheckFunc {
-	return TestCheckGroupDisappears(resourceName)
+	return testCheckGroupDisappears(resourceName)
 }
 
 func TestAccGroupResource_containerMove(t *testing.T) {
@@ -541,7 +541,7 @@ resource "ad_group" "test" {
   sam_account_name = %[2]q
   container        = "%[3]s,${data.ad_domain.test.dn}"
 }
-`, TestProviderConfig(), TestDomainDataSource(), name, samName, container)
+`, testProviderConfig(), testDomainDataSource(), name, samName, container)
 }
 
 func testAccGroupResourceConfig_withContainerAndDescription(name, samName, container, description string) string {
@@ -556,7 +556,7 @@ resource "ad_group" "test" {
   container        = "%[3]s,${data.ad_domain.test.dn}"
   description      = %[4]q
 }
-`, TestProviderConfig(), TestDomainDataSource(), name, samName, container, description)
+`, testProviderConfig(), testDomainDataSource(), name, samName, container, description)
 }
 
 // Test helper to store the initial GUID for comparison.

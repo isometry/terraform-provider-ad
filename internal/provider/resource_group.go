@@ -22,12 +22,14 @@ import (
 	"github.com/isometry/terraform-provider-ad/internal/provider/planmodifiers"
 	customtypes "github.com/isometry/terraform-provider-ad/internal/provider/types"
 	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
+	"github.com/isometry/terraform-provider-ad/internal/utils"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &GroupResource{}
 var _ resource.ResourceWithImportState = &GroupResource{}
 
+// NewGroupResource creates a new instance of the group resource.
 func NewGroupResource() resource.Resource {
 	return &GroupResource{}
 }
@@ -169,7 +171,7 @@ func (r *GroupResource) Create(ctx context.Context, req resource.CreateRequest, 
 	var data GroupResourceModel
 
 	// Initialize logging subsystem for consistent logging
-	ctx = initializeLogging(ctx)
+	ctx = utils.InitializeLogging(ctx)
 
 	// Read Terraform plan data into the model
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -260,7 +262,7 @@ func (r *GroupResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	var data GroupResourceModel
 
 	// Initialize logging subsystem for consistent logging
-	ctx = initializeLogging(ctx)
+	ctx = utils.InitializeLogging(ctx)
 
 	// Read Terraform prior state data into the model
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
@@ -312,7 +314,7 @@ func (r *GroupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	var data GroupResourceModel
 
 	// Initialize logging subsystem for consistent logging
-	ctx = initializeLogging(ctx)
+	ctx = utils.InitializeLogging(ctx)
 
 	// Read Terraform plan data into the model
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -419,7 +421,7 @@ func (r *GroupResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	var data GroupResourceModel
 
 	// Initialize logging subsystem for consistent logging
-	ctx = initializeLogging(ctx)
+	ctx = utils.InitializeLogging(ctx)
 
 	// Read Terraform prior state data into the model
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)

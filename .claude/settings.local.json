@@ -22,7 +22,9 @@
       "WebFetch(domain:developer.hashicorp.com)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:pkg.go.dev)",
-      "WebSearch"
+      "WebSearch",
+      "mcp__gopls__go_diagnostics",
+      "mcp__gopls__go_file_context"
     ],
     "deny": [],
     "ask": []

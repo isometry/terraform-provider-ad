@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	"github.com/isometry/terraform-provider-ad/internal/utils"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -413,7 +414,7 @@ func (d *UserDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 	var data UserDataSourceModel
 
 	// Initialize logging subsystem for consistent logging
-	ctx = initializeLogging(ctx)
+	ctx = utils.InitializeLogging(ctx)
 
 	// Read Terraform configuration data into the model
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)

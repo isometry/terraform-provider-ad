@@ -18,6 +18,7 @@ import (
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
 	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
+	"github.com/isometry/terraform-provider-ad/internal/utils"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -185,7 +186,7 @@ func (d *OUDataSource) Read(ctx context.Context, req datasource.ReadRequest, res
 	var data OUDataSourceModel
 
 	// Initialize logging subsystem for consistent logging
-	ctx = initializeLogging(ctx)
+	ctx = utils.InitializeLogging(ctx)
 
 	// Read Terraform configuration data into the model
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)

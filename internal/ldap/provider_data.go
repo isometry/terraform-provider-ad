@@ -108,13 +108,13 @@ func (pd *ProviderData) GetClientStats() PoolStats {
 }
 
 // GetCombinedStats returns both cache and client statistics.
-func (pd *ProviderData) GetCombinedStats() map[string]interface{} {
-	stats := make(map[string]interface{})
+func (pd *ProviderData) GetCombinedStats() map[string]any {
+	stats := make(map[string]any)
 
 	// Add cache statistics
 	if pd.CacheManager != nil {
 		cacheStats := pd.CacheManager.GetStats()
-		stats["cache"] = map[string]interface{}{
+		stats["cache"] = map[string]any{
 			"hits":                   cacheStats.Hits,
 			"misses":                 cacheStats.Misses,
 			"entries":                cacheStats.Entries,
@@ -138,7 +138,7 @@ func (pd *ProviderData) GetCombinedStats() map[string]interface{} {
 	// Add client pool statistics
 	if pd.Client != nil {
 		poolStats := pd.Client.Stats()
-		stats["pool"] = map[string]interface{}{
+		stats["pool"] = map[string]any{
 			"total":          poolStats.Total,
 			"active":         poolStats.Active,
 			"idle":           poolStats.Idle,

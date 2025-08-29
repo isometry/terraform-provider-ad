@@ -572,7 +572,7 @@ func (cm *CacheManager) updateHitTime(duration time.Duration) {
 
 func (cm *CacheManager) countEntries() int64 {
 	count := int64(0)
-	cm.entries.Range(func(key, value interface{}) bool {
+	cm.entries.Range(func(key, value any) bool {
 		count++
 		return true
 	})
@@ -581,7 +581,7 @@ func (cm *CacheManager) countEntries() int64 {
 
 func (cm *CacheManager) countIndex(index *sync.Map) int64 {
 	count := int64(0)
-	index.Range(func(key, value interface{}) bool {
+	index.Range(func(key, value any) bool {
 		count++
 		return true
 	})
@@ -591,7 +591,7 @@ func (cm *CacheManager) countIndex(index *sync.Map) int64 {
 func (cm *CacheManager) estimateMemoryUsage() int64 {
 	totalSize := int64(0)
 
-	cm.entries.Range(func(key, value interface{}) bool {
+	cm.entries.Range(func(key, value any) bool {
 		entry, ok := value.(*LDAPCacheEntry)
 		if !ok {
 			return true
@@ -653,13 +653,13 @@ func (cm *CacheManager) cleanupOrphanedIndex(identifier, _ string) {
 }
 
 // GetMemoryStats returns Go runtime memory statistics along with cache stats.
-func (cm *CacheManager) GetMemoryStats() map[string]interface{} {
+func (cm *CacheManager) GetMemoryStats() map[string]any {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
 	cacheStats := cm.GetStats()
 
-	return map[string]interface{}{
+	return map[string]any{
 		"cache_estimated_bytes": cacheStats.EstimatedMemoryBytes,
 		"cache_entries":         cacheStats.Entries,
 		"go_alloc_bytes":        m.Alloc,

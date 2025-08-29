@@ -96,8 +96,8 @@ func (v dnWithNegationValidator) ValidateString(ctx context.Context, request val
 
 	// Check for negation prefix
 	dnValue := value
-	if strings.HasPrefix(value, "!") {
-		dnValue = strings.TrimPrefix(value, "!")
+	if after, ok := strings.CutPrefix(value, "!"); ok {
+		dnValue = after
 		// Check if after removing "!", we still have content
 		if dnValue == "" {
 			response.Diagnostics.AddAttributeError(

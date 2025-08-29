@@ -1,4 +1,4 @@
-package provider
+package provider_test
 
 import (
 	"context"
@@ -8,11 +8,13 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+
+	this "github.com/isometry/terraform-provider-ad/internal/provider"
 )
 
 // TestProviderMetadata tests the provider metadata.
 func TestProviderMetadata(t *testing.T) {
-	p := &ActiveDirectoryProvider{version: "test"}
+	p := &this.ActiveDirectoryProvider{Version: "test"}
 
 	req := provider.MetadataRequest{}
 	resp := &provider.MetadataResponse{}
@@ -30,7 +32,7 @@ func TestProviderMetadata(t *testing.T) {
 
 // TestProviderSchema tests the provider schema.
 func TestProviderSchema(t *testing.T) {
-	p := &ActiveDirectoryProvider{}
+	p := &this.ActiveDirectoryProvider{}
 
 	req := provider.SchemaRequest{}
 	resp := &provider.SchemaResponse{}
@@ -61,7 +63,7 @@ func TestProviderSchema(t *testing.T) {
 
 // TestProviderResources tests the provider resources.
 func TestProviderResources(t *testing.T) {
-	p := &ActiveDirectoryProvider{}
+	p := &this.ActiveDirectoryProvider{}
 
 	resources := p.Resources(context.Background())
 
@@ -86,7 +88,7 @@ func TestProviderResources(t *testing.T) {
 
 // TestProviderDataSources tests the provider data sources.
 func TestProviderDataSources(t *testing.T) {
-	p := &ActiveDirectoryProvider{}
+	p := &this.ActiveDirectoryProvider{}
 
 	dataSources := p.DataSources(context.Background())
 
@@ -114,7 +116,7 @@ func TestProviderDataSources(t *testing.T) {
 
 // TestProviderConfigValidators tests the provider config validators.
 func TestProviderConfigValidators(t *testing.T) {
-	p := &ActiveDirectoryProvider{}
+	p := &this.ActiveDirectoryProvider{}
 
 	validators := p.ConfigValidators(context.Background())
 
@@ -132,19 +134,27 @@ func TestProviderConfigValidators(t *testing.T) {
 
 // TestProviderFunctions tests the provider functions.
 func TestProviderFunctions(t *testing.T) {
-	p := &ActiveDirectoryProvider{}
+	p := &this.ActiveDirectoryProvider{}
 
 	functions := p.Functions(context.Background())
 
-	// AD provider currently has no functions defined
-	if len(functions) != 0 {
-		t.Errorf("Expected 0 functions, got %d", len(functions))
+	// AD provider has 2 functions: build_hierarchy, normalize_roles
+	if len(functions) != 2 {
+		t.Errorf("Expected 2 functions, got %d", len(functions))
+	}
+
+	// Test that the function can be instantiated
+	if len(functions) > 0 {
+		fn := functions[0]()
+		if fn == nil {
+			t.Error("Function factory returned nil")
+		}
 	}
 }
 
 // TestProviderEphemeralResources tests the provider ephemeral resources.
 func TestProviderEphemeralResources(t *testing.T) {
-	p := &ActiveDirectoryProvider{}
+	p := &this.ActiveDirectoryProvider{}
 
 	ephemeralResources := p.EphemeralResources(context.Background())
 
@@ -180,7 +190,7 @@ func TestNewProvider(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			providerFunc := New(tc.version)
+			providerFunc := this.New(tc.version)
 			if providerFunc == nil {
 				t.Fatal("New() returned nil")
 			}
@@ -190,13 +200,13 @@ func TestNewProvider(t *testing.T) {
 				t.Fatal("Provider function returned nil")
 			}
 
-			adProvider, ok := provider.(*ActiveDirectoryProvider)
+			adProvider, ok := provider.(*this.ActiveDirectoryProvider)
 			if !ok {
 				t.Fatal("Provider is not of type *ActiveDirectoryProvider")
 			}
 
-			if adProvider.version != tc.version {
-				t.Errorf("Expected version %s, got %s", tc.version, adProvider.version)
+			if adProvider.Version != tc.version {
+				t.Errorf("Expected version %s, got %s", tc.version, adProvider.Version)
 			}
 		})
 	}
@@ -204,7 +214,7 @@ func TestNewProvider(t *testing.T) {
 
 // TestProviderServer tests provider server creation.
 func TestProviderServer(t *testing.T) {
-	providerFunc := New("test")
+	providerFunc := this.New("test")
 
 	serverFactory := providerserver.NewProtocol6WithError(providerFunc())
 	if serverFactory == nil {
@@ -288,7 +298,7 @@ provider "ad" {
 		t.Run(tc.name, func(t *testing.T) {
 			resource.Test(t, resource.TestCase{
 				ProtoV6ProviderFactories: map[string]func() (tfprotov6.ProviderServer, error){
-					"ad": providerserver.NewProtocol6WithError(New("test")()),
+					"ad": providerserver.NewProtocol6WithError(this.New("test")()),
 				},
 				Steps: []resource.TestStep{
 					{
@@ -325,7 +335,7 @@ func TestProviderEnvironmentVariables(t *testing.T) {
 	}
 
 	// Test that environment variables are documented
-	p := &ActiveDirectoryProvider{}
+	p := &this.ActiveDirectoryProvider{}
 	req := provider.SchemaRequest{}
 	resp := &provider.SchemaResponse{}
 

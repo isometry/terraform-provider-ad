@@ -1,4 +1,4 @@
-package provider
+package provider_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	"github.com/isometry/terraform-provider-ad/internal/provider"
 )
 
 // Helper function to create a proper datasource.ReadRequest for data sources with no configuration.
@@ -29,7 +30,7 @@ func createReadRequest(dataSource datasource.DataSource) datasource.ReadRequest 
 }
 
 func TestWhoAmIDataSource_Schema(t *testing.T) {
-	dataSource := NewWhoAmIDataSource()
+	dataSource := provider.NewWhoAmIDataSource()
 
 	req := datasource.SchemaRequest{}
 	resp := &datasource.SchemaResponse{}
@@ -48,7 +49,7 @@ func TestWhoAmIDataSource_Schema(t *testing.T) {
 }
 
 func TestWhoAmIDataSource_Configure(t *testing.T) {
-	dataSource := &WhoAmIDataSource{}
+	dataSource := &provider.WhoAmIDataSource{}
 	mockClient := NewMockLDAPClient()
 	providerData := &ldapclient.ProviderData{
 		Client:       mockClient,
@@ -63,11 +64,11 @@ func TestWhoAmIDataSource_Configure(t *testing.T) {
 	dataSource.Configure(context.Background(), req, resp)
 
 	assert.False(t, resp.Diagnostics.HasError())
-	assert.Equal(t, mockClient, dataSource.client)
+	assert.Equal(t, mockClient, dataSource.Client)
 }
 
 func TestWhoAmIDataSource_Configure_WrongType(t *testing.T) {
-	dataSource := &WhoAmIDataSource{}
+	dataSource := &provider.WhoAmIDataSource{}
 
 	req := datasource.ConfigureRequest{
 		ProviderData: "not a client",
@@ -81,9 +82,9 @@ func TestWhoAmIDataSource_Configure_WrongType(t *testing.T) {
 }
 
 func TestWhoAmIDataSource_Read(t *testing.T) {
-	dataSource := &WhoAmIDataSource{}
+	dataSource := &provider.WhoAmIDataSource{}
 	mockClient := NewMockLDAPClient()
-	dataSource.client = mockClient
+	dataSource.Client = mockClient
 
 	whoAmIResult := &ldapclient.WhoAmIResult{
 		AuthzID: "u:CN=John Doe,CN=Users,DC=example,DC=com",
@@ -115,7 +116,7 @@ func TestWhoAmIDataSource_Read(t *testing.T) {
 	assert.False(t, resp.Diagnostics.HasError())
 
 	// Verify the result was set correctly
-	var data WhoAmIDataSourceModel
+	var data provider.WhoAmIDataSourceModel
 	resp.State.Get(context.Background(), &data)
 
 	assert.Equal(t, "u:CN=John Doe,CN=Users,DC=example,DC=com", data.ID.ValueString())
@@ -123,9 +124,9 @@ func TestWhoAmIDataSource_Read(t *testing.T) {
 }
 
 func TestWhoAmIDataSource_Read_WhoAmI_Error(t *testing.T) {
-	dataSource := &WhoAmIDataSource{}
+	dataSource := &provider.WhoAmIDataSource{}
 	mockClient := NewMockLDAPClient()
-	dataSource.client = mockClient
+	dataSource.Client = mockClient
 
 	mockClient.SetError(assert.AnError)
 
@@ -150,9 +151,9 @@ func TestWhoAmIDataSource_Read_WhoAmI_Error(t *testing.T) {
 }
 
 func TestWhoAmIDataSource_Read_Nil_Result(t *testing.T) {
-	dataSource := &WhoAmIDataSource{}
+	dataSource := &provider.WhoAmIDataSource{}
 	mockClient := NewMockLDAPClient()
-	dataSource.client = mockClient
+	dataSource.Client = mockClient
 
 	mockClient.SetWhoAmIResult(nil)
 

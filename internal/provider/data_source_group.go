@@ -17,12 +17,14 @@ import (
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
 	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
+	"github.com/isometry/terraform-provider-ad/internal/utils"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ datasource.DataSource = &GroupDataSource{}
 var _ datasource.DataSourceWithConfigValidators = &GroupDataSource{}
 
+// NewGroupDataSource creates a new instance of the group data source.
 func NewGroupDataSource() datasource.DataSource {
 	return &GroupDataSource{}
 }
@@ -241,7 +243,7 @@ func (d *GroupDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	var data GroupDataSourceModel
 
 	// Initialize logging subsystem for consistent logging
-	ctx = initializeLogging(ctx)
+	ctx = utils.InitializeLogging(ctx)
 
 	// Read Terraform configuration data into the model
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)

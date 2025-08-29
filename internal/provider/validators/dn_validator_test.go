@@ -1,4 +1,4 @@
-package validators
+package validators_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
 )
 
 func TestDNValidator(t *testing.T) {
@@ -78,7 +79,7 @@ func TestDNValidator(t *testing.T) {
 			}
 			response := validator.StringResponse{}
 
-			IsValidDN().ValidateString(context.Background(), request, &response)
+			validators.IsValidDN().ValidateString(context.Background(), request, &response)
 
 			if !response.Diagnostics.HasError() && test.expectError {
 				t.Fatal("expected error, got no error")
@@ -110,7 +111,7 @@ func TestDNValidator(t *testing.T) {
 }
 
 func TestDNValidatorDescription(t *testing.T) {
-	validator := IsValidDN()
+	validator := validators.IsValidDN()
 
 	expected := "value must be a valid Distinguished Name (DN)"
 	if validator.Description(context.Background()) != expected {

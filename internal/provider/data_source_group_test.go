@@ -1,4 +1,4 @@
-package provider
+package provider_test
 
 import (
 	"fmt"
@@ -398,5 +398,5 @@ data "ad_group" "test" {
 
 // Helper function to get provider configuration for tests.
 func testAccProviderConfig() string {
-	return TestProviderConfig() + "\n\n" + TestDomainDataSource()
+	return testProviderConfig() + "\n\n" + testDomainDataSource()
 }

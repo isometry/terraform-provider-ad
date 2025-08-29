@@ -16,6 +16,7 @@ import (
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
 	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
+	"github.com/isometry/terraform-provider-ad/internal/utils"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -252,7 +253,7 @@ func (d *GroupsDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 	var data GroupsDataSourceModel
 
 	// Initialize logging subsystem for consistent logging
-	ctx = initializeLogging(ctx)
+	ctx = utils.InitializeLogging(ctx)
 
 	// Read Terraform configuration data into the model
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
@@ -380,7 +381,6 @@ func (d *GroupsDataSource) mapGroupsToModel(ctx context.Context, groups []*ldapc
 			"sam_account_name": types.StringType,
 			"scope":            types.StringType,
 			"category":         types.StringType,
-			"group_type":       types.Int64Type,
 			"sid":              types.StringType,
 			"member_count":     types.Int64Type,
 		},

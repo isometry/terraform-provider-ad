@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	"github.com/isometry/terraform-provider-ad/internal/utils"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -22,6 +23,7 @@ var _ resource.Resource = &GroupMembershipResource{}
 var _ resource.ResourceWithImportState = &GroupMembershipResource{}
 var _ resource.ResourceWithModifyPlan = &GroupMembershipResource{}
 
+// NewGroupMembershipResource creates a new instance of the group membership resource.
 func NewGroupMembershipResource() resource.Resource {
 	return &GroupMembershipResource{}
 }
@@ -225,7 +227,7 @@ func (r *GroupMembershipResource) Create(ctx context.Context, req resource.Creat
 	var data GroupMembershipResourceModel
 
 	// Initialize logging subsystem for consistent logging
-	ctx = initializeLogging(ctx)
+	ctx = utils.InitializeLogging(ctx)
 
 	// Read Terraform plan data into the model
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -286,7 +288,7 @@ func (r *GroupMembershipResource) Read(ctx context.Context, req resource.ReadReq
 	var data GroupMembershipResourceModel
 
 	// Initialize logging subsystem for consistent logging
-	ctx = initializeLogging(ctx)
+	ctx = utils.InitializeLogging(ctx)
 
 	// Read Terraform prior state data into the model
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
@@ -347,7 +349,7 @@ func (r *GroupMembershipResource) Update(ctx context.Context, req resource.Updat
 	var data GroupMembershipResourceModel
 
 	// Initialize logging subsystem for consistent logging
-	ctx = initializeLogging(ctx)
+	ctx = utils.InitializeLogging(ctx)
 
 	// Read Terraform plan data into the model
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
@@ -405,7 +407,7 @@ func (r *GroupMembershipResource) Delete(ctx context.Context, req resource.Delet
 	var data GroupMembershipResourceModel
 
 	// Initialize logging subsystem for consistent logging
-	ctx = initializeLogging(ctx)
+	ctx = utils.InitializeLogging(ctx)
 
 	// Read Terraform prior state data into the model
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
