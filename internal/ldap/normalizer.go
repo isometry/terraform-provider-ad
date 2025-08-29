@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-ldap/ldap/v3"
@@ -21,13 +20,6 @@ const (
 	IdentifierTypeSID                    // Security Identifier
 	IdentifierTypeUPN                    // User Principal Name
 	IdentifierTypeSAM                    // SAM Account Name (DOMAIN\username)
-)
-
-// Member normalizer configuration.
-const (
-	// DefaultNormalizerCacheSize is the default maximum number of cached normalization entries.
-	// This prevents unbounded memory growth while providing good cache hit rates.
-	DefaultNormalizerCacheSize = 1000
 )
 
 // String returns the string representation of the identifier type.
@@ -63,55 +55,24 @@ var (
 	samRegex = regexp.MustCompile(`^([^\\@\s]+\\)?[^\\@\s]+$`)
 )
 
-// CacheEntry represents a cached normalization result.
-type CacheEntry struct {
-	DN        string
-	Timestamp time.Time
-	TTL       time.Duration
-}
-
-// IsExpired checks if the cache entry has expired.
-func (c *CacheEntry) IsExpired() bool {
-	return time.Since(c.Timestamp) > c.TTL
-}
-
 // MemberNormalizer handles normalization of various identifier formats to Distinguished Names.
 type MemberNormalizer struct {
-	client      Client
-	guidHandler *GUIDHandler
-	baseDN      string
-
-	// Caching for performance optimization
-	cache    map[string]*CacheEntry
-	cacheMu  sync.RWMutex
-	cacheTTL time.Duration
-
-	// Configuration
-	maxCacheSize int
+	client       Client
+	guidHandler  *GUIDHandler
+	baseDN       string
+	cacheManager *CacheManager // Reference to shared cache
 	timeout      time.Duration
 }
 
 // NewMemberNormalizer creates a new member identifier normalizer.
-func NewMemberNormalizer(client Client, baseDN string) *MemberNormalizer {
+func NewMemberNormalizer(client Client, baseDN string, cacheManager *CacheManager) *MemberNormalizer {
 	return &MemberNormalizer{
 		client:       client,
 		guidHandler:  NewGUIDHandler(),
 		baseDN:       baseDN,
-		cache:        make(map[string]*CacheEntry),
-		cacheTTL:     15 * time.Minute,           // Cache results for 15 minutes
-		maxCacheSize: DefaultNormalizerCacheSize, // Maximum cache entries
-		timeout:      30 * time.Second,           // LDAP operation timeout
+		cacheManager: cacheManager, // Use shared cache
+		timeout:      30 * time.Second,
 	}
-}
-
-// SetCacheTTL sets the cache time-to-live duration.
-func (m *MemberNormalizer) SetCacheTTL(ttl time.Duration) {
-	m.cacheTTL = ttl
-}
-
-// SetMaxCacheSize sets the maximum number of cache entries.
-func (m *MemberNormalizer) SetMaxCacheSize(size int) {
-	m.maxCacheSize = size
 }
 
 // SetTimeout sets the LDAP operation timeout.
@@ -164,8 +125,10 @@ func (m *MemberNormalizer) NormalizeToDN(identifier string) (string, error) {
 	identifier = strings.TrimSpace(identifier)
 
 	// Check cache first
-	if dn, found := m.getCachedDN(identifier); found {
-		return dn, nil
+	if m.cacheManager != nil {
+		if cachedEntry, found := m.cacheManager.Get(identifier); found {
+			return cachedEntry.DN, nil
+		}
 	}
 
 	// Detect identifier type
@@ -201,7 +164,15 @@ func (m *MemberNormalizer) NormalizeToDN(identifier string) (string, error) {
 	}
 
 	// Cache the result
-	m.cacheDN(identifier, normalizedDN)
+	if m.cacheManager != nil {
+		cacheEntry := &LDAPCacheEntry{
+			DN:         normalizedDN,
+			ObjectGUID: "", // Will be set from LDAP response if available
+			ObjectSID:  "", // Will be set from LDAP response if available
+			Attributes: make(map[string][]string),
+		}
+		_ = m.cacheManager.Put(cacheEntry) // Ignore cache errors - they're not critical
+	}
 
 	return normalizedDN, nil
 }
@@ -216,16 +187,26 @@ func (m *MemberNormalizer) NormalizeToDNBatch(identifiers []string) (map[string]
 	uncached := make([]string, 0)
 
 	// Check cache for all identifiers first
-	for _, identifier := range identifiers {
-		if identifier == "" {
-			continue
-		}
+	if m.cacheManager != nil {
+		for _, identifier := range identifiers {
+			if identifier == "" {
+				continue
+			}
 
-		identifier = strings.TrimSpace(identifier)
-		if dn, found := m.getCachedDN(identifier); found {
-			results[identifier] = dn
-		} else {
-			uncached = append(uncached, identifier)
+			identifier = strings.TrimSpace(identifier)
+			if cachedEntry, found := m.cacheManager.Get(identifier); found {
+				results[identifier] = cachedEntry.DN
+			} else {
+				uncached = append(uncached, identifier)
+			}
+		}
+	} else {
+		// No cache available, all identifiers need processing
+		for _, identifier := range identifiers {
+			if identifier == "" {
+				continue
+			}
+			uncached = append(uncached, strings.TrimSpace(identifier))
 		}
 	}
 
@@ -283,6 +264,15 @@ func (m *MemberNormalizer) validateDN(dn string) (string, error) {
 		return "", fmt.Errorf("failed to normalize canonical DN case: %w", err)
 	}
 
+	// Cache the validated DN result
+	if m.cacheManager != nil {
+		cacheEntry := &LDAPCacheEntry{
+			DN:         normalizedCanonicalDN,
+			Attributes: make(map[string][]string),
+		}
+		_ = m.cacheManager.Put(cacheEntry) // Ignore cache errors - they're not critical
+	}
+
 	return normalizedCanonicalDN, nil
 }
 
@@ -317,6 +307,16 @@ func (m *MemberNormalizer) resolveGUIDToDN(guid string) (string, error) {
 	normalizedDN, err := NormalizeDNCase(dn)
 	if err != nil {
 		return "", fmt.Errorf("failed to normalize DN case for GUID %s: %w", guid, err)
+	}
+
+	// Cache the result with GUID for future lookups
+	if m.cacheManager != nil {
+		cacheEntry := &LDAPCacheEntry{
+			DN:         normalizedDN,
+			ObjectGUID: guid,
+			Attributes: make(map[string][]string),
+		}
+		_ = m.cacheManager.Put(cacheEntry) // Ignore cache errors - they're not critical
 	}
 
 	return normalizedDN, nil
@@ -357,6 +357,16 @@ func (m *MemberNormalizer) resolveSIDToDN(sid string) (string, error) {
 		return "", fmt.Errorf("failed to normalize DN case for SID %s: %w", sid, err)
 	}
 
+	// Cache the result with SID for future lookups
+	if m.cacheManager != nil {
+		cacheEntry := &LDAPCacheEntry{
+			DN:         normalizedDN,
+			ObjectSID:  sid,
+			Attributes: make(map[string][]string),
+		}
+		_ = m.cacheManager.Put(cacheEntry) // Ignore cache errors - they're not critical
+	}
+
 	return normalizedDN, nil
 }
 
@@ -393,6 +403,17 @@ func (m *MemberNormalizer) resolveUPNToDN(upn string) (string, error) {
 	normalizedDN, err := NormalizeDNCase(dn)
 	if err != nil {
 		return "", fmt.Errorf("failed to normalize DN case for UPN %s: %w", upn, err)
+	}
+
+	// Cache the result with UPN for future lookups
+	if m.cacheManager != nil {
+		cacheEntry := &LDAPCacheEntry{
+			DN: normalizedDN,
+			Attributes: map[string][]string{
+				"userPrincipalName": {upn},
+			},
+		}
+		_ = m.cacheManager.Put(cacheEntry) // Ignore cache errors - they're not critical
 	}
 
 	return normalizedDN, nil
@@ -442,103 +463,18 @@ func (m *MemberNormalizer) resolveSAMToDN(sam string) (string, error) {
 		return "", fmt.Errorf("failed to normalize DN case for SAM %s: %w", sam, err)
 	}
 
+	// Cache the result with SAM for future lookups
+	if m.cacheManager != nil {
+		cacheEntry := &LDAPCacheEntry{
+			DN: normalizedDN,
+			Attributes: map[string][]string{
+				"sAMAccountName": {username},
+			},
+		}
+		_ = m.cacheManager.Put(cacheEntry) // Ignore cache errors - they're not critical
+	}
+
 	return normalizedDN, nil
-}
-
-// getCachedDN retrieves a DN from cache if available and not expired.
-func (m *MemberNormalizer) getCachedDN(identifier string) (string, bool) {
-	m.cacheMu.RLock()
-	defer m.cacheMu.RUnlock()
-
-	entry, exists := m.cache[identifier]
-	if !exists {
-		return "", false
-	}
-
-	if entry.IsExpired() {
-		// Entry expired, remove it
-		go m.removeExpiredEntry(identifier)
-		return "", false
-	}
-
-	return entry.DN, true
-}
-
-// cacheDN stores a DN in cache.
-func (m *MemberNormalizer) cacheDN(identifier, dn string) {
-	m.cacheMu.Lock()
-	defer m.cacheMu.Unlock()
-
-	// Check if cache is full
-	if len(m.cache) >= m.maxCacheSize {
-		m.evictOldestEntry()
-	}
-
-	m.cache[identifier] = &CacheEntry{
-		DN:        dn,
-		Timestamp: time.Now(),
-		TTL:       m.cacheTTL,
-	}
-}
-
-// removeExpiredEntry removes an expired entry from cache.
-func (m *MemberNormalizer) removeExpiredEntry(identifier string) {
-	m.cacheMu.Lock()
-	defer m.cacheMu.Unlock()
-
-	if entry, exists := m.cache[identifier]; exists && entry.IsExpired() {
-		delete(m.cache, identifier)
-	}
-}
-
-// evictOldestEntry removes the oldest entry from cache to make room for new ones.
-func (m *MemberNormalizer) evictOldestEntry() {
-	var oldestKey string
-	var oldestTime time.Time
-
-	first := true
-	for key, entry := range m.cache {
-		if first || entry.Timestamp.Before(oldestTime) {
-			oldestKey = key
-			oldestTime = entry.Timestamp
-			first = false
-		}
-	}
-
-	if oldestKey != "" {
-		delete(m.cache, oldestKey)
-	}
-}
-
-// ClearCache removes all entries from the cache.
-func (m *MemberNormalizer) ClearCache() {
-	m.cacheMu.Lock()
-	defer m.cacheMu.Unlock()
-
-	m.cache = make(map[string]*CacheEntry)
-}
-
-// CacheStats returns statistics about the cache.
-func (m *MemberNormalizer) CacheStats() map[string]any {
-	m.cacheMu.RLock()
-	defer m.cacheMu.RUnlock()
-
-	total := len(m.cache)
-	expired := 0
-
-	for _, entry := range m.cache {
-		if entry.IsExpired() {
-			expired++
-		}
-	}
-
-	return map[string]any{
-		"total_entries":   total,
-		"expired_entries": expired,
-		"active_entries":  total - expired,
-		"max_size":        m.maxCacheSize,
-		"cache_ttl":       m.cacheTTL.String(),
-	}
 }
 
 // ValidateIdentifier checks if an identifier is valid and can be normalized.

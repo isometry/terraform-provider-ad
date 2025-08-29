@@ -126,25 +126,27 @@ type UpdateGroupRequest struct {
 
 // GroupManager handles Active Directory group operations.
 type GroupManager struct {
-	ctx         context.Context
-	client      Client
-	guidHandler *GUIDHandler
-	sidHandler  *SIDHandler
-	normalizer  *MemberNormalizer
-	baseDN      string
-	timeout     time.Duration
+	ctx          context.Context
+	client       Client
+	guidHandler  *GUIDHandler
+	sidHandler   *SIDHandler
+	normalizer   *MemberNormalizer
+	baseDN       string
+	timeout      time.Duration
+	cacheManager *CacheManager // Reference to shared cache
 }
 
 // NewGroupManager creates a new group manager instance.
-func NewGroupManager(ctx context.Context, client Client, baseDN string) *GroupManager {
+func NewGroupManager(ctx context.Context, client Client, baseDN string, cacheManager *CacheManager) *GroupManager {
 	return &GroupManager{
-		ctx:         ctx,
-		client:      client,
-		guidHandler: NewGUIDHandler(),
-		sidHandler:  NewSIDHandler(),
-		normalizer:  NewMemberNormalizer(client, baseDN),
-		baseDN:      baseDN,
-		timeout:     30 * time.Second,
+		ctx:          ctx,
+		client:       client,
+		guidHandler:  NewGUIDHandler(),
+		sidHandler:   NewSIDHandler(),
+		normalizer:   NewMemberNormalizer(client, baseDN, cacheManager),
+		baseDN:       baseDN,
+		timeout:      30 * time.Second,
+		cacheManager: cacheManager,
 	}
 }
 

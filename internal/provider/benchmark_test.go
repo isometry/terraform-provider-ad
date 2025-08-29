@@ -21,7 +21,7 @@ func BenchmarkGroupSearch(b *testing.B) {
 	defer helper.Close()
 
 	ctx := context.Background()
-	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN)
+	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldap.NewCacheManager())
 
 	// Create test groups
 	testGroups, err := helper.CreateTestGroups(ctx, 100)
@@ -79,7 +79,7 @@ func BenchmarkGroupMembership(b *testing.B) {
 	defer helper.CleanupTestGroups(ctx, memberGroups)
 
 	// Convert member group IDs to DNs
-	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN)
+	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldap.NewCacheManager())
 	memberDNs := make([]string, len(memberGroups))
 	for i, groupID := range memberGroups {
 		group, err := groupManager.GetGroup(groupID)
@@ -91,7 +91,7 @@ func BenchmarkGroupMembership(b *testing.B) {
 
 	// Add members to first test group
 	mainGroupID := testGroups[0]
-	membershipManager := ldap.NewGroupMembershipManager(ctx, helper.client, helper.config.BaseDN)
+	membershipManager := ldap.NewGroupMembershipManager(ctx, helper.client, helper.config.BaseDN, ldap.NewCacheManager())
 	err = membershipManager.SetGroupMembers(mainGroupID, memberDNs)
 	if err != nil {
 		b.Fatalf("Failed to set members: %v", err)
@@ -140,7 +140,7 @@ func BenchmarkUserSearch(b *testing.B) {
 	defer helper.Close()
 
 	ctx := context.Background()
-	userReader := ldap.NewUserReader(ctx, helper.client, helper.config.BaseDN)
+	userReader := ldap.NewUserReader(ctx, helper.client, helper.config.BaseDN, ldap.NewCacheManager())
 
 	b.ResetTimer()
 
@@ -260,7 +260,7 @@ func BenchmarkNormalizer(b *testing.B) {
 	defer helper.Close()
 
 	ctx := context.Background()
-	normalizer := ldap.NewMemberNormalizer(helper.client, helper.config.BaseDN)
+	normalizer := ldap.NewMemberNormalizer(helper.client, helper.config.BaseDN, ldap.NewCacheManager())
 
 	// Create a test group to get its various identifiers
 	testGroups, err := helper.CreateTestGroups(ctx, 1)
@@ -269,7 +269,7 @@ func BenchmarkNormalizer(b *testing.B) {
 	}
 	defer helper.CleanupTestGroups(ctx, testGroups)
 
-	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN)
+	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldap.NewCacheManager())
 	group, err := groupManager.GetGroup(testGroups[0])
 	if err != nil {
 		b.Fatalf("Failed to get test group: %v", err)
@@ -317,7 +317,7 @@ func BenchmarkMemoryUsage(b *testing.B) {
 	defer helper.Close()
 
 	ctx := context.Background()
-	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN)
+	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldap.NewCacheManager())
 
 	// Create a large number of test groups
 	testGroups, err := helper.CreateTestGroups(ctx, 500)
@@ -359,7 +359,7 @@ func BenchmarkErrorHandling(b *testing.B) {
 	defer helper.Close()
 
 	ctx := context.Background()
-	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN)
+	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldap.NewCacheManager())
 
 	b.ResetTimer()
 
@@ -397,7 +397,7 @@ func BenchmarkConcurrency(b *testing.B) {
 	defer helper.Close()
 
 	ctx := context.Background()
-	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN)
+	groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldap.NewCacheManager())
 
 	// Create test groups
 	testGroups, err := helper.CreateTestGroups(ctx, 10)
@@ -458,7 +458,7 @@ func BenchmarkPerformanceRegression(b *testing.B) {
 			maxTime: maxTime,
 			testFunc: func(b *testing.B) {
 				ctx := context.Background()
-				groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN)
+				groupManager := ldap.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldap.NewCacheManager())
 
 				// Create a test group
 				testGroups, err := helper.CreateTestGroups(ctx, 1)

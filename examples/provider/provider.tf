@@ -58,12 +58,21 @@ provider "ad" {
   skip_tls_verify = false
 }
 
-# Example 6: Environment variable configuration (recommended for CI/CD)
+# Example 6: Performance optimization with cache warming (for large deployments)
+provider "ad" {
+  domain     = "example.com"
+  username   = "admin@example.com"
+  password   = "secure_password"
+  warm_cache = true # Pre-populate cache with all users and groups
+}
+
+# Example 7: Environment variable configuration (recommended for CI/CD)
 # Set these environment variables:
 # export AD_DOMAIN=example.com
 # export AD_USERNAME=admin@example.com  
 # export AD_PASSWORD=secure_password
 # export AD_USE_TLS=true
+# export AD_WARM_CACHE=true  # Enable cache warming via environment
 provider "ad" {
   # Configuration read from environment variables
 }

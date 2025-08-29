@@ -331,7 +331,7 @@ func createTestMembershipManager(t *testing.T) (*GroupMembershipManager, *MockGr
 	client := NewMockGroupMembershipClient()
 	baseDN := "DC=example,DC=com"
 
-	gmm := NewGroupMembershipManager(t.Context(), client, baseDN)
+	gmm := NewGroupMembershipManager(t.Context(), client, baseDN, nil)
 	gmm.SetTimeout(5 * time.Second)
 
 	return gmm, client
@@ -341,7 +341,7 @@ func TestNewGroupMembershipManager(t *testing.T) {
 	client := NewMockGroupMembershipClient()
 	baseDN := "DC=example,DC=com"
 
-	gmm := NewGroupMembershipManager(t.Context(), client, baseDN)
+	gmm := NewGroupMembershipManager(t.Context(), client, baseDN, nil)
 
 	if gmm.client != client {
 		t.Error("Client not set correctly")
@@ -971,7 +971,7 @@ func TestSetBaseDN(t *testing.T) {
 func BenchmarkValidateLargeSet(b *testing.B) {
 	client := NewMockGroupMembershipClient()
 	baseDN := "DC=example,DC=com"
-	gmm := NewGroupMembershipManager(context.Background(), client, baseDN)
+	gmm := NewGroupMembershipManager(context.Background(), client, baseDN, nil)
 
 	// Setup test data - all DNs
 	testMembers := make([]string, 100)
@@ -991,7 +991,7 @@ func BenchmarkValidateLargeSet(b *testing.B) {
 func BenchmarkCalculateMembershipDelta(b *testing.B) {
 	client := NewMockGroupMembershipClient()
 	baseDN := "DC=example,DC=com"
-	gmm := NewGroupMembershipManager(context.Background(), client, baseDN)
+	gmm := NewGroupMembershipManager(context.Background(), client, baseDN, nil)
 
 	// Setup test data
 	groupGUID := "12345678-1234-1234-1234-123456789012"

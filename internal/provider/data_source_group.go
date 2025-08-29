@@ -30,6 +30,7 @@ func NewGroupDataSource() datasource.DataSource {
 // GroupDataSource defines the data source implementation.
 type GroupDataSource struct {
 	client       ldapclient.Client
+	cacheManager *ldapclient.CacheManager
 	groupManager *ldapclient.GroupManager
 }
 
@@ -212,19 +213,20 @@ func (d *GroupDataSource) Configure(ctx context.Context, req datasource.Configur
 		return
 	}
 
-	client, ok := req.ProviderData.(ldapclient.Client)
+	providerData, ok := req.ProviderData.(*ldapclient.ProviderData)
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected Data Source Configure Type",
-			fmt.Sprintf("Expected ldapclient.Client, got: %T. Please report this issue to the provider developers.", req.ProviderData),
+			fmt.Sprintf("Expected *ldapclient.ProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
 		)
 		return
 	}
 
-	d.client = client
+	d.client = providerData.Client
+	d.cacheManager = providerData.CacheManager
 
 	// Initialize group manager
-	baseDN, err := client.GetBaseDN(ctx)
+	baseDN, err := d.client.GetBaseDN(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Failed to Get Base DN",
@@ -232,7 +234,7 @@ func (d *GroupDataSource) Configure(ctx context.Context, req datasource.Configur
 		)
 		return
 	}
-	d.groupManager = ldapclient.NewGroupManager(ctx, client, baseDN)
+	d.groupManager = ldapclient.NewGroupManager(ctx, d.client, baseDN, d.cacheManager)
 }
 
 func (d *GroupDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {

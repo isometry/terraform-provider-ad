@@ -11,39 +11,39 @@ import (
 // ConnectionConfig holds configuration for LDAP connections.
 type ConnectionConfig struct {
 	// Connection settings
-	Domain   string        // Domain for SRV discovery
-	LDAPURLs []string      // Direct LDAP URLs (overrides domain)
-	BaseDN   string        // Base DN for searches
-	Timeout  time.Duration // Connection timeout
+	Domain   string
+	LDAPURLs []string
+	BaseDN   string
+	Timeout  time.Duration
 
 	// Authentication settings
-	Username       string // Username for authentication (DN, UPN, or SAM format)
-	Password       string // Password for simple bind authentication
-	KerberosRealm  string // Kerberos realm for GSSAPI authentication
-	KerberosKeytab string // Path to Kerberos keytab file
-	KerberosConfig string // Path to Kerberos config file (krb5.conf)
-	KerberosCCache string // Path to Kerberos credential cache file
-	KerberosSPN    string // Override Service Principal Name for Kerberos authentication
+	Username       string
+	Password       string
+	KerberosRealm  string
+	KerberosKeytab string
+	KerberosConfig string
+	KerberosCCache string
+	KerberosSPN    string
 
 	// TLS settings
-	TLSConfig         *tls.Config // Custom TLS configuration
-	UseTLS            bool        // Force TLS usage
-	SkipTLS           bool        // Skip TLS entirely (not recommended)
-	TLSCACertFile     string      // Path to CA certificate file
-	TLSCACert         string      // CA certificate content
-	TLSClientCertFile string      // Path to client certificate file
-	TLSClientKeyFile  string      // Path to client private key file
+	TLSConfig         *tls.Config
+	UseTLS            bool
+	SkipTLS           bool
+	TLSCACertFile     string
+	TLSCACert         string
+	TLSClientCertFile string
+	TLSClientKeyFile  string
 
 	// Pool settings
-	MaxConnections int           // Maximum connections in pool
-	MaxIdleTime    time.Duration // Maximum idle time before connection cleanup
-	HealthCheck    time.Duration // Health check interval
+	MaxConnections int
+	MaxIdleTime    time.Duration
+	HealthCheck    time.Duration
 
 	// Retry settings
-	MaxRetries     int           // Maximum retry attempts
-	InitialBackoff time.Duration // Initial backoff duration
-	MaxBackoff     time.Duration // Maximum backoff duration
-	BackoffFactor  float64       // Backoff multiplication factor
+	MaxRetries     int
+	InitialBackoff time.Duration
+	MaxBackoff     time.Duration
+	BackoffFactor  float64
 }
 
 // DefaultConfig returns a secure default configuration.
@@ -71,8 +71,8 @@ type PooledConnection struct {
 	conn          *ldap.Conn
 	lastUsed      time.Time
 	healthy       bool
-	authenticated bool      // Track if connection is authenticated
-	authTime      time.Time // When authentication occurred
+	authenticated bool
+	authTime      time.Time
 	serverInfo    *ServerInfo
 	returnToPool  func(*PooledConnection)
 }
@@ -84,7 +84,7 @@ type ServerInfo struct {
 	UseTLS   bool
 	Priority int
 	Weight   int
-	Source   string // "srv", "config", "fallback"
+	Source   string
 }
 
 // ConnectionPool manages a pool of LDAP connections.
@@ -104,13 +104,13 @@ type ConnectionPool interface {
 
 // PoolStats provides statistics about the connection pool.
 type PoolStats struct {
-	Total     int           // Total connections
-	Active    int64         // Active (in-use) connections
-	Idle      int           // Idle connections
-	Unhealthy int           // Unhealthy connections
-	Created   int64         // Total connections created
-	Errors    int64         // Total connection errors
-	Uptime    time.Duration // Pool uptime
+	Total     int
+	Active    int64
+	Idle      int
+	Unhealthy int
+	Created   int64
+	Errors    int64
+	Uptime    time.Duration
 }
 
 // Client provides high-level LDAP operations.

@@ -137,7 +137,7 @@ func createMockGroupEntry(name, guid, dn string, groupType int32) *ldap.Entry {
 func createTestGroupManager(t *testing.T) (*GroupManager, *MockGroupClient) {
 	mockClient := &MockGroupClient{}
 	baseDN := "DC=test,DC=local"
-	gm := NewGroupManager(t.Context(), mockClient, baseDN)
+	gm := NewGroupManager(t.Context(), mockClient, baseDN, nil)
 	return gm, mockClient
 }
 

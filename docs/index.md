@@ -314,3 +314,4 @@ provider "ad" {
 - `tls_client_key_file` (String, Sensitive) Path to client private key file for mutual TLS authentication. Can be set via the `AD_TLS_CLIENT_KEY_FILE` environment variable.
 - `use_tls` (Boolean) Force TLS/LDAPS connection. Defaults to `true`. Can be set via the `AD_USE_TLS` environment variable.
 - `username` (String) Username for LDAP authentication. Supports DN, UPN, or SAM account name formats. Can be set via the `AD_USERNAME` environment variable.
+- `warm_cache` (Boolean) Pre-populate cache with all users and groups on provider initialization. Significantly improves performance for large group memberships. Defaults to `false`. Can be set via the `AD_WARM_CACHE` environment variable.

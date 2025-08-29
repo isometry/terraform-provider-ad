@@ -1,4 +1,4 @@
-# AD Group Data Source Example
+# AD Group Data Source Examples
 
 terraform {
   required_providers {
@@ -14,66 +14,33 @@ provider "ad" {
   password = "secure_password"
 }
 
-# Lookup group by name
-data "ad_group" "existing_group" {
-  name = "Domain Admins"
-}
-
-# Lookup group by Distinguished Name
+# Lookup by Distinguished Name (most precise)
 data "ad_group" "by_dn" {
   dn = "cn=IT Team,ou=Groups,dc=example,dc=com"
 }
 
-# Lookup group by GUID
+# Lookup by GUID (most reliable)
 data "ad_group" "by_guid" {
   id = "12345678-1234-5678-9012-123456789012"
 }
 
-# Lookup group by SID
-data "ad_group" "by_sid" {
-  sid = "S-1-5-21-123456789-123456789-123456789-1001"
-}
-
-# Lookup group by SAM Account Name
+# Lookup by SAM Account Name (domain-wide search)
 data "ad_group" "by_sam" {
   sam_account_name = "ITTeam"
 }
 
-# Use group data in other resources
-resource "ad_group_membership" "add_to_existing" {
-  group_id = data.ad_group.existing_group.id
+# Use group data in membership resource
+resource "ad_group_membership" "add_members" {
+  group_id = data.ad_group.by_dn.id
   members = [
     "newuser@example.com",
     "cn=service-account,cn=users,dc=example,dc=com"
   ]
 }
 
-# Create a nested group structure
-resource "ad_group" "child_group" {
-  name             = "IT Support Team"
-  sam_account_name = "ITSupport"
-  container        = dirname(data.ad_group.by_dn.dn)
-  scope            = data.ad_group.by_dn.scope
-  category         = data.ad_group.by_dn.category
-  description      = "Support team within ${data.ad_group.by_dn.name}"
-}
-
-# Output group information
-output "group_details" {
-  value = {
-    domain_admins = {
-      name         = data.ad_group.existing_group.name
-      dn           = data.ad_group.existing_group.dn
-      sid          = data.ad_group.existing_group.sid
-      scope        = data.ad_group.existing_group.scope
-      category     = data.ad_group.existing_group.category
-      member_count = data.ad_group.existing_group.member_count
-    }
-    it_team = {
-      name        = data.ad_group.by_dn.name
-      dn          = data.ad_group.by_dn.dn
-      group_type  = data.ad_group.by_dn.group_type
-      description = data.ad_group.by_dn.description
-    }
-  }
+# Use group attributes in new resources
+resource "ad_group" "support_team" {
+  name        = "IT Support Team"
+  container   = dirname(data.ad_group.by_dn.dn)
+  description = "Support team within ${data.ad_group.by_dn.name}"
 }

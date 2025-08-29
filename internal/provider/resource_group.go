@@ -11,7 +11,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -35,7 +34,8 @@ func NewGroupResource() resource.Resource {
 
 // GroupResource defines the resource implementation.
 type GroupResource struct {
-	client ldapclient.Client
+	client       ldapclient.Client
+	cacheManager *ldapclient.CacheManager
 }
 
 // GroupResourceModel describes the resource data model.
@@ -48,9 +48,8 @@ type GroupResourceModel struct {
 	Category       types.String              `tfsdk:"category"`         // Optional+Computed+Default: "Security"
 	Description    types.String              `tfsdk:"description"`      // Optional
 	// Computed attributes
-	DistinguishedName customtypes.DNStringValue `tfsdk:"dn"`         // Computed
-	SID               types.String              `tfsdk:"sid"`        // Computed
-	GroupType         types.Int64               `tfsdk:"group_type"` // Computed
+	DistinguishedName customtypes.DNStringValue `tfsdk:"dn"`  // Computed
+	SID               types.String              `tfsdk:"sid"` // Computed
 }
 
 func (r *GroupResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -143,13 +142,6 @@ func (r *GroupResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"group_type": schema.Int64Attribute{
-				MarkdownDescription: "The numeric group type value used internally by Active Directory. This is derived from the scope and category.",
-				Computed:            true,
-				PlanModifiers: []planmodifier.Int64{
-					int64planmodifier.UseStateForUnknown(),
-				},
-			},
 		},
 	}
 }
@@ -160,18 +152,17 @@ func (r *GroupResource) Configure(ctx context.Context, req resource.ConfigureReq
 		return
 	}
 
-	client, ok := req.ProviderData.(ldapclient.Client)
-
+	providerData, ok := req.ProviderData.(*ldapclient.ProviderData)
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected ldapclient.Client, got: %T. Please report this issue to the provider developers.", req.ProviderData),
+			fmt.Sprintf("Expected *ldapclient.ProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
 		)
-
 		return
 	}
 
-	r.client = client
+	r.client = providerData.Client
+	r.cacheManager = providerData.CacheManager
 }
 
 func (r *GroupResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -533,7 +524,6 @@ func (r *GroupResource) updateModelFromGroup(model *GroupResourceModel, group *l
 	model.Scope = types.StringValue(string(group.Scope))
 	model.Category = types.StringValue(string(group.Category))
 	model.SID = types.StringValue(group.ObjectSid)
-	model.GroupType = types.Int64Value(int64(group.GroupType))
 
 	// Normalize DN case to ensure uppercase attribute types
 	normalizedDN, err := ldapclient.NormalizeDNCase(group.DistinguishedName)
@@ -576,7 +566,7 @@ func (r *GroupResource) getGroupManager(ctx context.Context) (*ldapclient.GroupM
 	}
 
 	// Create GroupManager
-	return ldapclient.NewGroupManager(ctx, r.client, baseDN), nil
+	return ldapclient.NewGroupManager(ctx, r.client, baseDN, r.cacheManager), nil
 }
 
 // isGUID checks if a string looks like a GUID.

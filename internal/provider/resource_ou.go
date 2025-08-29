@@ -32,7 +32,8 @@ func NewOUResource() resource.Resource {
 
 // OUResource defines the resource implementation.
 type OUResource struct {
-	client ldapclient.Client
+	client       ldapclient.Client
+	cacheManager *ldapclient.CacheManager
 }
 
 // OUResourceModel describes the resource data model.
@@ -121,18 +122,17 @@ func (r *OUResource) Configure(ctx context.Context, req resource.ConfigureReques
 		return
 	}
 
-	client, ok := req.ProviderData.(ldapclient.Client)
-
+	providerData, ok := req.ProviderData.(*ldapclient.ProviderData)
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected Resource Configure Type",
-			fmt.Sprintf("Expected ldapclient.Client, got: %T. Please report this issue to the provider developers.", req.ProviderData),
+			fmt.Sprintf("Expected *ldapclient.ProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
 		)
-
 		return
 	}
 
-	r.client = client
+	r.client = providerData.Client
+	r.cacheManager = providerData.CacheManager
 }
 
 func (r *OUResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {

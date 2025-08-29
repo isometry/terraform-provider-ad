@@ -50,9 +50,13 @@ func TestWhoAmIDataSource_Schema(t *testing.T) {
 func TestWhoAmIDataSource_Configure(t *testing.T) {
 	dataSource := &WhoAmIDataSource{}
 	mockClient := NewMockLDAPClient()
+	providerData := &ldapclient.ProviderData{
+		Client:       mockClient,
+		CacheManager: nil, // Tests use nil cache manager
+	}
 
 	req := datasource.ConfigureRequest{
-		ProviderData: mockClient,
+		ProviderData: providerData,
 	}
 	resp := &datasource.ConfigureResponse{}
 

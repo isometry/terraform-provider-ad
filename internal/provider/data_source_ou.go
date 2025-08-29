@@ -30,8 +30,9 @@ func NewOUDataSource() datasource.DataSource {
 
 // OUDataSource defines the data source implementation.
 type OUDataSource struct {
-	client    ldapclient.Client
-	ouManager *ldapclient.OUManager
+	client       ldapclient.Client
+	cacheManager *ldapclient.CacheManager
+	ouManager    *ldapclient.OUManager
 }
 
 // OUDataSourceModel describes the data source data model with multiple lookup methods.
@@ -156,19 +157,20 @@ func (d *OUDataSource) Configure(ctx context.Context, req datasource.ConfigureRe
 		return
 	}
 
-	client, ok := req.ProviderData.(ldapclient.Client)
+	providerData, ok := req.ProviderData.(*ldapclient.ProviderData)
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected Data Source Configure Type",
-			fmt.Sprintf("Expected ldapclient.Client, got: %T. Please report this issue to the provider developers.", req.ProviderData),
+			fmt.Sprintf("Expected *ldapclient.ProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
 		)
 		return
 	}
 
-	d.client = client
+	d.client = providerData.Client
+	d.cacheManager = providerData.CacheManager
 
 	// Initialize OU manager
-	baseDN, err := client.GetBaseDN(ctx)
+	baseDN, err := d.client.GetBaseDN(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Failed to Get Base DN",
@@ -176,7 +178,7 @@ func (d *OUDataSource) Configure(ctx context.Context, req datasource.ConfigureRe
 		)
 		return
 	}
-	d.ouManager = ldapclient.NewOUManager(ctx, client, baseDN)
+	d.ouManager = ldapclient.NewOUManager(ctx, d.client, baseDN)
 }
 
 func (d *OUDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {

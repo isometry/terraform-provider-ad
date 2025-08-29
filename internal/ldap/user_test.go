@@ -201,7 +201,7 @@ func TestNewUserReader(t *testing.T) {
 	client := &MockUserClient{}
 	baseDN := "DC=example,DC=com"
 
-	reader := NewUserReader(t.Context(), client, baseDN)
+	reader := NewUserReader(t.Context(), client, baseDN, nil)
 
 	assert.NotNil(t, reader)
 	assert.Equal(t, client, reader.client)
@@ -213,7 +213,7 @@ func TestNewUserReader(t *testing.T) {
 
 func TestUserReader_SetTimeout(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
 
 	timeout := 45 * time.Second
 	reader.SetTimeout(timeout)
@@ -223,7 +223,7 @@ func TestUserReader_SetTimeout(t *testing.T) {
 
 func TestUserReader_GetUserByDN_Success(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 	dn := "CN=John Doe,OU=Users,DC=example,DC=com"
@@ -258,7 +258,7 @@ func TestUserReader_GetUserByDN_Success(t *testing.T) {
 
 func TestUserReader_GetUserByDN_NotFound(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
 
 	dn := "CN=NonExistent,OU=Users,DC=example,DC=com"
 
@@ -278,7 +278,7 @@ func TestUserReader_GetUserByDN_NotFound(t *testing.T) {
 
 func TestUserReader_GetUserByGUID_Success(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 	guid := "12345678-1234-1234-1234-567890123456"
@@ -304,7 +304,7 @@ func TestUserReader_GetUserByGUID_Success(t *testing.T) {
 
 func TestUserReader_GetUserByGUID_InvalidFormat(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
 
 	user, err := reader.GetUserByGUID("invalid-guid")
 
@@ -317,7 +317,7 @@ func TestUserReader_GetUserByGUID_InvalidFormat(t *testing.T) {
 
 func TestUserReader_GetUserBySID_Success(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 	sid := "S-1-5-21-123456789-123456789-123456789-1001"
@@ -343,7 +343,7 @@ func TestUserReader_GetUserBySID_Success(t *testing.T) {
 
 func TestUserReader_GetUserByUPN_Success(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 	upn := "john.doe@example.com"
@@ -369,7 +369,7 @@ func TestUserReader_GetUserByUPN_Success(t *testing.T) {
 
 func TestUserReader_GetUserBySAM_Success(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 	sam := "john.doe"
@@ -395,7 +395,7 @@ func TestUserReader_GetUserBySAM_Success(t *testing.T) {
 
 func TestUserReader_GetUserBySAM_DomainFormat(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 	domainSam := "EXAMPLE\\john.doe"
@@ -419,7 +419,7 @@ func TestUserReader_GetUserBySAM_DomainFormat(t *testing.T) {
 
 func TestUserReader_GetUser_AutoDetectIdentifier(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 
@@ -482,7 +482,7 @@ func TestUserReader_GetUser_AutoDetectIdentifier(t *testing.T) {
 
 func TestUserReader_SearchUsers_Success(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry1 := createMockUserEntry()
 	mockEntry2 := createDisabledUserEntry()
@@ -510,7 +510,7 @@ func TestUserReader_SearchUsers_Success(t *testing.T) {
 
 func TestUserReader_SearchUsersWithFilter_NameFilters(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 
@@ -559,7 +559,7 @@ func TestUserReader_SearchUsersWithFilter_NameFilters(t *testing.T) {
 
 func TestUserReader_SearchUsersWithFilter_OrganizationalFilters(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 
@@ -603,7 +603,7 @@ func TestUserReader_SearchUsersWithFilter_OrganizationalFilters(t *testing.T) {
 
 func TestUserReader_SearchUsersWithFilter_StatusFilters(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 
@@ -649,7 +649,7 @@ func TestUserReader_SearchUsersWithFilter_StatusFilters(t *testing.T) {
 
 func TestUserReader_SearchUsersWithFilter_EmailFilters(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 
@@ -698,7 +698,7 @@ func TestUserReader_SearchUsersWithFilter_EmailFilters(t *testing.T) {
 
 func TestUserReader_SearchUsersWithFilter_Container(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 	containerDN := "OU=Engineering,DC=example,DC=com"
@@ -722,7 +722,7 @@ func TestUserReader_SearchUsersWithFilter_Container(t *testing.T) {
 
 func TestUserReader_SearchUsersWithFilter_InvalidContainer(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
 
 	filter := &UserSearchFilter{Container: "invalid-dn"}
 
@@ -736,7 +736,7 @@ func TestUserReader_SearchUsersWithFilter_InvalidContainer(t *testing.T) {
 }
 
 func TestUserReader_parseUserAccountControl(t *testing.T) {
-	reader := NewUserReader(context.Background(), &MockUserClient{}, "DC=example,DC=com")
+	reader := NewUserReader(context.Background(), &MockUserClient{}, "DC=example,DC=com", nil)
 
 	testCases := []struct {
 		name     string
@@ -814,7 +814,7 @@ func TestUserReader_parseUserAccountControl(t *testing.T) {
 }
 
 func TestUserReader_parseADTimestamp(t *testing.T) {
-	reader := NewUserReader(context.Background(), &MockUserClient{}, "DC=example,DC=com")
+	reader := NewUserReader(context.Background(), &MockUserClient{}, "DC=example,DC=com", nil)
 
 	testCases := []struct {
 		name      string
@@ -866,7 +866,7 @@ func TestUserReader_parseADTimestamp(t *testing.T) {
 }
 
 func TestUserReader_entryToUser_ComprehensiveMapping(t *testing.T) {
-	reader := NewUserReader(context.Background(), &MockUserClient{}, "DC=example,DC=com")
+	reader := NewUserReader(context.Background(), &MockUserClient{}, "DC=example,DC=com", nil)
 	entry := createMockUserEntry()
 
 	user, err := reader.entryToUser(entry)
@@ -943,7 +943,7 @@ func TestUserReader_entryToUser_ComprehensiveMapping(t *testing.T) {
 
 func TestUserReader_GetUserStats(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
 
 	enabledEntry := createMockUserEntry()
 	disabledEntry := createDisabledUserEntry()
@@ -965,7 +965,7 @@ func TestUserReader_GetUserStats(t *testing.T) {
 
 func TestUserReader_EmptyIdentifier(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com")
+	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
 
 	testCases := []struct {
 		name string

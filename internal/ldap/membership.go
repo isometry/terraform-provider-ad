@@ -38,15 +38,17 @@ type GroupMembershipManager struct {
 	client       Client
 	groupManager *GroupManager
 	timeout      time.Duration
+	cacheManager *CacheManager // Reference to shared cache
 }
 
 // NewGroupMembershipManager creates a new group membership manager instance.
-func NewGroupMembershipManager(ctx context.Context, client Client, baseDN string) *GroupMembershipManager {
+func NewGroupMembershipManager(ctx context.Context, client Client, baseDN string, cacheManager *CacheManager) *GroupMembershipManager {
 	return &GroupMembershipManager{
 		ctx:          ctx,
 		client:       client,
-		groupManager: NewGroupManager(ctx, client, baseDN),
+		groupManager: NewGroupManager(ctx, client, baseDN, cacheManager),
 		timeout:      30 * time.Second,
+		cacheManager: cacheManager,
 	}
 }
 

@@ -27,8 +27,9 @@ func NewUserDataSource() datasource.DataSource {
 
 // UserDataSource defines the data source implementation.
 type UserDataSource struct {
-	client     ldapclient.Client
-	userReader *ldapclient.UserReader
+	client       ldapclient.Client
+	cacheManager *ldapclient.CacheManager
+	userReader   *ldapclient.UserReader
 }
 
 // UserDataSourceModel describes the data source data model with multiple lookup methods.
@@ -384,19 +385,20 @@ func (d *UserDataSource) Configure(ctx context.Context, req datasource.Configure
 		return
 	}
 
-	client, ok := req.ProviderData.(ldapclient.Client)
+	providerData, ok := req.ProviderData.(*ldapclient.ProviderData)
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected Data Source Configure Type",
-			fmt.Sprintf("Expected ldapclient.Client, got: %T. Please report this issue to the provider developers.", req.ProviderData),
+			fmt.Sprintf("Expected *ldapclient.ProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
 		)
 		return
 	}
 
-	d.client = client
+	d.client = providerData.Client
+	d.cacheManager = providerData.CacheManager
 
 	// Initialize user reader
-	baseDN, err := client.GetBaseDN(ctx)
+	baseDN, err := d.client.GetBaseDN(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Failed to Get Base DN",
@@ -404,7 +406,7 @@ func (d *UserDataSource) Configure(ctx context.Context, req datasource.Configure
 		)
 		return
 	}
-	d.userReader = ldapclient.NewUserReader(ctx, client, baseDN)
+	d.userReader = ldapclient.NewUserReader(ctx, d.client, baseDN, d.cacheManager)
 }
 
 func (d *UserDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {

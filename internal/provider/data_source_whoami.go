@@ -22,7 +22,8 @@ func NewWhoAmIDataSource() datasource.DataSource {
 
 // WhoAmIDataSource defines the data source implementation.
 type WhoAmIDataSource struct {
-	client ldapclient.Client
+	client       ldapclient.Client
+	cacheManager *ldapclient.CacheManager
 }
 
 // WhoAmIDataSourceModel describes the data source data model.
@@ -60,16 +61,17 @@ func (d *WhoAmIDataSource) Configure(ctx context.Context, req datasource.Configu
 		return
 	}
 
-	client, ok := req.ProviderData.(ldapclient.Client)
+	providerData, ok := req.ProviderData.(*ldapclient.ProviderData)
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected Data Source Configure Type",
-			fmt.Sprintf("Expected ldapclient.Client, got: %T. Please report this issue to the provider developers.", req.ProviderData),
+			fmt.Sprintf("Expected *ldapclient.ProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
 		)
 		return
 	}
 
-	d.client = client
+	d.client = providerData.Client
+	d.cacheManager = providerData.CacheManager
 }
 
 func (d *WhoAmIDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {

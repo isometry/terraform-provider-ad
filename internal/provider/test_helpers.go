@@ -307,7 +307,8 @@ func TestCheckGroupExists(resourceName string) resource.TestCheckFunc {
 		defer client.Close()
 
 		ctx := context.Background()
-		groupManager := ldap.NewGroupManager(ctx, client, config.BaseDN)
+		cacheManager := ldap.NewCacheManager()
+		groupManager := ldap.NewGroupManager(ctx, client, config.BaseDN, cacheManager)
 
 		// Try to read the group by GUID (stored in ID)
 		_, err = groupManager.GetGroup(rs.Primary.ID)
@@ -342,7 +343,8 @@ func TestCheckGroupDestroy(s *terraform.State) error {
 	defer client.Close()
 
 	ctx := context.Background()
-	groupManager := ldap.NewGroupManager(ctx, client, config.BaseDN)
+	cacheManager := ldap.NewCacheManager()
+	groupManager := ldap.NewGroupManager(ctx, client, config.BaseDN, cacheManager)
 
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != "ad_group" {
@@ -393,7 +395,8 @@ func TestCheckGroupDisappears(resourceName string) resource.TestCheckFunc {
 		defer client.Close()
 
 		ctx := context.Background()
-		groupManager := ldap.NewGroupManager(ctx, client, config.BaseDN)
+		cacheManager := ldap.NewCacheManager()
+		groupManager := ldap.NewGroupManager(ctx, client, config.BaseDN, cacheManager)
 
 		// Delete the group manually using its GUID
 		err = groupManager.DeleteGroup(rs.Primary.ID)
@@ -574,7 +577,8 @@ func TestCheckGroupMembershipExists(resourceName string) resource.TestCheckFunc 
 		defer client.Close()
 
 		ctx := context.Background()
-		membershipManager := ldap.NewGroupMembershipManager(ctx, client, config.BaseDN)
+		cacheManager := ldap.NewCacheManager()
+		membershipManager := ldap.NewGroupMembershipManager(ctx, client, config.BaseDN, cacheManager)
 
 		// Verify the group has the expected members
 		members, err := membershipManager.GetGroupMembers(groupID)
@@ -634,7 +638,8 @@ func (h *BenchmarkHelper) Close() error {
 
 // CreateTestGroups creates test groups for benchmarking.
 func (h *BenchmarkHelper) CreateTestGroups(ctx context.Context, count int) ([]string, error) {
-	groupManager := ldap.NewGroupManager(context.Background(), h.client, h.config.BaseDN)
+	cacheManager := ldap.NewCacheManager()
+	groupManager := ldap.NewGroupManager(context.Background(), h.client, h.config.BaseDN, cacheManager)
 	groups := make([]string, 0, count)
 
 	for i := range count {
@@ -666,7 +671,8 @@ func (h *BenchmarkHelper) CreateTestGroups(ctx context.Context, count int) ([]st
 
 // CleanupTestGroups removes test groups.
 func (h *BenchmarkHelper) CleanupTestGroups(ctx context.Context, groupIDs []string) {
-	groupManager := ldap.NewGroupManager(context.Background(), h.client, h.config.BaseDN)
+	cacheManager := ldap.NewCacheManager()
+	groupManager := ldap.NewGroupManager(context.Background(), h.client, h.config.BaseDN, cacheManager)
 
 	for _, groupID := range groupIDs {
 		if err := groupManager.DeleteGroup(groupID); err != nil {

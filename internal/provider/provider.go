@@ -35,7 +35,8 @@ type ActiveDirectoryProvider struct {
 	// version is set to the provider version on release, "dev" when the
 	// provider is built and ran locally, and "test" when running acceptance
 	// testing.
-	version string
+	version      string
+	cacheManager *ldapclient.CacheManager
 }
 
 // ActiveDirectoryProviderModel describes the provider data model.
@@ -73,6 +74,9 @@ type ActiveDirectoryProviderModel struct {
 	MaxRetries     types.Int64 `tfsdk:"max_retries"`
 	InitialBackoff types.Int64 `tfsdk:"initial_backoff"`
 	MaxBackoff     types.Int64 `tfsdk:"max_backoff"`
+
+	// Cache settings
+	WarmCache types.Bool `tfsdk:"warm_cache"`
 }
 
 func (p *ActiveDirectoryProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -219,6 +223,14 @@ func (p *ActiveDirectoryProvider) Schema(ctx context.Context, req provider.Schem
 					"Can be set via the `AD_MAX_BACKOFF` environment variable.",
 				Optional: true,
 			},
+
+			// Cache settings
+			"warm_cache": schema.BoolAttribute{
+				MarkdownDescription: "Pre-populate cache with all users and groups on provider initialization. " +
+					"Significantly improves performance for large group memberships. Defaults to `false`. " +
+					"Can be set via the `AD_WARM_CACHE` environment variable.",
+				Optional: true,
+			},
 		},
 	}
 }
@@ -327,11 +339,61 @@ func (p *ActiveDirectoryProvider) Configure(ctx context.Context, req provider.Co
 		"duration_ms": time.Since(start).Milliseconds(),
 	})
 
+	// Initialize cache manager
+	p.cacheManager = ldapclient.NewCacheManager()
+
+	// Check if cache warming is enabled
+	warmCache := p.getBoolValue(data.WarmCache, "AD_WARM_CACHE", false)
+	if warmCache {
+		tflog.Info(ctx, "Cache warming enabled, starting cache warming operation")
+
+		// Get base DN for cache warming
+		baseDN, err := client.GetBaseDN(ctx)
+		if err != nil {
+			tflog.Warn(ctx, "Could not determine base DN for cache warming, will attempt with configured base DN", map[string]any{
+				"error": err.Error(),
+			})
+			baseDN = config.BaseDN // Use configured base DN as fallback
+		}
+
+		if baseDN == "" {
+			tflog.Warn(ctx, "No base DN available for cache warming, skipping cache warming")
+		} else {
+			// Perform cache warming with progress logging
+			start = time.Now()
+			if err := p.cacheManager.WarmCache(ctx, client, baseDN); err != nil {
+				tflog.Error(ctx, "Cache warming failed but will continue", map[string]any{
+					"error":       err.Error(),
+					"duration_ms": time.Since(start).Milliseconds(),
+				})
+				// Add warning diagnostic but don't fail provider initialization
+				resp.Diagnostics.AddWarning(
+					"Cache Warming Failed",
+					"Cache warming was enabled but failed to complete successfully. "+
+						"The provider will function normally but performance may be reduced. "+
+						"Cache Warming Error: "+err.Error(),
+				)
+			} else {
+				stats := p.cacheManager.GetStats()
+				tflog.Info(ctx, "Cache warming completed successfully", map[string]any{
+					"duration_ms":    time.Since(start).Milliseconds(),
+					"entries_cached": stats.Entries,
+					"base_dn":        baseDN,
+				})
+			}
+		}
+	} else {
+		tflog.Debug(ctx, "Cache warming disabled")
+	}
+
 	tflog.Info(ctx, "Active Directory provider configured successfully")
 
-	// Make client available to resources and data sources
-	resp.DataSourceData = client
-	resp.ResourceData = client
+	// Create provider data wrapper with both client and cache manager
+	providerData := ldapclient.NewProviderData(client, p.cacheManager)
+
+	// Make provider data available to resources and data sources
+	resp.DataSourceData = providerData
+	resp.ResourceData = providerData
 }
 
 // configureLogging sets up logging configuration based on environment variables.
@@ -339,12 +401,6 @@ func (p *ActiveDirectoryProvider) configureLogging(ctx context.Context) context.
 	// Add persistent fields for all logs
 	ctx = tflog.SetField(ctx, "provider", "ad")
 	ctx = tflog.SetField(ctx, "provider_version", p.version)
-
-	// Subsystems will be initialized on-demand in getLoggingContext
-	// using standard Terraform environment variables:
-	// - TF_LOG_PROVIDER_AD_LDAP
-	// - TF_LOG_PROVIDER_AD_KERBEROS
-	// - TF_LOG_PROVIDER_AD_POOL
 
 	tflog.Debug(ctx, "Active Directory provider logging configured")
 
@@ -514,7 +570,8 @@ func (p *ActiveDirectoryProvider) Functions(ctx context.Context) []func() functi
 func New(version string) func() provider.Provider {
 	return func() provider.Provider {
 		return &ActiveDirectoryProvider{
-			version: version,
+			version:      version,
+			cacheManager: nil, // Will be initialized during Configure()
 		}
 	}
 }

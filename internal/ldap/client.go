@@ -10,7 +10,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
-// client implements the Client interface.
 type client struct {
 	pool   ConnectionPool
 	config *ConnectionConfig
@@ -27,7 +26,6 @@ func NewClientWithContext(ctx context.Context, config *ConnectionConfig) (Client
 		config = DefaultConfig()
 	}
 
-	// Log client creation attempt
 	tflog.Debug(ctx, "Creating new LDAP client", map[string]any{
 		"domain":          config.Domain,
 		"ldap_urls_count": len(config.LDAPURLs),
@@ -62,13 +60,11 @@ func NewClientWithContext(ctx context.Context, config *ConnectionConfig) (Client
 func (c *client) Connect(ctx context.Context) error {
 	start := time.Now()
 
-	// Log operation start
 	tflog.Debug(ctx, "Starting connection test", map[string]any{
 		"operation": "connection_test",
 		"domain":    c.config.Domain,
 	})
 
-	// Test that we can get a connection from the pool
 	tflog.Debug(ctx, "Testing connection pool availability")
 
 	conn, err := c.pool.Get(ctx)
@@ -84,7 +80,6 @@ func (c *client) Connect(ctx context.Context) error {
 
 	tflog.Debug(ctx, "Connection acquired, performing ping test")
 
-	// Perform a basic connectivity test
 	if err := c.ping(ctx, conn); err != nil {
 		tflog.Error(ctx, "Ping test failed", map[string]any{
 			"operation":   "connection_test",
@@ -94,7 +89,6 @@ func (c *client) Connect(ctx context.Context) error {
 		return err
 	}
 
-	// Log operation completion
 	tflog.Info(ctx, "Connection test successful", map[string]any{
 		"operation":   "connection_test",
 		"duration_ms": time.Since(start).Milliseconds(),

@@ -25,7 +25,6 @@ func TestAccGroupResource_basic(t *testing.T) {
 					resource.TestCheckResourceAttrSet("ad_group.test", "id"),
 					resource.TestCheckResourceAttrSet("ad_group.test", "dn"),
 					resource.TestCheckResourceAttrSet("ad_group.test", "sid"),
-					resource.TestCheckResourceAttrSet("ad_group.test", "group_type"),
 				),
 			},
 			// ImportState testing
@@ -69,7 +68,6 @@ func TestAccGroupResource_globalSecurity(t *testing.T) {
 					resource.TestCheckResourceAttr("ad_group.test", "scope", "Global"),
 					resource.TestCheckResourceAttr("ad_group.test", "category", "Security"),
 					// Global Security group type is 0x80000002 = -2147483646
-					resource.TestCheckResourceAttr("ad_group.test", "group_type", "-2147483646"),
 				),
 			},
 		},
@@ -87,7 +85,6 @@ func TestAccGroupResource_globalDistribution(t *testing.T) {
 					resource.TestCheckResourceAttr("ad_group.test", "scope", "Global"),
 					resource.TestCheckResourceAttr("ad_group.test", "category", "Distribution"),
 					// Global Distribution group type is 0x00000002 = 2
-					resource.TestCheckResourceAttr("ad_group.test", "group_type", "2"),
 				),
 			},
 		},
@@ -105,7 +102,6 @@ func TestAccGroupResource_universalSecurity(t *testing.T) {
 					resource.TestCheckResourceAttr("ad_group.test", "scope", "Universal"),
 					resource.TestCheckResourceAttr("ad_group.test", "category", "Security"),
 					// Universal Security group type is 0x80000008 = -2147483640
-					resource.TestCheckResourceAttr("ad_group.test", "group_type", "-2147483640"),
 				),
 			},
 		},
@@ -123,7 +119,6 @@ func TestAccGroupResource_universalDistribution(t *testing.T) {
 					resource.TestCheckResourceAttr("ad_group.test", "scope", "Universal"),
 					resource.TestCheckResourceAttr("ad_group.test", "category", "Distribution"),
 					// Universal Distribution group type is 0x00000008 = 8
-					resource.TestCheckResourceAttr("ad_group.test", "group_type", "8"),
 				),
 			},
 		},
@@ -141,7 +136,6 @@ func TestAccGroupResource_domainLocalSecurity(t *testing.T) {
 					resource.TestCheckResourceAttr("ad_group.test", "scope", "DomainLocal"),
 					resource.TestCheckResourceAttr("ad_group.test", "category", "Security"),
 					// DomainLocal Security group type is 0x80000004 = -2147483644
-					resource.TestCheckResourceAttr("ad_group.test", "group_type", "-2147483644"),
 				),
 			},
 		},
@@ -159,7 +153,6 @@ func TestAccGroupResource_domainLocalDistribution(t *testing.T) {
 					resource.TestCheckResourceAttr("ad_group.test", "scope", "DomainLocal"),
 					resource.TestCheckResourceAttr("ad_group.test", "category", "Distribution"),
 					// DomainLocal Distribution group type is 0x00000004 = 4
-					resource.TestCheckResourceAttr("ad_group.test", "group_type", "4"),
 				),
 			},
 		},

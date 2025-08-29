@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/go-ldap/ldap/v3"
 	"github.com/stretchr/testify/assert"
@@ -131,51 +130,9 @@ func TestIdentifierType_String(t *testing.T) {
 	}
 }
 
-func TestCacheEntry_IsExpired(t *testing.T) {
-	tests := []struct {
-		name     string
-		entry    *CacheEntry
-		expected bool
-	}{
-		{
-			name: "not expired",
-			entry: &CacheEntry{
-				DN:        "cn=test,dc=example,dc=com",
-				Timestamp: time.Now(),
-				TTL:       1 * time.Hour,
-			},
-			expected: false,
-		},
-		{
-			name: "expired",
-			entry: &CacheEntry{
-				DN:        "cn=test,dc=example,dc=com",
-				Timestamp: time.Now().Add(-2 * time.Hour),
-				TTL:       1 * time.Hour,
-			},
-			expected: true,
-		},
-		{
-			name: "just expired",
-			entry: &CacheEntry{
-				DN:        "cn=test,dc=example,dc=com",
-				Timestamp: time.Now().Add(-1*time.Hour - 1*time.Second),
-				TTL:       1 * time.Hour,
-			},
-			expected: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, tt.entry.IsExpired())
-		})
-	}
-}
-
 func TestMemberNormalizer_DetectIdentifierType(t *testing.T) {
 	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
+	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
 	tests := []struct {
 		name       string
@@ -259,7 +216,7 @@ func TestMemberNormalizer_DetectIdentifierType(t *testing.T) {
 
 func TestMemberNormalizer_ValidateIdentifier(t *testing.T) {
 	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
+	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
 	tests := []struct {
 		name       string
@@ -323,7 +280,7 @@ func TestMemberNormalizer_ValidateIdentifier(t *testing.T) {
 
 func TestMemberNormalizer_NormalizeToDN_DN(t *testing.T) {
 	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
+	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
 	dn := "CN=User,OU=Users,DC=example,DC=com"
 	canonicalDN := "CN=User,OU=Users,DC=example,DC=com"
@@ -355,7 +312,7 @@ func TestMemberNormalizer_NormalizeToDN_DN(t *testing.T) {
 
 func TestMemberNormalizer_NormalizeToDN_GUID(t *testing.T) {
 	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
+	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
 	guid := "12345678-1234-1234-1234-123456789012"
 	expectedDN := "CN=User,OU=Users,DC=example,DC=com"
@@ -383,7 +340,7 @@ func TestMemberNormalizer_NormalizeToDN_GUID(t *testing.T) {
 
 func TestMemberNormalizer_NormalizeToDN_SID(t *testing.T) {
 	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
+	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
 	sid := "S-1-5-21-123456789-123456789-123456789-1001"
 	expectedDN := "CN=User,OU=Users,DC=example,DC=com"
@@ -410,7 +367,7 @@ func TestMemberNormalizer_NormalizeToDN_SID(t *testing.T) {
 
 func TestMemberNormalizer_NormalizeToDN_UPN(t *testing.T) {
 	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
+	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
 	upn := "user@example.com"
 	expectedDN := "CN=User,OU=Users,DC=example,DC=com"
@@ -437,7 +394,7 @@ func TestMemberNormalizer_NormalizeToDN_UPN(t *testing.T) {
 
 func TestMemberNormalizer_NormalizeToDN_SAM(t *testing.T) {
 	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
+	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
 	tests := []struct {
 		name     string
@@ -485,7 +442,7 @@ func TestMemberNormalizer_NormalizeToDN_SAM(t *testing.T) {
 
 func TestMemberNormalizer_NormalizeToDN_NotFound(t *testing.T) {
 	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
+	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
 	guid := "12345678-1234-1234-1234-123456789012"
 
@@ -507,7 +464,7 @@ func TestMemberNormalizer_NormalizeToDN_NotFound(t *testing.T) {
 
 func TestMemberNormalizer_NormalizeToDNBatch(t *testing.T) {
 	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
+	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
 	identifiers := []string{
 		"CN=User1,OU=Users,DC=example,DC=com",
@@ -553,144 +510,9 @@ func TestMemberNormalizer_NormalizeToDNBatch(t *testing.T) {
 	mockClient.AssertExpectations(t)
 }
 
-func TestMemberNormalizer_Caching(t *testing.T) {
-	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
-	normalizer.SetCacheTTL(1 * time.Hour)
-
-	guid := "12345678-1234-1234-1234-123456789012"
-	expectedDN := "CN=User,OU=Users,DC=example,DC=com"
-
-	// Mock the GUID search - should only be called once
-	mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
-		return req.BaseDN == "dc=example,dc=com"
-	})).Return(&SearchResult{
-		Entries: []*ldap.Entry{{DN: expectedDN}},
-		Total:   1,
-	}, nil).Once()
-
-	// First call - should hit LDAP
-	result1, err1 := normalizer.NormalizeToDN(guid)
-	require.NoError(t, err1)
-	assert.Equal(t, expectedDN, result1)
-
-	// Second call - should hit cache
-	result2, err2 := normalizer.NormalizeToDN(guid)
-	require.NoError(t, err2)
-	assert.Equal(t, expectedDN, result2)
-
-	// Verify cache stats
-	stats := normalizer.CacheStats()
-	assert.Equal(t, 1, stats["total_entries"])
-	assert.Equal(t, 1, stats["active_entries"])
-	assert.Equal(t, 0, stats["expired_entries"])
-
-	mockClient.AssertExpectations(t)
-}
-
-func TestMemberNormalizer_CacheExpiration(t *testing.T) {
-	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
-	normalizer.SetCacheTTL(1 * time.Millisecond) // Very short TTL
-
-	guid := "12345678-1234-1234-1234-123456789012"
-	expectedDN := "CN=User,OU=Users,DC=example,DC=com"
-
-	// Mock the GUID search - should be called twice due to expiration
-	mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
-		return req.BaseDN == "dc=example,dc=com"
-	})).Return(&SearchResult{
-		Entries: []*ldap.Entry{{DN: expectedDN}},
-		Total:   1,
-	}, nil).Twice()
-
-	// First call
-	result1, err1 := normalizer.NormalizeToDN(guid)
-	require.NoError(t, err1)
-	assert.Equal(t, expectedDN, result1)
-
-	// Wait for cache to expire
-	time.Sleep(10 * time.Millisecond)
-
-	// Second call - should hit LDAP again due to expiration
-	result2, err2 := normalizer.NormalizeToDN(guid)
-	require.NoError(t, err2)
-	assert.Equal(t, expectedDN, result2)
-
-	mockClient.AssertExpectations(t)
-}
-
-func TestMemberNormalizer_CacheEviction(t *testing.T) {
-	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
-	normalizer.SetMaxCacheSize(2) // Very small cache
-
-	// Add entries that will exceed cache size
-	guids := []string{
-		"12345678-1234-1234-1234-123456789012",
-		"87654321-4321-4321-4321-210987654321",
-		"abcdef00-1111-2222-3333-444455556666",
-	}
-
-	for i, guid := range guids {
-		expectedDN := fmt.Sprintf("CN=User%d,OU=Users,DC=example,DC=com", i+1)
-
-		mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
-			return req.BaseDN == "dc=example,dc=com"
-		})).Return(&SearchResult{
-			Entries: []*ldap.Entry{{DN: expectedDN}},
-			Total:   1,
-		}, nil).Once()
-
-		result, err := normalizer.NormalizeToDN(guid)
-		require.NoError(t, err)
-		assert.Equal(t, expectedDN, result)
-	}
-
-	// Cache should have evicted the oldest entry
-	stats := normalizer.CacheStats()
-	assert.Equal(t, 2, stats["total_entries"]) // Should not exceed max size
-
-	mockClient.AssertExpectations(t)
-}
-
-func TestMemberNormalizer_ClearCache(t *testing.T) {
-	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
-
-	guid := "12345678-1234-1234-1234-123456789012"
-	expectedDN := "CN=User,OU=Users,DC=example,DC=com"
-
-	// Mock the GUID search
-	mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
-		return req.BaseDN == "dc=example,dc=com"
-	})).Return(&SearchResult{
-		Entries: []*ldap.Entry{{DN: expectedDN}},
-		Total:   1,
-	}, nil).Once()
-
-	// Add entry to cache
-	result, err := normalizer.NormalizeToDN(guid)
-	require.NoError(t, err)
-	assert.Equal(t, expectedDN, result)
-
-	// Verify cache has entry
-	stats := normalizer.CacheStats()
-	assert.Equal(t, 1, stats["total_entries"])
-
-	// Clear cache
-	normalizer.ClearCache()
-
-	// Verify cache is empty
-	stats = normalizer.CacheStats()
-	assert.Equal(t, 0, stats["total_entries"])
-
-	mockClient.AssertExpectations(t)
-}
-
 func TestMemberNormalizer_GetSupportedFormats(t *testing.T) {
 	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
+	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
 	formats := normalizer.GetSupportedFormats()
 
@@ -704,7 +526,7 @@ func TestMemberNormalizer_GetSupportedFormats(t *testing.T) {
 
 func TestMemberNormalizer_SetBaseDN(t *testing.T) {
 	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
+	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
 	assert.Equal(t, "dc=example,dc=com", normalizer.GetBaseDN())
 
@@ -714,28 +536,9 @@ func TestMemberNormalizer_SetBaseDN(t *testing.T) {
 	assert.Equal(t, newBaseDN, normalizer.GetBaseDN())
 }
 
-func TestMemberNormalizer_Configuration(t *testing.T) {
-	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
-
-	// Test default values
-	stats := normalizer.CacheStats()
-	assert.Equal(t, 1000, stats["max_size"])
-	assert.Equal(t, "15m0s", stats["cache_ttl"])
-
-	// Test setting new values
-	normalizer.SetCacheTTL(30 * time.Minute)
-	normalizer.SetMaxCacheSize(500)
-	normalizer.SetTimeout(60 * time.Second)
-
-	stats = normalizer.CacheStats()
-	assert.Equal(t, 500, stats["max_size"])
-	assert.Equal(t, "30m0s", stats["cache_ttl"])
-}
-
 func TestMemberNormalizer_ErrorHandling(t *testing.T) {
 	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
+	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
 	tests := []struct {
 		name       string
@@ -781,7 +584,7 @@ func TestMemberNormalizer_ErrorHandling(t *testing.T) {
 // Benchmark tests for performance validation.
 func BenchmarkMemberNormalizer_DetectIdentifierType(b *testing.B) {
 	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
+	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
 	identifiers := []string{
 		"CN=User,OU=Users,DC=example,DC=com",
@@ -798,26 +601,9 @@ func BenchmarkMemberNormalizer_DetectIdentifierType(b *testing.B) {
 	}
 }
 
-func BenchmarkMemberNormalizer_CacheOperations(b *testing.B) {
-	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
-
-	// Pre-populate cache
-	for i := range 100 {
-		identifier := fmt.Sprintf("user%d@example.com", i)
-		dn := fmt.Sprintf("CN=User%d,OU=Users,DC=example,DC=com", i)
-		normalizer.cacheDN(identifier, dn)
-	}
-
-	for i := 0; b.Loop(); i++ {
-		identifier := fmt.Sprintf("user%d@example.com", i%100)
-		normalizer.getCachedDN(identifier)
-	}
-}
-
 func TestMemberNormalizer_SearchErrors(t *testing.T) {
 	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
+	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
 	guid := "12345678-1234-1234-1234-123456789012"
 
@@ -835,7 +621,7 @@ func TestMemberNormalizer_SearchErrors(t *testing.T) {
 
 func TestMemberNormalizer_IntegrationScenarios(t *testing.T) {
 	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com")
+	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
 	// Test mixed batch with different identifier types
 	identifiers := []string{

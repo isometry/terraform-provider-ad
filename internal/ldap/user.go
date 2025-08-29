@@ -144,25 +144,27 @@ type User struct {
 // UserReader handles read-only Active Directory user operations.
 // This provides comprehensive user data retrieval without modification capabilities.
 type UserReader struct {
-	ctx         context.Context
-	client      Client
-	guidHandler *GUIDHandler
-	sidHandler  *SIDHandler
-	normalizer  *MemberNormalizer
-	baseDN      string
-	timeout     time.Duration
+	ctx          context.Context
+	client       Client
+	guidHandler  *GUIDHandler
+	sidHandler   *SIDHandler
+	normalizer   *MemberNormalizer
+	baseDN       string
+	timeout      time.Duration
+	cacheManager *CacheManager // Reference to shared cache
 }
 
 // NewUserReader creates a new user reader instance.
-func NewUserReader(ctx context.Context, client Client, baseDN string) *UserReader {
+func NewUserReader(ctx context.Context, client Client, baseDN string, cacheManager *CacheManager) *UserReader {
 	return &UserReader{
-		ctx:         ctx,
-		client:      client,
-		guidHandler: NewGUIDHandler(),
-		sidHandler:  NewSIDHandler(),
-		normalizer:  NewMemberNormalizer(client, baseDN),
-		baseDN:      baseDN,
-		timeout:     30 * time.Second,
+		ctx:          ctx,
+		client:       client,
+		guidHandler:  NewGUIDHandler(),
+		sidHandler:   NewSIDHandler(),
+		normalizer:   NewMemberNormalizer(client, baseDN, cacheManager),
+		baseDN:       baseDN,
+		timeout:      30 * time.Second,
+		cacheManager: cacheManager,
 	}
 }
 

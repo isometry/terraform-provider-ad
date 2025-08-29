@@ -28,6 +28,7 @@ func NewGroupsDataSource() datasource.DataSource {
 // GroupsDataSource defines the data source implementation.
 type GroupsDataSource struct {
 	client       ldapclient.Client
+	cacheManager *ldapclient.CacheManager
 	groupManager *ldapclient.GroupManager
 }
 
@@ -68,7 +69,6 @@ type GroupDataModel struct {
 	SAMAccountName    types.String `tfsdk:"sam_account_name"` // pre-Windows 2000 name
 	Scope             types.String `tfsdk:"scope"`            // global, universal, domainlocal
 	Category          types.String `tfsdk:"category"`         // security, distribution
-	GroupType         types.Int64  `tfsdk:"group_type"`       // raw AD group type
 	SID               types.String `tfsdk:"sid"`              // security identifier
 	MemberCount       types.Int64  `tfsdk:"member_count"`     // number of members
 }
@@ -144,10 +144,6 @@ func (d *GroupsDataSource) Schema(ctx context.Context, req datasource.SchemaRequ
 						},
 						"category": schema.StringAttribute{
 							MarkdownDescription: "The category of the group (Security, Distribution).",
-							Computed:            true,
-						},
-						"group_type": schema.Int64Attribute{
-							MarkdownDescription: "The raw Active Directory groupType value.",
 							Computed:            true,
 						},
 						"sid": schema.StringAttribute{
@@ -228,19 +224,20 @@ func (d *GroupsDataSource) Configure(ctx context.Context, req datasource.Configu
 		return
 	}
 
-	client, ok := req.ProviderData.(ldapclient.Client)
+	providerData, ok := req.ProviderData.(*ldapclient.ProviderData)
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected Data Source Configure Type",
-			fmt.Sprintf("Expected ldapclient.Client, got: %T. Please report this issue to the provider developers.", req.ProviderData),
+			fmt.Sprintf("Expected *ldapclient.ProviderData, got: %T. Please report this issue to the provider developers.", req.ProviderData),
 		)
 		return
 	}
 
-	d.client = client
+	d.client = providerData.Client
+	d.cacheManager = providerData.CacheManager
 
 	// Initialize group manager
-	baseDN, err := client.GetBaseDN(ctx)
+	baseDN, err := d.client.GetBaseDN(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Failed to Get Base DN",
@@ -248,7 +245,7 @@ func (d *GroupsDataSource) Configure(ctx context.Context, req datasource.Configu
 		)
 		return
 	}
-	d.groupManager = ldapclient.NewGroupManager(ctx, client, baseDN)
+	d.groupManager = ldapclient.NewGroupManager(ctx, d.client, baseDN, d.cacheManager)
 }
 
 func (d *GroupsDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
@@ -401,7 +398,6 @@ func (d *GroupsDataSource) mapGroupsToModel(ctx context.Context, groups []*ldapc
 			"sam_account_name": types.StringValue(group.SAMAccountName),
 			"scope":            types.StringValue(string(group.Scope)),
 			"category":         types.StringValue(string(group.Category)),
-			"group_type":       types.Int64Value(int64(group.GroupType)),
 			"sid":              types.StringValue(group.ObjectSid),
 			"member_count":     types.Int64Value(int64(len(group.MemberDNs))),
 		}

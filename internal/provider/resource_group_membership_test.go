@@ -517,7 +517,7 @@ func TestValidateMemberIdentifiers(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Test the validation directly using the normalizer since we're only
 			// testing format validation, not actual LDAP resolution
-			normalizer := ldapclient.NewMemberNormalizer(nil, "DC=example,DC=com")
+			normalizer := ldapclient.NewMemberNormalizer(nil, "DC=example,DC=com", ldapclient.NewCacheManager())
 
 			// Create a temporary manager-like validator
 			var err error
@@ -551,7 +551,7 @@ func BenchmarkValidateMemberIdentifiers(b *testing.B) {
 	}
 
 	// Test validation directly using the normalizer for benchmarks
-	normalizer := ldapclient.NewMemberNormalizer(nil, "DC=example,DC=com")
+	normalizer := ldapclient.NewMemberNormalizer(nil, "DC=example,DC=com", ldapclient.NewCacheManager())
 
 	for b.Loop() {
 		for _, member := range members {
@@ -585,7 +585,7 @@ func createTestMembers(count int) []string {
 // Benchmark with different member counts.
 func BenchmarkValidateMemberIdentifiers10(b *testing.B) {
 	members := createTestMembers(10)
-	normalizer := ldapclient.NewMemberNormalizer(nil, "DC=example,DC=com")
+	normalizer := ldapclient.NewMemberNormalizer(nil, "DC=example,DC=com", ldapclient.NewCacheManager())
 
 	for b.Loop() {
 		for _, member := range members {
@@ -596,7 +596,7 @@ func BenchmarkValidateMemberIdentifiers10(b *testing.B) {
 
 func BenchmarkValidateMemberIdentifiers100(b *testing.B) {
 	members := createTestMembers(100)
-	normalizer := ldapclient.NewMemberNormalizer(nil, "DC=example,DC=com")
+	normalizer := ldapclient.NewMemberNormalizer(nil, "DC=example,DC=com", ldapclient.NewCacheManager())
 
 	for b.Loop() {
 		for _, member := range members {
@@ -607,7 +607,7 @@ func BenchmarkValidateMemberIdentifiers100(b *testing.B) {
 
 func BenchmarkValidateMemberIdentifiers1000(b *testing.B) {
 	members := createTestMembers(1000)
-	normalizer := ldapclient.NewMemberNormalizer(nil, "DC=example,DC=com")
+	normalizer := ldapclient.NewMemberNormalizer(nil, "DC=example,DC=com", ldapclient.NewCacheManager())
 
 	for b.Loop() {
 		for _, member := range members {

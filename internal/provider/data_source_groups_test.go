@@ -223,7 +223,6 @@ func TestAccGroupsDataSource_groupAttributes(t *testing.T) {
 						"sam_account_name": "",
 						"scope":            "",
 						"category":         "",
-						"group_type":       "",
 						"sid":              "",
 						"member_count":     "",
 					}),
