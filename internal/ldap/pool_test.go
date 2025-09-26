@@ -148,7 +148,7 @@ func TestConnectionPool_CreateWithInvalidConfig(t *testing.T) {
 	config.Domain = ""
 	config.LDAPURLs = nil
 
-	_, err := NewConnectionPool(config)
+	_, err := NewConnectionPool(context.Background(), config)
 	if err == nil {
 		t.Error("Expected error when creating pool without domain or URLs")
 	}
@@ -159,7 +159,7 @@ func TestConnectionPool_CreateWithURLs(t *testing.T) {
 	config.LDAPURLs = []string{"ldaps://dc1.example.com:636", "ldap://dc2.example.com:389"}
 	config.Domain = "" // Should use URLs instead of domain
 
-	pool, err := NewConnectionPool(config)
+	pool, err := NewConnectionPool(context.Background(), config)
 	if err != nil {
 		t.Fatalf("Failed to create pool with URLs: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestConnectionPool_CreateWithInvalidURL(t *testing.T) {
 	config.LDAPURLs = []string{"invalid://dc1.example.com"}
 	config.Domain = ""
 
-	_, err := NewConnectionPool(config)
+	_, err := NewConnectionPool(context.Background(), config)
 	if err == nil {
 		t.Error("Expected error when creating pool with invalid URL")
 	}
@@ -188,7 +188,7 @@ func TestConnectionPool_Stats(t *testing.T) {
 	config.LDAPURLs = []string{"ldaps://dc1.example.com:636"}
 	config.Domain = ""
 
-	pool, err := NewConnectionPool(config)
+	pool, err := NewConnectionPool(context.Background(), config)
 	if err != nil {
 		t.Fatalf("Failed to create pool: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestConnectionPool_CloseBeforeUse(t *testing.T) {
 	config.LDAPURLs = []string{"ldaps://dc1.example.com:636"}
 	config.Domain = ""
 
-	pool, err := NewConnectionPool(config)
+	pool, err := NewConnectionPool(context.Background(), config)
 	if err != nil {
 		t.Fatalf("Failed to create pool: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestConnectionPool_DoubleClose(t *testing.T) {
 	config.LDAPURLs = []string{"ldaps://dc1.example.com:636"}
 	config.Domain = ""
 
-	pool, err := NewConnectionPool(config)
+	pool, err := NewConnectionPool(context.Background(), config)
 	if err != nil {
 		t.Fatalf("Failed to create pool: %v", err)
 	}
@@ -317,7 +317,7 @@ func BenchmarkConnectionPool_Creation(b *testing.B) {
 	config.Domain = ""
 
 	for b.Loop() {
-		pool, err := NewConnectionPool(config)
+		pool, err := NewConnectionPool(context.Background(), config)
 		if err != nil {
 			b.Fatalf("Failed to create pool: %v", err)
 		}

@@ -1,7 +1,6 @@
 package provider_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -16,7 +15,7 @@ import (
 
 // Helper function to execute the build_hierarchy function with Go values.
 func executeFunction(t *testing.T, input map[string]any, config map[string]any) (map[string]any, error) {
-	ctx := context.Background()
+	ctx := t.Context()
 	f := &provider.BuildHierarchyFunction{}
 
 	// Convert input to Terraform types
@@ -73,7 +72,7 @@ func executeFunction(t *testing.T, input map[string]any, config map[string]any) 
 }
 
 func TestBuildHierarchyFunction_Metadata(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	f := &provider.BuildHierarchyFunction{}
 
 	var req function.MetadataRequest
@@ -85,7 +84,7 @@ func TestBuildHierarchyFunction_Metadata(t *testing.T) {
 }
 
 func TestBuildHierarchyFunction_Definition(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	f := &provider.BuildHierarchyFunction{}
 
 	var req function.DefinitionRequest

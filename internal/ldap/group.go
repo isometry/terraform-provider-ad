@@ -823,7 +823,7 @@ func (gm *GroupManager) SearchGroupsWithFilter(filter *GroupSearchFilter) ([]*Gr
 
 	if filter == nil {
 		filterFields["filter_type"] = "empty"
-		tflog.Debug(gm.ctx, "SearchGroupsWithFilter called with nil filter, using default search", filterFields)
+		tflog.SubsystemDebug(gm.ctx, "ldap", "SearchGroupsWithFilter called with nil filter, using default search", filterFields)
 		return gm.SearchGroups("", nil)
 	}
 
@@ -850,7 +850,7 @@ func (gm *GroupManager) SearchGroupsWithFilter(filter *GroupSearchFilter) ([]*Gr
 		filterFields["has_members"] = *filter.HasMembers
 	}
 
-	tflog.Debug(gm.ctx, "Starting SearchGroupsWithFilter", filterFields)
+	tflog.SubsystemDebug(gm.ctx, "ldap", "Starting SearchGroupsWithFilter", filterFields)
 
 	// Validate filter values
 	if err := gm.validateSearchFilter(filter); err != nil {
@@ -869,7 +869,7 @@ func (gm *GroupManager) SearchGroupsWithFilter(filter *GroupSearchFilter) ([]*Gr
 			}
 		}
 
-		tflog.Error(gm.ctx, "LDAP validate search filter operation failed", filterFields)
+		tflog.SubsystemError(gm.ctx, "ldap", "LDAP validate search filter operation failed", filterFields)
 		return nil, WrapError("validate_search_filter", err)
 	}
 
@@ -884,7 +884,7 @@ func (gm *GroupManager) SearchGroupsWithFilter(filter *GroupSearchFilter) ([]*Gr
 	}
 	filterFields["search_base_dn"] = searchBaseDN
 
-	tflog.Debug(gm.ctx, "Filter validation complete, executing search", filterFields)
+	tflog.SubsystemDebug(gm.ctx, "ldap", "Filter validation complete, executing search", filterFields)
 
 	// Perform search using existing SearchGroups method with custom base DN
 	groups, err := gm.searchGroupsInContainer(searchBaseDN, ldapFilter, nil)
@@ -907,12 +907,12 @@ func (gm *GroupManager) SearchGroupsWithFilter(filter *GroupSearchFilter) ([]*Gr
 			}
 		}
 
-		tflog.Error(gm.ctx, "LDAP search groups with filter operation failed", filterFields)
+		tflog.SubsystemError(gm.ctx, "ldap", "LDAP search groups with filter operation failed", filterFields)
 		return nil, err
 	}
 
 	filterFields["groups_found"] = len(groups)
-	tflog.Info(gm.ctx, "SearchGroupsWithFilter completed", filterFields)
+	tflog.SubsystemInfo(gm.ctx, "ldap", "SearchGroupsWithFilter completed", filterFields)
 
 	return groups, nil
 }
@@ -938,7 +938,7 @@ func (gm *GroupManager) SearchGroups(filter string, attributes []string) ([]*Gro
 		"timeout":         gm.timeout.String(),
 	}
 
-	tflog.Debug(gm.ctx, "Starting SearchGroups", searchFields)
+	tflog.SubsystemDebug(gm.ctx, "ldap", "Starting SearchGroups", searchFields)
 
 	if len(attributes) == 0 {
 		attributes = []string{
@@ -946,7 +946,7 @@ func (gm *GroupManager) SearchGroups(filter string, attributes []string) ([]*Gro
 			"description", "groupType", "mail", "mailNickname", "whenCreated", "whenChanged",
 		}
 		searchFields["attributes"] = attributes
-		tflog.Trace(gm.ctx, "Using default attributes for group search", searchFields)
+		tflog.SubsystemTrace(gm.ctx, "ldap", "Using default attributes for group search", searchFields)
 	}
 
 	searchReq := &SearchRequest{
@@ -957,7 +957,7 @@ func (gm *GroupManager) SearchGroups(filter string, attributes []string) ([]*Gro
 		TimeLimit:  gm.timeout,
 	}
 
-	tflog.Debug(gm.ctx, "Executing paged search for groups", searchFields)
+	tflog.SubsystemDebug(gm.ctx, "ldap", "Executing paged search for groups", searchFields)
 
 	result, err := gm.client.SearchWithPaging(gm.ctx, searchReq)
 	if err != nil {
@@ -976,12 +976,12 @@ func (gm *GroupManager) SearchGroups(filter string, attributes []string) ([]*Gro
 			}
 		}
 
-		tflog.Error(gm.ctx, "LDAP search groups operation failed", searchFields)
+		tflog.SubsystemError(gm.ctx, "ldap", "LDAP search groups operation failed", searchFields)
 		return nil, WrapError("search_groups", err)
 	}
 
 	searchFields["raw_entries_found"] = len(result.Entries)
-	tflog.Trace(gm.ctx, "Raw LDAP search completed, processing entries", searchFields)
+	tflog.SubsystemTrace(gm.ctx, "ldap", "Raw LDAP search completed, processing entries", searchFields)
 
 	groups := make([]*Group, 0, len(result.Entries))
 	processErrors := 0
@@ -995,7 +995,7 @@ func (gm *GroupManager) SearchGroups(filter string, attributes []string) ([]*Gro
 				"entry_dn":    entry.DN,
 				"error":       err.Error(),
 			}
-			tflog.Warn(gm.ctx, "Failed to convert LDAP entry to group, skipping", errorFields)
+			tflog.SubsystemWarn(gm.ctx, "ldap", "Failed to convert LDAP entry to group, skipping", errorFields)
 			continue
 		}
 		groups = append(groups, group)
@@ -1007,7 +1007,7 @@ func (gm *GroupManager) SearchGroups(filter string, attributes []string) ([]*Gro
 	searchFields["process_errors"] = processErrors
 	searchFields["success_rate"] = float64(len(groups)) / float64(len(result.Entries)) * 100
 
-	tflog.Info(gm.ctx, "SearchGroups completed", searchFields)
+	tflog.SubsystemInfo(gm.ctx, "ldap", "SearchGroups completed", searchFields)
 
 	return groups, nil
 }
@@ -1323,7 +1323,7 @@ func (gm *GroupManager) searchGroupsInContainer(baseDN, filter string, attribute
 		"timeout":         gm.timeout.String(),
 	}
 
-	tflog.Debug(gm.ctx, "Starting searchGroupsInContainer", searchFields)
+	tflog.SubsystemDebug(gm.ctx, "ldap", "Starting searchGroupsInContainer", searchFields)
 
 	if len(attributes) == 0 {
 		attributes = []string{
@@ -1331,7 +1331,7 @@ func (gm *GroupManager) searchGroupsInContainer(baseDN, filter string, attribute
 			"description", "groupType", "mail", "mailNickname", "whenCreated", "whenChanged",
 		}
 		searchFields["attributes"] = attributes
-		tflog.Trace(gm.ctx, "Using default attributes for container group search", searchFields)
+		tflog.SubsystemTrace(gm.ctx, "ldap", "Using default attributes for container group search", searchFields)
 	}
 
 	searchReq := &SearchRequest{
@@ -1342,7 +1342,7 @@ func (gm *GroupManager) searchGroupsInContainer(baseDN, filter string, attribute
 		TimeLimit:  gm.timeout,
 	}
 
-	tflog.Debug(gm.ctx, "Executing paged search in container", searchFields)
+	tflog.SubsystemDebug(gm.ctx, "ldap", "Executing paged search in container", searchFields)
 
 	result, err := gm.client.SearchWithPaging(gm.ctx, searchReq)
 	if err != nil {
@@ -1361,12 +1361,12 @@ func (gm *GroupManager) searchGroupsInContainer(baseDN, filter string, attribute
 			}
 		}
 
-		tflog.Error(gm.ctx, "LDAP search groups in container operation failed", searchFields)
+		tflog.SubsystemError(gm.ctx, "ldap", "LDAP search groups in container operation failed", searchFields)
 		return nil, WrapError("search_groups_in_container", err)
 	}
 
 	searchFields["raw_entries_found"] = len(result.Entries)
-	tflog.Trace(gm.ctx, "Container search completed, processing entries", searchFields)
+	tflog.SubsystemTrace(gm.ctx, "ldap", "Container search completed, processing entries", searchFields)
 
 	groups := make([]*Group, 0, len(result.Entries))
 	processErrors := 0
@@ -1381,7 +1381,7 @@ func (gm *GroupManager) searchGroupsInContainer(baseDN, filter string, attribute
 				"container":   baseDN,
 				"error":       err.Error(),
 			}
-			tflog.Warn(gm.ctx, "Failed to convert LDAP entry to group in container search, skipping", errorFields)
+			tflog.SubsystemWarn(gm.ctx, "ldap", "Failed to convert LDAP entry to group in container search, skipping", errorFields)
 			continue
 		}
 		groups = append(groups, group)
@@ -1397,7 +1397,7 @@ func (gm *GroupManager) searchGroupsInContainer(baseDN, filter string, attribute
 		searchFields["success_rate"] = 100.0
 	}
 
-	tflog.Info(gm.ctx, "searchGroupsInContainer completed", searchFields)
+	tflog.SubsystemInfo(gm.ctx, "ldap", "searchGroupsInContainer completed", searchFields)
 
 	return groups, nil
 }
@@ -1479,7 +1479,7 @@ func (gm *GroupManager) flattenGroupMembersRecursive(groupGUID string, processed
 		})
 		if err != nil {
 			// Log warning and continue with next member
-			tflog.Warn(gm.ctx, "Failed to search for member as group", map[string]any{
+			tflog.SubsystemWarn(gm.ctx, "ldap", "Failed to search for member as group", map[string]any{
 				"member_dn": memberDN,
 				"error":     err.Error(),
 			})
@@ -1490,7 +1490,7 @@ func (gm *GroupManager) flattenGroupMembersRecursive(groupGUID string, processed
 			// This member is a group, recursively process its members
 			memberGroupGUID, err := gm.guidHandler.ExtractGUID(groupResults.Entries[0])
 			if err != nil {
-				tflog.Warn(gm.ctx, "Failed to extract GUID from member group", map[string]any{
+				tflog.SubsystemWarn(gm.ctx, "ldap", "Failed to extract GUID from member group", map[string]any{
 					"member_dn": memberDN,
 					"error":     err.Error(),
 				})
@@ -1499,7 +1499,7 @@ func (gm *GroupManager) flattenGroupMembersRecursive(groupGUID string, processed
 
 			// Recursively process this group
 			if err := gm.flattenGroupMembersRecursive(memberGroupGUID, processedGroups, userDNs); err != nil {
-				tflog.Warn(gm.ctx, "Failed to recursively process member group", map[string]any{
+				tflog.SubsystemWarn(gm.ctx, "ldap", "Failed to recursively process member group", map[string]any{
 					"member_group_guid": memberGroupGUID,
 					"member_dn":         memberDN,
 					"error":             err.Error(),
@@ -1518,7 +1518,7 @@ func (gm *GroupManager) flattenGroupMembersRecursive(groupGUID string, processed
 				TimeLimit:  gm.timeout,
 			})
 			if err != nil {
-				tflog.Warn(gm.ctx, "Failed to search for member as user", map[string]any{
+				tflog.SubsystemWarn(gm.ctx, "ldap", "Failed to search for member as user", map[string]any{
 					"member_dn": memberDN,
 					"error":     err.Error(),
 				})
@@ -1530,7 +1530,7 @@ func (gm *GroupManager) flattenGroupMembersRecursive(groupGUID string, processed
 				userDNs[memberDN] = true
 			} else {
 				// Neither group nor user, log and skip
-				tflog.Debug(gm.ctx, "Member is neither group nor user, skipping", map[string]any{
+				tflog.SubsystemDebug(gm.ctx, "ldap", "Member is neither group nor user, skipping", map[string]any{
 					"member_dn": memberDN,
 				})
 			}

@@ -343,7 +343,7 @@ func (cm *CacheManager) WarmCache(ctx context.Context, client Client, baseDN str
 
 	start := time.Now()
 
-	tflog.Info(ctx, "Starting cache warming operation", map[string]any{
+	tflog.SubsystemInfo(ctx, "ldap", "Starting cache warming operation", map[string]any{
 		"operation": "cache_warming",
 		"base_dn":   baseDN,
 	})
@@ -374,7 +374,7 @@ func (cm *CacheManager) WarmCache(ctx context.Context, client Client, baseDN str
 		return WrapError("cache_warm_search", fmt.Errorf("failed to search for cache warming: %w", err))
 	}
 
-	tflog.Debug(ctx, "Cache warming search completed", map[string]any{
+	tflog.SubsystemDebug(ctx, "ldap", "Cache warming search completed", map[string]any{
 		"entries_found":  len(result.Entries),
 		"search_time_ms": time.Since(start).Milliseconds(),
 	})
@@ -390,7 +390,7 @@ func (cm *CacheManager) WarmCache(ctx context.Context, client Client, baseDN str
 		cacheEntry, err := cm.convertLDAPEntryToCacheEntry(ldapEntry)
 		if err != nil {
 			entriesWithErrors++
-			tflog.Warn(ctx, "Failed to convert LDAP entry to cache entry", map[string]any{
+			tflog.SubsystemWarn(ctx, "ldap", "Failed to convert LDAP entry to cache entry", map[string]any{
 				"dn":    ldapEntry.DN,
 				"error": err.Error(),
 			})
@@ -399,7 +399,7 @@ func (cm *CacheManager) WarmCache(ctx context.Context, client Client, baseDN str
 
 		if err := cm.Put(cacheEntry); err != nil {
 			entriesWithErrors++
-			tflog.Warn(ctx, "Failed to store cache entry", map[string]any{
+			tflog.SubsystemWarn(ctx, "ldap", "Failed to store cache entry", map[string]any{
 				"dn":    cacheEntry.DN,
 				"error": err.Error(),
 			})
@@ -417,7 +417,7 @@ func (cm *CacheManager) WarmCache(ctx context.Context, client Client, baseDN str
 	cm.stats.LastWarmed = time.Now()
 	cm.statsMu.Unlock()
 
-	tflog.Info(ctx, "Cache warming completed", map[string]any{
+	tflog.SubsystemInfo(ctx, "ldap", "Cache warming completed", map[string]any{
 		"operation":           "cache_warming",
 		"entries_processed":   entriesProcessed,
 		"entries_with_errors": entriesWithErrors,

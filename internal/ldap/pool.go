@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-ldap/ldap/v3"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 // Connection pool limits.
@@ -29,6 +30,7 @@ const (
 
 // connectionPool implements ConnectionPool interface.
 type connectionPool struct {
+	ctx         context.Context // Logging context with LDAP subsystem
 	config      *ConnectionConfig
 	servers     []*ServerInfo
 	connections chan *PooledConnection
@@ -49,9 +51,9 @@ type connectionPool struct {
 }
 
 // NewConnectionPool creates a new connection pool.
-func NewConnectionPool(config *ConnectionConfig) (ConnectionPool, error) {
+func NewConnectionPool(ctx context.Context, config *ConnectionConfig) (ConnectionPool, error) {
 	start := time.Now()
-	fmt.Printf("[DEBUG] Creating new connection pool\n")
+	tflog.SubsystemDebug(ctx, "ldap", "Creating new connection pool")
 
 	if config == nil {
 		config = DefaultConfig()
@@ -62,9 +64,10 @@ func NewConnectionPool(config *ConnectionConfig) (ConnectionPool, error) {
 	}
 
 	pool := &connectionPool{
+		ctx:         ctx, // Store context for logging
 		config:      config,
 		connections: make(chan *PooledConnection, config.MaxConnections),
-		discovery:   NewSRVDiscovery(),
+		discovery:   NewSRVDiscovery(ctx),
 		startTime:   time.Now(),
 		healthStop:  make(chan struct{}),
 	}
@@ -79,7 +82,9 @@ func NewConnectionPool(config *ConnectionConfig) (ConnectionPool, error) {
 		pool.startHealthChecker()
 	}
 
-	fmt.Printf("[DEBUG] Connection pool created in %v\n", time.Since(start))
+	tflog.SubsystemDebug(ctx, "ldap", "Connection pool created", map[string]any{
+		"duration": time.Since(start).String(),
+	})
 	return pool, nil
 }
 
@@ -90,7 +95,9 @@ func (p *connectionPool) discoverServers() error {
 
 	// Use configured URLs if provided
 	if len(p.config.LDAPURLs) > 0 {
-		fmt.Printf("[DEBUG] Using configured LDAP URLs: %v\n", p.config.LDAPURLs)
+		tflog.SubsystemDebug(p.ctx, "ldap", "Using configured LDAP URLs", map[string]any{
+			"urls": p.config.LDAPURLs,
+		})
 		for _, url := range p.config.LDAPURLs {
 			server, err := ParseLDAPURL(url)
 			if err != nil {
@@ -98,24 +105,37 @@ func (p *connectionPool) discoverServers() error {
 			}
 			servers = append(servers, server)
 		}
-		fmt.Printf("[DEBUG] Parsed %d servers from URLs in %v\n", len(servers), time.Since(start))
+		tflog.SubsystemDebug(p.ctx, "ldap", "Parsed servers from URLs", map[string]any{
+			"server_count":   len(servers),
+			"parse_duration": time.Since(start).String(),
+		})
 	} else if p.config.Domain != "" {
 		// Use SRV discovery
-		fmt.Printf("[DEBUG] Starting SRV discovery for domain: %s (timeout: %v)\n", p.config.Domain, p.config.Timeout)
+		tflog.SubsystemDebug(p.ctx, "ldap", "Starting SRV discovery for domain", map[string]any{
+			"domain":  p.config.Domain,
+			"timeout": p.config.Timeout.String(),
+		})
 		ctx, cancel := context.WithTimeout(context.Background(), p.config.Timeout)
 		defer cancel()
 
 		discoveryStart := time.Now()
 		discoveredServers, err := p.discovery.DiscoverServers(ctx, p.config.Domain)
 		discoveryDuration := time.Since(discoveryStart)
-		fmt.Printf("[DEBUG] SRV discovery completed in %v\n", discoveryDuration)
+		tflog.SubsystemDebug(p.ctx, "ldap", "SRV discovery completed", map[string]any{
+			"duration": discoveryDuration.String(),
+		})
 
 		if err != nil {
-			fmt.Printf("[DEBUG] SRV discovery failed after %v: %v\n", discoveryDuration, err)
+			tflog.SubsystemDebug(p.ctx, "ldap", "SRV discovery failed", map[string]any{
+				"duration": discoveryDuration.String(),
+				"error":    err.Error(),
+			})
 			return fmt.Errorf("SRV discovery failed: %w", err)
 		}
 		servers = discoveredServers
-		fmt.Printf("[DEBUG] SRV discovery found %d servers\n", len(servers))
+		tflog.SubsystemDebug(p.ctx, "ldap", "SRV discovery found servers", map[string]any{
+			"server_count": len(servers),
+		})
 	} else {
 		return errors.New("either domain or LDAP URLs must be specified")
 	}
@@ -128,7 +148,10 @@ func (p *connectionPool) discoverServers() error {
 	p.servers = servers
 	p.mu.Unlock()
 
-	fmt.Printf("[DEBUG] Server discovery completed in %v, found %d servers\n", time.Since(start), len(servers))
+	tflog.SubsystemDebug(p.ctx, "ldap", "Server discovery completed", map[string]any{
+		"duration":     time.Since(start).String(),
+		"server_count": len(servers),
+	})
 	return nil
 }
 
@@ -448,12 +471,13 @@ func (p *connectionPool) performHealthCheck() {
 	var toCheck []*PooledConnection
 
 	// Get up to 3 connections for health checking
+healthCheckLoop:
 	for range 3 {
 		select {
 		case conn := <-p.connections:
 			toCheck = append(toCheck, conn)
 		default:
-			break
+			break healthCheckLoop
 		}
 	}
 

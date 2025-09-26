@@ -67,7 +67,7 @@ func TestNewClient(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client, err := NewClient(tt.config)
+			client, err := NewClient(t.Context(), tt.config)
 
 			if tt.wantErr && err == nil {
 				t.Errorf("NewClient() expected error but got none")
@@ -80,10 +80,6 @@ func TestNewClient(t *testing.T) {
 			}
 
 			if !tt.wantErr && client != nil {
-				// Verify client was created successfully
-				if client == nil {
-					t.Error("NewClient() returned nil client")
-				}
 
 				// Clean up
 				client.Close()
@@ -97,7 +93,7 @@ func TestClient_Close(t *testing.T) {
 	config.LDAPURLs = []string{"ldaps://dc1.example.com:636"}
 	config.Domain = ""
 
-	client, err := NewClient(config)
+	client, err := NewClient(t.Context(), config)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -120,7 +116,7 @@ func TestClient_Stats(t *testing.T) {
 	config.LDAPURLs = []string{"ldaps://dc1.example.com:636"}
 	config.Domain = ""
 
-	client, err := NewClient(config)
+	client, err := NewClient(t.Context(), config)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -144,7 +140,7 @@ func TestSearchRequest_Validation(t *testing.T) {
 	config.LDAPURLs = []string{"ldaps://dc1.example.com:636"}
 	config.Domain = ""
 
-	client, err := NewClient(config)
+	client, err := NewClient(t.Context(), config)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -206,7 +202,7 @@ func TestAddRequest_Validation(t *testing.T) {
 	config.LDAPURLs = []string{"ldaps://dc1.example.com:636"}
 	config.Domain = ""
 
-	client, err := NewClient(config)
+	client, err := NewClient(t.Context(), config)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -263,7 +259,7 @@ func TestModifyRequest_Validation(t *testing.T) {
 	config.LDAPURLs = []string{"ldaps://dc1.example.com:636"}
 	config.Domain = ""
 
-	client, err := NewClient(config)
+	client, err := NewClient(t.Context(), config)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -323,7 +319,7 @@ func TestDelete_Validation(t *testing.T) {
 	config.LDAPURLs = []string{"ldaps://dc1.example.com:636"}
 	config.Domain = ""
 
-	client, err := NewClient(config)
+	client, err := NewClient(t.Context(), config)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -374,7 +370,7 @@ func TestClient_IsRetryableError(t *testing.T) {
 	config.LDAPURLs = []string{"ldaps://dc1.example.com:636"}
 	config.Domain = ""
 
-	clientInterface, err := NewClient(config)
+	clientInterface, err := NewClient(t.Context(), config)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -485,7 +481,7 @@ func BenchmarkNewClient(b *testing.B) {
 	config.Domain = ""
 
 	for b.Loop() {
-		client, err := NewClient(config)
+		client, err := NewClient(b.Context(), config)
 		if err != nil {
 			b.Fatalf("Failed to create client: %v", err)
 		}
@@ -514,7 +510,7 @@ func BenchmarkClient_IsRetryableError(b *testing.B) {
 	config.LDAPURLs = []string{"ldaps://dc1.example.com:636"}
 	config.Domain = ""
 
-	clientInterface, err := NewClient(config)
+	clientInterface, err := NewClient(b.Context(), config)
 	if err != nil {
 		b.Fatalf("Failed to create client: %v", err)
 	}
@@ -538,7 +534,7 @@ func TestClient_WithRetry_Logic(t *testing.T) {
 	config.MaxRetries = 2
 	config.InitialBackoff = 1 * time.Millisecond // Fast for testing
 
-	clientInterface, err := NewClient(config)
+	clientInterface, err := NewClient(t.Context(), config)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}

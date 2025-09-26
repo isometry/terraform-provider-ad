@@ -1,7 +1,6 @@
 package planmodifiers_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -18,7 +17,7 @@ func TestUseNameForSAMAccountName_Description(t *testing.T) {
 		modifier := planmodifiers.UseNameForSAMAccountName(false)
 		expected := "uses the value of name if sam_account_name is not explicitly configured for group objects"
 
-		actual := modifier.Description(context.Background())
+		actual := modifier.Description(t.Context())
 		if actual != expected {
 			t.Errorf("Expected description %q, got %q", expected, actual)
 		}
@@ -28,7 +27,7 @@ func TestUseNameForSAMAccountName_Description(t *testing.T) {
 		modifier := planmodifiers.UseNameForSAMAccountName(true)
 		expected := "uses the value of name if sam_account_name is not explicitly configured for user objects"
 
-		actual := modifier.Description(context.Background())
+		actual := modifier.Description(t.Context())
 		if actual != expected {
 			t.Errorf("Expected description %q, got %q", expected, actual)
 		}
@@ -40,7 +39,7 @@ func TestUseNameForSAMAccountName_MarkdownDescription(t *testing.T) {
 		modifier := planmodifiers.UseNameForSAMAccountName(false)
 		expected := "uses the value of `name` if `sam_account_name` is not explicitly configured for group objects"
 
-		actual := modifier.MarkdownDescription(context.Background())
+		actual := modifier.MarkdownDescription(t.Context())
 		if actual != expected {
 			t.Errorf("Expected markdown description %q, got %q", expected, actual)
 		}
@@ -50,7 +49,7 @@ func TestUseNameForSAMAccountName_MarkdownDescription(t *testing.T) {
 		modifier := planmodifiers.UseNameForSAMAccountName(true)
 		expected := "uses the value of `name` if `sam_account_name` is not explicitly configured for user objects"
 
-		actual := modifier.MarkdownDescription(context.Background())
+		actual := modifier.MarkdownDescription(t.Context())
 		if actual != expected {
 			t.Errorf("Expected markdown description %q, got %q", expected, actual)
 		}
@@ -134,12 +133,12 @@ func TestUseNameForSAMAccountName_PlanModifyString_Groups(t *testing.T) {
 			modifier := planmodifiers.UseNameForSAMAccountName(false) // false = group mode
 
 			// Convert name value to terraform value
-			nameValue, err := test.nameValue.ToTerraformValue(context.Background())
+			nameValue, err := test.nameValue.ToTerraformValue(t.Context())
 			if err != nil {
 				t.Fatalf("Failed to convert name value: %v", err)
 			}
 
-			configValue, err := test.configValue.ToTerraformValue(context.Background())
+			configValue, err := test.configValue.ToTerraformValue(t.Context())
 			if err != nil {
 				t.Fatalf("Failed to convert config value: %v", err)
 			}
@@ -177,7 +176,7 @@ func TestUseNameForSAMAccountName_PlanModifyString_Groups(t *testing.T) {
 				PlanValue: test.configValue, // Start with config value
 			}
 
-			modifier.PlanModifyString(context.Background(), req, resp)
+			modifier.PlanModifyString(t.Context(), req, resp)
 
 			// Check diagnostics
 			if test.expectDiagnostics && !resp.Diagnostics.HasError() {
@@ -280,12 +279,12 @@ func TestUseNameForSAMAccountName_PlanModifyString_Users(t *testing.T) {
 			modifier := planmodifiers.UseNameForSAMAccountName(true) // true = user mode
 
 			// Convert name value to terraform value
-			nameValue, err := test.nameValue.ToTerraformValue(context.Background())
+			nameValue, err := test.nameValue.ToTerraformValue(t.Context())
 			if err != nil {
 				t.Fatalf("Failed to convert name value: %v", err)
 			}
 
-			configValue, err := test.configValue.ToTerraformValue(context.Background())
+			configValue, err := test.configValue.ToTerraformValue(t.Context())
 			if err != nil {
 				t.Fatalf("Failed to convert config value: %v", err)
 			}
@@ -323,7 +322,7 @@ func TestUseNameForSAMAccountName_PlanModifyString_Users(t *testing.T) {
 				PlanValue: test.configValue, // Start with config value
 			}
 
-			modifier.PlanModifyString(context.Background(), req, resp)
+			modifier.PlanModifyString(t.Context(), req, resp)
 
 			// Check diagnostics
 			if test.expectDiagnostics && !resp.Diagnostics.HasError() {
@@ -387,7 +386,7 @@ func TestUseNameForSAMAccountName_EdgeCases(t *testing.T) {
 			PlanValue: types.StringNull(),
 		}
 
-		modifier.PlanModifyString(context.Background(), req, resp)
+		modifier.PlanModifyString(t.Context(), req, resp)
 
 		if resp.Diagnostics.HasError() {
 			t.Errorf("Single character name should be valid: %v", resp.Diagnostics)
@@ -430,7 +429,7 @@ func TestUseNameForSAMAccountName_EdgeCases(t *testing.T) {
 			PlanValue: types.StringNull(),
 		}
 
-		modifier.PlanModifyString(context.Background(), req, resp)
+		modifier.PlanModifyString(t.Context(), req, resp)
 
 		// Empty name should produce an error since it's not valid for SAM account names
 		if !resp.Diagnostics.HasError() {

@@ -1,7 +1,6 @@
 package validators_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -79,7 +78,7 @@ func TestDNValidator(t *testing.T) {
 			}
 			response := validator.StringResponse{}
 
-			validators.IsValidDN().ValidateString(context.Background(), request, &response)
+			validators.IsValidDN().ValidateString(t.Context(), request, &response)
 
 			if !response.Diagnostics.HasError() && test.expectError {
 				t.Fatal("expected error, got no error")
@@ -114,11 +113,11 @@ func TestDNValidatorDescription(t *testing.T) {
 	validator := validators.IsValidDN()
 
 	expected := "value must be a valid Distinguished Name (DN)"
-	if validator.Description(context.Background()) != expected {
-		t.Errorf("expected description %q, got %q", expected, validator.Description(context.Background()))
+	if validator.Description(t.Context()) != expected {
+		t.Errorf("expected description %q, got %q", expected, validator.Description(t.Context()))
 	}
 
-	if validator.MarkdownDescription(context.Background()) != expected {
-		t.Errorf("expected markdown description %q, got %q", expected, validator.MarkdownDescription(context.Background()))
+	if validator.MarkdownDescription(t.Context()) != expected {
+		t.Errorf("expected markdown description %q, got %q", expected, validator.MarkdownDescription(t.Context()))
 	}
 }

@@ -282,7 +282,7 @@ func (p *ActiveDirectoryProvider) Configure(ctx context.Context, req provider.Co
 
 	// Create LDAP client with logging context
 	start := time.Now()
-	client, err := ldapclient.NewClientWithContext(ctx, config)
+	client, err := ldapclient.NewClient(ctx, config)
 	if err != nil {
 		tflog.Error(ctx, "Failed to create LDAP client", map[string]any{
 			"error":       err.Error(),

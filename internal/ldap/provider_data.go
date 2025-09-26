@@ -46,7 +46,7 @@ func (pd *ProviderData) ValidateConnection(ctx context.Context) error {
 		return fmt.Errorf("LDAP client connection failed: %w", err)
 	}
 
-	tflog.Debug(ctx, "Provider data validation successful", map[string]any{
+	tflog.SubsystemDebug(ctx, "ldap", "Provider data validation successful", map[string]any{
 		"client_available":        pd.Client != nil,
 		"cache_manager_available": pd.CacheManager != nil,
 	})
@@ -64,7 +64,7 @@ func (pd *ProviderData) WarmCache(ctx context.Context, baseDN string) error {
 		return fmt.Errorf("cache manager is not initialized")
 	}
 
-	tflog.Info(ctx, "Warming cache via provider data", map[string]any{
+	tflog.SubsystemInfo(ctx, "ldap", "Warming cache via provider data", map[string]any{
 		"base_dn": baseDN,
 	})
 
@@ -73,7 +73,7 @@ func (pd *ProviderData) WarmCache(ctx context.Context, baseDN string) error {
 	duration := time.Since(start)
 
 	if err != nil {
-		tflog.Error(ctx, "Cache warming failed", map[string]any{
+		tflog.SubsystemError(ctx, "ldap", "Cache warming failed", map[string]any{
 			"base_dn":     baseDN,
 			"error":       err.Error(),
 			"duration_ms": duration.Milliseconds(),
@@ -81,7 +81,7 @@ func (pd *ProviderData) WarmCache(ctx context.Context, baseDN string) error {
 		return fmt.Errorf("cache warming failed: %w", err)
 	}
 
-	tflog.Info(ctx, "Cache warming completed via provider data", map[string]any{
+	tflog.SubsystemInfo(ctx, "ldap", "Cache warming completed via provider data", map[string]any{
 		"base_dn":     baseDN,
 		"duration_ms": duration.Milliseconds(),
 	})
@@ -182,7 +182,7 @@ func (pd *ProviderData) SearchWithCache(ctx context.Context, req *SearchRequest)
 	// In future phases, this could implement intelligent cache lookups
 	// based on the search request parameters
 
-	tflog.Debug(ctx, "Performing search with cache support", map[string]any{
+	tflog.SubsystemDebug(ctx, "ldap", "Performing search with cache support", map[string]any{
 		"base_dn":    req.BaseDN,
 		"filter":     req.Filter,
 		"scope":      req.Scope.String(),
@@ -194,7 +194,7 @@ func (pd *ProviderData) SearchWithCache(ctx context.Context, req *SearchRequest)
 	duration := time.Since(start)
 
 	if err != nil {
-		tflog.Error(ctx, "Search with cache failed", map[string]any{
+		tflog.SubsystemError(ctx, "ldap", "Search with cache failed", map[string]any{
 			"base_dn":     req.BaseDN,
 			"filter":      req.Filter,
 			"error":       err.Error(),
@@ -203,7 +203,7 @@ func (pd *ProviderData) SearchWithCache(ctx context.Context, req *SearchRequest)
 		return nil, err
 	}
 
-	tflog.Debug(ctx, "Search with cache completed", map[string]any{
+	tflog.SubsystemDebug(ctx, "ldap", "Search with cache completed", map[string]any{
 		"base_dn":       req.BaseDN,
 		"filter":        req.Filter,
 		"entries_found": len(result.Entries),
@@ -217,13 +217,13 @@ func (pd *ProviderData) SearchWithCache(ctx context.Context, req *SearchRequest)
 // This is a convenience method for resources to quickly find cached entries.
 func (pd *ProviderData) LookupByIdentifier(ctx context.Context, identifier string) (*LDAPCacheEntry, bool) {
 	if pd.CacheManager == nil {
-		tflog.Warn(ctx, "Cache manager not available for lookup", map[string]any{
+		tflog.SubsystemWarn(ctx, "ldap", "Cache manager not available for lookup", map[string]any{
 			"identifier": identifier,
 		})
 		return nil, false
 	}
 
-	tflog.Trace(ctx, "Performing cache lookup by identifier", map[string]any{
+	tflog.SubsystemTrace(ctx, "ldap", "Performing cache lookup by identifier", map[string]any{
 		"identifier": identifier,
 	})
 
@@ -231,7 +231,7 @@ func (pd *ProviderData) LookupByIdentifier(ctx context.Context, identifier strin
 	entry, found := pd.CacheManager.Get(identifier)
 	duration := time.Since(start)
 
-	tflog.Trace(ctx, "Cache lookup completed", map[string]any{
+	tflog.SubsystemTrace(ctx, "ldap", "Cache lookup completed", map[string]any{
 		"identifier":  identifier,
 		"found":       found,
 		"duration_ms": duration.Milliseconds(),
@@ -244,27 +244,27 @@ func (pd *ProviderData) LookupByIdentifier(ctx context.Context, identifier strin
 // This is useful when resources perform LDAP operations and want to keep the cache current.
 func (pd *ProviderData) UpdateCache(ctx context.Context, entry *LDAPCacheEntry) error {
 	if pd.CacheManager == nil {
-		tflog.Warn(ctx, "Cache manager not available for update", map[string]any{
+		tflog.SubsystemWarn(ctx, "ldap", "Cache manager not available for update", map[string]any{
 			"entry_dn": entry.DN,
 		})
 		return fmt.Errorf("cache manager is not initialized")
 	}
 
-	tflog.Trace(ctx, "Updating cache entry", map[string]any{
+	tflog.SubsystemTrace(ctx, "ldap", "Updating cache entry", map[string]any{
 		"entry_dn":   entry.DN,
 		"entry_guid": entry.ObjectGUID,
 	})
 
 	err := pd.CacheManager.Put(entry)
 	if err != nil {
-		tflog.Error(ctx, "Failed to update cache entry", map[string]any{
+		tflog.SubsystemError(ctx, "ldap", "Failed to update cache entry", map[string]any{
 			"entry_dn": entry.DN,
 			"error":    err.Error(),
 		})
 		return fmt.Errorf("failed to update cache entry: %w", err)
 	}
 
-	tflog.Trace(ctx, "Cache entry updated successfully", map[string]any{
+	tflog.SubsystemTrace(ctx, "ldap", "Cache entry updated successfully", map[string]any{
 		"entry_dn":   entry.DN,
 		"entry_guid": entry.ObjectGUID,
 	})
@@ -279,7 +279,7 @@ func (pd *ProviderData) IsConnected(ctx context.Context) bool {
 	}
 
 	if err := pd.Client.Ping(ctx); err != nil {
-		tflog.Debug(ctx, "Connection check failed", map[string]any{
+		tflog.SubsystemDebug(ctx, "ldap", "Connection check failed", map[string]any{
 			"error": err.Error(),
 		})
 		return false

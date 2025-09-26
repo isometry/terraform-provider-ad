@@ -1,7 +1,6 @@
 package provider_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/provider"
@@ -19,7 +18,7 @@ func TestProviderMetadata(t *testing.T) {
 	req := provider.MetadataRequest{}
 	resp := &provider.MetadataResponse{}
 
-	p.Metadata(context.Background(), req, resp)
+	p.Metadata(t.Context(), req, resp)
 
 	if resp.TypeName != "ad" {
 		t.Errorf("Expected TypeName 'ad', got %s", resp.TypeName)
@@ -37,7 +36,7 @@ func TestProviderSchema(t *testing.T) {
 	req := provider.SchemaRequest{}
 	resp := &provider.SchemaResponse{}
 
-	p.Schema(context.Background(), req, resp)
+	p.Schema(t.Context(), req, resp)
 
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("Schema creation failed: %v", resp.Diagnostics)
@@ -65,7 +64,7 @@ func TestProviderSchema(t *testing.T) {
 func TestProviderResources(t *testing.T) {
 	p := &this.ActiveDirectoryProvider{}
 
-	resources := p.Resources(context.Background())
+	resources := p.Resources(t.Context())
 
 	expectedResources := []string{
 		"ad_group",
@@ -90,7 +89,7 @@ func TestProviderResources(t *testing.T) {
 func TestProviderDataSources(t *testing.T) {
 	p := &this.ActiveDirectoryProvider{}
 
-	dataSources := p.DataSources(context.Background())
+	dataSources := p.DataSources(t.Context())
 
 	expectedDataSources := []string{
 		"ad_group",
@@ -118,7 +117,7 @@ func TestProviderDataSources(t *testing.T) {
 func TestProviderConfigValidators(t *testing.T) {
 	p := &this.ActiveDirectoryProvider{}
 
-	validators := p.ConfigValidators(context.Background())
+	validators := p.ConfigValidators(t.Context())
 
 	if len(validators) == 0 {
 		t.Error("Expected config validators, got none")
@@ -136,7 +135,7 @@ func TestProviderConfigValidators(t *testing.T) {
 func TestProviderFunctions(t *testing.T) {
 	p := &this.ActiveDirectoryProvider{}
 
-	functions := p.Functions(context.Background())
+	functions := p.Functions(t.Context())
 
 	// AD provider has 2 functions: build_hierarchy, normalize_roles
 	if len(functions) != 2 {
@@ -156,7 +155,7 @@ func TestProviderFunctions(t *testing.T) {
 func TestProviderEphemeralResources(t *testing.T) {
 	p := &this.ActiveDirectoryProvider{}
 
-	ephemeralResources := p.EphemeralResources(context.Background())
+	ephemeralResources := p.EphemeralResources(t.Context())
 
 	// AD provider currently has no ephemeral resources defined
 	if len(ephemeralResources) != 0 {
@@ -339,7 +338,7 @@ func TestProviderEnvironmentVariables(t *testing.T) {
 	req := provider.SchemaRequest{}
 	resp := &provider.SchemaResponse{}
 
-	p.Schema(context.Background(), req, resp)
+	p.Schema(t.Context(), req, resp)
 
 	for _, envVar := range envVars {
 		found := false

@@ -8,16 +8,20 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 // SRVDiscovery handles DNS SRV record discovery for domain controllers.
 type SRVDiscovery struct {
+	ctx      context.Context // Logging context with LDAP subsystem
 	resolver *net.Resolver
 }
 
 // NewSRVDiscovery creates a new SRV discovery instance.
-func NewSRVDiscovery() *SRVDiscovery {
+func NewSRVDiscovery(ctx context.Context) *SRVDiscovery {
 	return &SRVDiscovery{
+		ctx:      ctx,
 		resolver: net.DefaultResolver,
 	}
 }
@@ -29,7 +33,9 @@ func NewSRVDiscovery() *SRVDiscovery {
 // 3. _gc._tcp.<domain> (Global Catalog - last resort).
 func (d *SRVDiscovery) DiscoverServers(ctx context.Context, domain string) ([]*ServerInfo, error) {
 	start := time.Now()
-	fmt.Printf("[DEBUG] Starting server discovery for domain: %s\n", domain)
+	tflog.SubsystemDebug(d.ctx, "ldap", "Starting server discovery for domain", map[string]any{
+		"domain": domain,
+	})
 
 	if domain == "" {
 		return nil, fmt.Errorf("domain cannot be empty")
@@ -48,17 +54,29 @@ func (d *SRVDiscovery) DiscoverServers(ctx context.Context, domain string) ([]*S
 		{"_gc._tcp." + domain, false, "srv"},
 	}
 
-	fmt.Printf("[DEBUG] Will attempt SRV lookups for %d service types\n", len(srvRecords))
+	tflog.SubsystemDebug(d.ctx, "ldap", "Will attempt SRV lookups", map[string]any{
+		"service_type_count": len(srvRecords),
+	})
 
 	for i, record := range srvRecords {
-		fmt.Printf("[DEBUG] Attempting SRV lookup %d/%d: %s\n", i+1, len(srvRecords), record.service)
+		tflog.SubsystemDebug(d.ctx, "ldap", "Attempting SRV lookup", map[string]any{
+			"attempt":       i + 1,
+			"total_records": len(srvRecords),
+			"service":       record.service,
+		})
 		servers, err := d.lookupSRV(ctx, record.service, record.useTLS, record.source)
 		if err != nil {
-			fmt.Printf("[DEBUG] SRV lookup failed for %s, continuing to next service\n", record.service)
+			tflog.SubsystemDebug(d.ctx, "ldap", "SRV lookup failed, continuing to next service", map[string]any{
+				"service": record.service,
+			})
 			continue
 		}
 		allServers = append(allServers, servers...)
-		fmt.Printf("[DEBUG] Added %d servers from %s (total: %d)\n", len(servers), record.service, len(allServers))
+		tflog.SubsystemDebug(d.ctx, "ldap", "Added servers from service", map[string]any{
+			"servers_added": len(servers),
+			"service":       record.service,
+			"total_servers": len(allServers),
+		})
 
 		// If we found LDAPS servers, prefer them and don't look further
 		if record.useTLS && len(servers) > 0 {
@@ -69,7 +87,9 @@ func (d *SRVDiscovery) DiscoverServers(ctx context.Context, domain string) ([]*S
 	if len(allServers) == 0 {
 		// Fallback to standard ports if SRV discovery fails
 		fallbackServers := d.createFallbackServers(domain)
-		fmt.Printf("[DEBUG] No SRV records found, using fallback servers. Total discovery time: %v\n", time.Since(start))
+		tflog.SubsystemDebug(d.ctx, "ldap", "No SRV records found, using fallback servers", map[string]any{
+			"total_discovery_duration": time.Since(start).String(),
+		})
 		return fallbackServers, nil
 	}
 
@@ -77,24 +97,37 @@ func (d *SRVDiscovery) DiscoverServers(ctx context.Context, domain string) ([]*S
 	// Within same priority, randomize by weight
 	d.sortServersByPriority(allServers)
 
-	fmt.Printf("[DEBUG] Server discovery completed in %v, returning %d servers\n", time.Since(start), len(allServers))
+	tflog.SubsystemDebug(d.ctx, "ldap", "Server discovery completed", map[string]any{
+		"duration":     time.Since(start).String(),
+		"server_count": len(allServers),
+	})
 	return allServers, nil
 }
 
 // lookupSRV performs SRV record lookup for a specific service.
 func (d *SRVDiscovery) lookupSRV(ctx context.Context, service string, useTLS bool, source string) ([]*ServerInfo, error) {
 	start := time.Now()
-	fmt.Printf("[DEBUG] Looking up SRV records for service: %s\n", service)
+	tflog.SubsystemDebug(d.ctx, "ldap", "Looking up SRV records for service", map[string]any{
+		"service": service,
+	})
 
 	_, srvRecords, err := d.resolver.LookupSRV(ctx, "", "", service)
 	duration := time.Since(start)
 
 	if err != nil {
-		fmt.Printf("[DEBUG] SRV lookup for %s failed after %v: %v\n", service, duration, err)
+		tflog.SubsystemDebug(d.ctx, "ldap", "SRV lookup failed", map[string]any{
+			"service":  service,
+			"duration": duration.String(),
+			"error":    err.Error(),
+		})
 		return nil, fmt.Errorf("SRV lookup failed for %s: %w", service, err)
 	}
 
-	fmt.Printf("[DEBUG] SRV lookup for %s completed in %v, found %d records\n", service, duration, len(srvRecords))
+	tflog.SubsystemDebug(d.ctx, "ldap", "SRV lookup completed", map[string]any{
+		"service":      service,
+		"duration":     duration.String(),
+		"record_count": len(srvRecords),
+	})
 
 	if len(srvRecords) == 0 {
 		return nil, fmt.Errorf("no SRV records found for %s", service)

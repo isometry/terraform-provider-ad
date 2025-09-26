@@ -325,16 +325,19 @@ func TestAccGroupResource_largeValues(t *testing.T) {
 }
 
 func TestAccGroupResource_disappears(t *testing.T) {
+	ctx := t.Context()
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		CheckDestroy:             testAccCheckGroupDestroy,
+		CheckDestroy: func(s *terraform.State) error {
+			return testCheckGroupDestroy(ctx, s)
+		},
 		Steps: []resource.TestStep{
 			{
 				Config: testAccGroupResourceConfig_basic("tf-test-disappears", "TFTestDisappears"),
 				Check: resource.ComposeTestCheckFunc(
-					testAccCheckGroupExists("ad_group.test"),
-					testAccCheckGroupDisappears("ad_group.test"),
+					testCheckGroupExists(ctx, "ad_group.test"),
+					testCheckGroupDisappears(ctx, "ad_group.test"),
 				),
 				ExpectNonEmptyPlan: true,
 			},
@@ -407,18 +410,7 @@ func testAccGroupImportStateIdFuncDN(s *terraform.State) (string, error) {
 	return rs.Primary.Attributes["dn"], nil
 }
 
-// Helper functions for existence and destroy testing.
-func testAccCheckGroupExists(resourceName string) resource.TestCheckFunc {
-	return testCheckGroupExists(resourceName)
-}
-
-func testAccCheckGroupDestroy(s *terraform.State) error {
-	return testCheckGroupDestroy(s)
-}
-
-func testAccCheckGroupDisappears(resourceName string) resource.TestCheckFunc {
-	return testCheckGroupDisappears(resourceName)
-}
+// Helper functions for existence and destroy testing are now called directly.
 
 func TestAccGroupResource_containerMove(t *testing.T) {
 	resource.Test(t, resource.TestCase{

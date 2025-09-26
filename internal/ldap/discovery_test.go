@@ -7,7 +7,7 @@ import (
 )
 
 func TestSRVDiscovery_DiscoverServers(t *testing.T) {
-	discovery := NewSRVDiscovery()
+	discovery := NewSRVDiscovery(context.Background())
 
 	tests := []struct {
 		name     string
@@ -289,7 +289,7 @@ func TestServerInfoToURL(t *testing.T) {
 }
 
 func TestSortServersByPriority(t *testing.T) {
-	discovery := NewSRVDiscovery()
+	discovery := NewSRVDiscovery(context.Background())
 
 	servers := []*ServerInfo{
 		{Host: "dc3", Priority: 2, Weight: 50},
@@ -320,7 +320,7 @@ func TestSortServersByPriority(t *testing.T) {
 }
 
 func TestCreateFallbackServers(t *testing.T) {
-	discovery := NewSRVDiscovery()
+	discovery := NewSRVDiscovery(context.Background())
 	domain := "example.com"
 
 	servers := discovery.createFallbackServers(domain)

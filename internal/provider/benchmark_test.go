@@ -1,7 +1,6 @@
 package provider_test
 
 import (
-	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -20,7 +19,7 @@ func BenchmarkGroupSearch(b *testing.B) {
 	helper := NewBenchmarkHelper(b)
 	defer helper.Close()
 
-	ctx := context.Background()
+	ctx := b.Context()
 	groupManager := ldapclient.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
 
 	// Create test groups
@@ -63,7 +62,7 @@ func BenchmarkGroupMembership(b *testing.B) {
 	helper := NewBenchmarkHelper(b)
 	defer helper.Close()
 
-	ctx := context.Background()
+	ctx := b.Context()
 	// Create test groups
 	testGroups, err := helper.CreateTestGroups(ctx, 10)
 	if err != nil {
@@ -139,7 +138,7 @@ func BenchmarkUserSearch(b *testing.B) {
 	helper := NewBenchmarkHelper(b)
 	defer helper.Close()
 
-	ctx := context.Background()
+	ctx := b.Context()
 	userReader := ldapclient.NewUserReader(ctx, helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
 
 	b.ResetTimer()
@@ -183,7 +182,7 @@ func BenchmarkConnectionPool(b *testing.B) {
 
 	b.Run("ClientCreation", func(b *testing.B) {
 		for b.Loop() {
-			client, err := ldapclient.NewClient(ldapConfig)
+			client, err := ldapclient.NewClient(b.Context(), ldapConfig)
 			if err != nil {
 				b.Fatalf("Failed to create client: %v", err)
 			}
@@ -192,7 +191,7 @@ func BenchmarkConnectionPool(b *testing.B) {
 	})
 
 	b.Run("ConcurrentConnections", func(b *testing.B) {
-		client, err := ldapclient.NewClient(ldapConfig)
+		client, err := ldapclient.NewClient(b.Context(), ldapConfig)
 		if err != nil {
 			b.Fatalf("Failed to create client: %v", err)
 		}
@@ -208,7 +207,7 @@ func BenchmarkConnectionPool(b *testing.B) {
 					Attributes: []string{"distinguishedName"},
 					SizeLimit:  1,
 				}
-				_, err := client.Search(context.Background(), req)
+				_, err := client.Search(b.Context(), req)
 				if err != nil {
 					b.Fatalf("Search failed: %v", err)
 				}
@@ -226,7 +225,7 @@ func BenchmarkPagination(b *testing.B) {
 	helper := NewBenchmarkHelper(b)
 	defer helper.Close()
 
-	ctx := context.Background()
+	ctx := b.Context()
 
 	// Test different page sizes
 	pageSizes := []int{10, 50, 100, 500}
@@ -259,7 +258,7 @@ func BenchmarkNormalizer(b *testing.B) {
 	helper := NewBenchmarkHelper(b)
 	defer helper.Close()
 
-	ctx := context.Background()
+	ctx := b.Context()
 	normalizer := ldapclient.NewMemberNormalizer(helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
 
 	// Create a test group to get its various identifiers
@@ -316,7 +315,7 @@ func BenchmarkMemoryUsage(b *testing.B) {
 	helper := NewBenchmarkHelper(b)
 	defer helper.Close()
 
-	ctx := context.Background()
+	ctx := b.Context()
 	groupManager := ldapclient.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
 
 	// Create a large number of test groups
@@ -358,7 +357,7 @@ func BenchmarkErrorHandling(b *testing.B) {
 	helper := NewBenchmarkHelper(b)
 	defer helper.Close()
 
-	ctx := context.Background()
+	ctx := b.Context()
 	groupManager := ldapclient.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
 
 	b.ResetTimer()
@@ -396,7 +395,7 @@ func BenchmarkConcurrency(b *testing.B) {
 	helper := NewBenchmarkHelper(b)
 	defer helper.Close()
 
-	ctx := context.Background()
+	ctx := b.Context()
 	groupManager := ldapclient.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
 
 	// Create test groups
@@ -457,7 +456,7 @@ func BenchmarkPerformanceRegression(b *testing.B) {
 			name:    "GroupGetByID",
 			maxTime: maxTime,
 			testFunc: func(b *testing.B) {
-				ctx := context.Background()
+				ctx := b.Context()
 				groupManager := ldapclient.NewGroupManager(ctx, helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
 
 				// Create a test group

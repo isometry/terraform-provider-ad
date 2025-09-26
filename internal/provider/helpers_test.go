@@ -238,7 +238,7 @@ func NewTestFixture(t *testing.T) *TestFixture {
 		KerberosRealm:  config.Realm,
 	}
 
-	client, err := ldapclient.NewClient(ldapConfig)
+	client, err := ldapclient.NewClient(t.Context(), ldapConfig)
 	if err != nil {
 		t.Fatalf("Failed to create LDAP client for test fixture: %v", err)
 	}
@@ -274,7 +274,7 @@ func (f *TestFixture) Cleanup() {
 // Test check functions for acceptance tests
 
 // testCheckGroupExists verifies that a group exists in AD.
-func testCheckGroupExists(resourceName string) resource.TestCheckFunc {
+func testCheckGroupExists(ctx context.Context, resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
@@ -299,13 +299,12 @@ func testCheckGroupExists(resourceName string) resource.TestCheckFunc {
 			KerberosRealm:  config.Realm,
 		}
 
-		client, err := ldapclient.NewClient(ldapConfig)
+		client, err := ldapclient.NewClient(ctx, ldapConfig)
 		if err != nil {
 			return fmt.Errorf("failed to create LDAP client: %v", err)
 		}
 		defer client.Close()
 
-		ctx := context.Background()
 		cacheManager := ldapclient.NewCacheManager()
 		groupManager := ldapclient.NewGroupManager(ctx, client, config.BaseDN, cacheManager)
 
@@ -320,7 +319,7 @@ func testCheckGroupExists(resourceName string) resource.TestCheckFunc {
 }
 
 // testCheckGroupDestroy verifies that all test groups are destroyed.
-func testCheckGroupDestroy(s *terraform.State) error {
+func testCheckGroupDestroy(ctx context.Context, s *terraform.State) error {
 	config := GetTestConfig()
 	ldapURLs := []string{}
 	if config.LDAPURL != "" {
@@ -335,13 +334,12 @@ func testCheckGroupDestroy(s *terraform.State) error {
 		KerberosRealm:  config.Realm,
 	}
 
-	client, err := ldapclient.NewClient(ldapConfig)
+	client, err := ldapclient.NewClient(ctx, ldapConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create LDAP client: %v", err)
 	}
 	defer client.Close()
 
-	ctx := context.Background()
 	cacheManager := ldapclient.NewCacheManager()
 	groupManager := ldapclient.NewGroupManager(ctx, client, config.BaseDN, cacheManager)
 
@@ -366,7 +364,7 @@ func testCheckGroupDestroy(s *terraform.State) error {
 }
 
 // testCheckGroupDisappears manually deletes a group outside of Terraform.
-func testCheckGroupDisappears(resourceName string) resource.TestCheckFunc {
+func testCheckGroupDisappears(ctx context.Context, resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
@@ -387,13 +385,12 @@ func testCheckGroupDisappears(resourceName string) resource.TestCheckFunc {
 			KerberosRealm:  config.Realm,
 		}
 
-		client, err := ldapclient.NewClient(ldapConfig)
+		client, err := ldapclient.NewClient(ctx, ldapConfig)
 		if err != nil {
 			return fmt.Errorf("failed to create LDAP client: %v", err)
 		}
 		defer client.Close()
 
-		ctx := context.Background()
 		cacheManager := ldapclient.NewCacheManager()
 		groupManager := ldapclient.NewGroupManager(ctx, client, config.BaseDN, cacheManager)
 
@@ -433,7 +430,7 @@ func NewBenchmarkHelper(b *testing.B) *BenchmarkHelper {
 		KerberosRealm:  config.Realm,
 	}
 
-	client, err := ldapclient.NewClient(ldapConfig)
+	client, err := ldapclient.NewClient(b.Context(), ldapConfig)
 	if err != nil {
 		b.Fatalf("Failed to create LDAP client: %v", err)
 	}
@@ -452,7 +449,7 @@ func (h *BenchmarkHelper) Close() error {
 // CreateTestGroups creates test groups for benchmarking.
 func (h *BenchmarkHelper) CreateTestGroups(ctx context.Context, count int) ([]string, error) {
 	cacheManager := ldapclient.NewCacheManager()
-	groupManager := ldapclient.NewGroupManager(context.Background(), h.client, h.config.BaseDN, cacheManager)
+	groupManager := ldapclient.NewGroupManager(ctx, h.client, h.config.BaseDN, cacheManager)
 	groups := make([]string, 0, count)
 
 	for i := range count {
@@ -485,7 +482,7 @@ func (h *BenchmarkHelper) CreateTestGroups(ctx context.Context, count int) ([]st
 // CleanupTestGroups removes test groups.
 func (h *BenchmarkHelper) CleanupTestGroups(ctx context.Context, groupIDs []string) {
 	cacheManager := ldapclient.NewCacheManager()
-	groupManager := ldapclient.NewGroupManager(context.Background(), h.client, h.config.BaseDN, cacheManager)
+	groupManager := ldapclient.NewGroupManager(ctx, h.client, h.config.BaseDN, cacheManager)
 
 	for _, groupID := range groupIDs {
 		if err := groupManager.DeleteGroup(groupID); err != nil {

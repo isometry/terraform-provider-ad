@@ -1,7 +1,6 @@
 package provider_test
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -16,7 +15,7 @@ import (
 )
 
 func TestNormalizeRolesFunction_Metadata(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	f := &provider.NormalizeRolesFunction{}
 
 	var req function.MetadataRequest
@@ -28,7 +27,7 @@ func TestNormalizeRolesFunction_Metadata(t *testing.T) {
 }
 
 func TestNormalizeRolesFunction_Definition(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	f := &provider.NormalizeRolesFunction{}
 
 	var req function.DefinitionRequest
@@ -52,7 +51,7 @@ func TestNormalizeRolesFunction_Definition(t *testing.T) {
 
 // Helper function to execute the normalize_roles function with Go values.
 func executeNormalizeRoles(t *testing.T, teams map[string]any, roles map[string]any) (map[string]any, error) {
-	ctx := context.Background()
+	ctx := t.Context()
 	f := &provider.NormalizeRolesFunction{}
 
 	// Convert input to Terraform types
@@ -290,7 +289,7 @@ func TestNormalizeRoles_ComplexScenario(t *testing.T) {
 }
 
 func TestNormalizeRoles_ErrorCases(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	f := &provider.NormalizeRolesFunction{}
 
 	testCases := []struct {
