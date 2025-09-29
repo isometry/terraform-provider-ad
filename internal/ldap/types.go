@@ -17,13 +17,15 @@ type ConnectionConfig struct {
 	Timeout  time.Duration
 
 	// Authentication settings
-	Username       string
-	Password       string
-	KerberosRealm  string
-	KerberosKeytab string
-	KerberosConfig string
-	KerberosCCache string
-	KerberosSPN    string
+	Username               string
+	Password               string
+	KerberosRealm          string
+	KerberosKeytab         string
+	KerberosConfig         string
+	KerberosCCache         string
+	KerberosSPN            string
+	KerberosDNSLookupKDC   bool
+	KerberosDNSLookupRealm bool
 
 	// TLS settings
 	TLSConfig         *tls.Config

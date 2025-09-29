@@ -51,11 +51,13 @@ type ActiveDirectoryProviderModel struct {
 	Password types.String `tfsdk:"password"`
 
 	// Kerberos settings (optional)
-	KerberosRealm  types.String `tfsdk:"kerberos_realm"`
-	KerberosKeytab types.String `tfsdk:"kerberos_keytab"`
-	KerberosConfig types.String `tfsdk:"kerberos_config"`
-	KerberosCCache types.String `tfsdk:"kerberos_ccache"`
-	KerberosSPN    types.String `tfsdk:"kerberos_spn"`
+	KerberosRealm          types.String `tfsdk:"kerberos_realm"`
+	KerberosKeytab         types.String `tfsdk:"kerberos_keytab"`
+	KerberosConfig         types.String `tfsdk:"kerberos_config"`
+	KerberosCCache         types.String `tfsdk:"kerberos_ccache"`
+	KerberosSPN            types.String `tfsdk:"kerberos_spn"`
+	KerberosDNSLookupKDC   types.Bool   `tfsdk:"kerberos_dns_lookup_kdc"`
+	KerberosDNSLookupRealm types.Bool   `tfsdk:"kerberos_dns_lookup_realm"`
 
 	// TLS settings
 	UseTLS            types.Bool   `tfsdk:"use_tls"`
@@ -140,7 +142,8 @@ func (p *ActiveDirectoryProvider) Schema(ctx context.Context, req provider.Schem
 				Optional: true,
 			},
 			"kerberos_config": schema.StringAttribute{
-				MarkdownDescription: "Path to Kerberos configuration file. Defaults to system default. " +
+				MarkdownDescription: "Path to Kerberos configuration file (krb5.conf). If not specified but " +
+					"`kerberos_realm` is set, DNS-based auto-discovery will be used to locate KDCs. " +
 					"Can be set via the `AD_KERBEROS_CONFIG` environment variable.",
 				Optional: true,
 			},
@@ -155,6 +158,18 @@ func (p *ActiveDirectoryProvider) Schema(ctx context.Context, req provider.Schem
 					"Use when connecting to a domain controller by IP address where the SPN doesn't match the IP. " +
 					"Format: `ldap/<hostname>` (e.g., `ldap/dc1.example.com`). " +
 					"Can be set via the `AD_KERBEROS_SPN` environment variable.",
+				Optional: true,
+			},
+			"kerberos_dns_lookup_kdc": schema.BoolAttribute{
+				MarkdownDescription: "Enable DNS-based KDC discovery for Kerberos authentication. " +
+					"Defaults to `true` when `kerberos_config` is not specified but `kerberos_realm` is set. " +
+					"Can be set via the `AD_KERBEROS_DNS_LOOKUP_KDC` environment variable.",
+				Optional: true,
+			},
+			"kerberos_dns_lookup_realm": schema.BoolAttribute{
+				MarkdownDescription: "Enable DNS-based realm discovery for Kerberos authentication. " +
+					"Defaults to `true` when `kerberos_config` is not specified but `kerberos_realm` is set. " +
+					"Can be set via the `AD_KERBEROS_DNS_LOOKUP_REALM` environment variable.",
 				Optional: true,
 			},
 
@@ -457,6 +472,20 @@ func (p *ActiveDirectoryProvider) buildLDAPConfig(data *ActiveDirectoryProviderM
 	config.KerberosConfig = kerberosConfig
 	config.KerberosCCache = kerberosCCache
 	config.KerberosSPN = kerberosSPN
+
+	// Set Kerberos DNS lookup settings
+	config.KerberosDNSLookupKDC = p.getBoolValue(data.KerberosDNSLookupKDC, "AD_KERBEROS_DNS_LOOKUP_KDC", false)
+	config.KerberosDNSLookupRealm = p.getBoolValue(data.KerberosDNSLookupRealm, "AD_KERBEROS_DNS_LOOKUP_REALM", false)
+
+	// If using auto-discovery (realm set but no config), enable DNS lookups by default
+	if kerberosRealm != "" && kerberosConfig == "" {
+		if data.KerberosDNSLookupKDC.IsNull() { // Only set default if not explicitly configured
+			config.KerberosDNSLookupKDC = true
+		}
+		if data.KerberosDNSLookupRealm.IsNull() { // Only set default if not explicitly configured
+			config.KerberosDNSLookupRealm = true
+		}
+	}
 
 	// TLS settings
 	if useTLS := p.getBoolValue(data.UseTLS, "AD_USE_TLS", true); !useTLS {

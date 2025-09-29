@@ -26,15 +26,15 @@ func TestCreateGSSAPIClientMissingKrb5Conf(t *testing.T) {
 			errorMsg:    "kerberos configuration file not found at /nonexistent/krb5.conf",
 		},
 		{
-			name: "password auth with no krb5.conf config should return helpful error for default path",
+			name: "password auth with no krb5.conf config should trigger auto-discovery",
 			config: &ConnectionConfig{
 				Username:      "testuser",
 				Password:      "testpass",
 				KerberosRealm: "EXAMPLE.COM",
-				// KerberosConfig left empty, will default to /etc/krb5.conf which may not exist
+				// KerberosConfig left empty, will trigger auto-discovery mode
 			},
-			expectError: true,
-			errorMsg:    "kerberos configuration file not found",
+			expectError: false, // Now succeeds with auto-discovery - generates runtime krb5.conf
+			errorMsg:    "",
 		},
 	}
 

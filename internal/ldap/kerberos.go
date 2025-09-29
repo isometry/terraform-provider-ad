@@ -103,32 +103,102 @@ func createGSSAPIClient(cfg *ConnectionConfig) (ldap.GSSAPIClient, error) {
 
 // createGSSAPIClientWithContext creates a GSSAPI client with logging context.
 func createGSSAPIClientWithContext(ctx context.Context, cfg *ConnectionConfig) (ldap.GSSAPIClient, error) {
-	// Default krb5.conf path if not specified
-	krb5confPath := cfg.KerberosConfig
-	if krb5confPath == "" {
+	var krb5confPath string
+	var useAutoDiscovery bool
+
+	// Determine if we should use auto-discovery or a krb5.conf file
+	if cfg.KerberosConfig != "" {
+		// Explicit krb5.conf path provided
+		krb5confPath = cfg.KerberosConfig
+		useAutoDiscovery = false
+	} else if cfg.KerberosRealm != "" {
+		// Realm specified but no config file - use auto-discovery
+		useAutoDiscovery = true
+		tflog.SubsystemDebug(ctx, "ldap", "Kerberos auto-discovery enabled", map[string]any{
+			"realm": cfg.KerberosRealm,
+		})
+	} else {
+		// Default to system krb5.conf
 		krb5confPath = "/etc/krb5.conf"
+		useAutoDiscovery = false
 	}
 
-	tflog.SubsystemDebug(ctx, "ldap", "Checking Kerberos configuration file", map[string]any{
-		"krb5_conf_path": krb5confPath,
-	})
+	if useAutoDiscovery {
+		// Validate configuration for auto-discovery
+		if err := validateKerberosAutoDiscoveryConfig(ctx, cfg); err != nil {
+			tflog.SubsystemError(ctx, "ldap", "Kerberos auto-discovery configuration invalid", map[string]any{
+				"error": err.Error(),
+			})
+			return nil, fmt.Errorf("kerberos auto-discovery configuration error: %w", err)
+		}
 
-	// Check if the krb5.conf file exists before proceeding
-	if !fileExists(krb5confPath) {
-		tflog.SubsystemError(ctx, "ldap", "Kerberos krb5.conf not found", map[string]any{
+		// Generate runtime krb5.conf configuration
+		runtimeConfig, err := generateRuntimeKrb5Conf(ctx, cfg)
+		if err != nil {
+			tflog.SubsystemError(ctx, "ldap", "Runtime krb5.conf generation failed", map[string]any{
+				"error": err.Error(),
+			})
+			return nil, fmt.Errorf("failed to generate runtime krb5.conf: %w", err)
+		}
+
+		tflog.SubsystemDebug(ctx, "ldap", "Using Kerberos auto-discovery", map[string]any{
+			"realm":            cfg.KerberosRealm,
+			"dns_lookup_kdc":   cfg.KerberosDNSLookupKDC,
+			"dns_lookup_realm": cfg.KerberosDNSLookupRealm,
+		})
+
+		// Create GSSAPI client using the runtime configuration
+		return createGSSAPIClientWithRuntimeConfig(ctx, cfg, runtimeConfig)
+	} else {
+		// Use traditional file-based configuration
+		tflog.SubsystemDebug(ctx, "ldap", "Checking Kerberos configuration file", map[string]any{
+			"krb5_conf_path": krb5confPath,
+		})
+
+		// Check if the krb5.conf file exists before proceeding
+		if !fileExists(krb5confPath) {
+			tflog.SubsystemError(ctx, "ldap", "Kerberos krb5.conf not found", map[string]any{
+				"path": krb5confPath,
+			})
+			return nil, fmt.Errorf("kerberos configuration file not found at %s. "+
+				"For Kerberos authentication, you can either provide a valid krb5.conf file or "+
+				"enable auto-discovery by specifying 'kerberos_realm' without 'kerberos_config'. "+
+				"To use a file: create %s or specify a custom path using 'kerberos_config'. "+
+				"Example minimal configuration:\n%s",
+				krb5confPath, krb5confPath, generateExampleKrb5Conf(cfg))
+		}
+
+		tflog.SubsystemDebug(ctx, "ldap", "Kerberos krb5.conf found", map[string]any{
 			"path": krb5confPath,
 		})
-		return nil, fmt.Errorf("kerberos configuration file not found at %s. "+
-			"For Kerberos authentication, you must provide a valid krb5.conf file. "+
-			"Either create %s or specify a custom path using 'kerberos_config'. "+
-			"Example minimal configuration:\n%s",
-			krb5confPath, krb5confPath, generateExampleKrb5Conf(cfg))
+
+		// Create GSSAPI client using the file-based configuration
+		return createGSSAPIClientWithFile(ctx, cfg, krb5confPath)
 	}
+}
 
-	tflog.SubsystemDebug(ctx, "ldap", "Kerberos krb5.conf found", map[string]any{
-		"path": krb5confPath,
-	})
+// createGSSAPIClientWithRuntimeConfig creates a GSSAPI client using runtime-generated krb5.conf.
+func createGSSAPIClientWithRuntimeConfig(ctx context.Context, cfg *ConnectionConfig, runtimeConfig string) (ldap.GSSAPIClient, error) {
+	// Create a temporary file with the runtime configuration
+	tempFile, err := createTempKrb5Conf(runtimeConfig)
+	if err != nil {
+		tflog.SubsystemError(ctx, "ldap", "Failed to create temporary krb5.conf", map[string]any{
+			"error": err.Error(),
+		})
+		return nil, fmt.Errorf("failed to create temporary krb5.conf: %w", err)
+	}
+	defer removeTempFile(tempFile)
 
+	return createGSSAPIClientWithConfigPath(ctx, cfg, tempFile)
+}
+
+// createGSSAPIClientWithFile creates a GSSAPI client using a krb5.conf file.
+func createGSSAPIClientWithFile(ctx context.Context, cfg *ConnectionConfig, krb5confPath string) (ldap.GSSAPIClient, error) {
+	return createGSSAPIClientWithConfigPath(ctx, cfg, krb5confPath)
+}
+
+// createGSSAPIClientWithConfigPath creates a GSSAPI client using a krb5 configuration file path.
+func createGSSAPIClientWithConfigPath(ctx context.Context, cfg *ConnectionConfig, krb5confPath string) (ldap.GSSAPIClient, error) {
 	// Priority 1: Explicit credential cache
 	if cfg.KerberosCCache != "" && fileExists(cfg.KerberosCCache) {
 		tflog.SubsystemDebug(ctx, "ldap", "Kerberos credentials selected", map[string]any{
@@ -333,10 +403,8 @@ func prepareKerberosConfigWithContext(ctx context.Context, cfg *ConnectionConfig
 		return fmt.Errorf("configuration cannot be nil")
 	}
 
-	// Set default krb5.conf path if not specified
-	if cfg.KerberosConfig == "" {
-		cfg.KerberosConfig = "/etc/krb5.conf"
-	}
+	// Note: We no longer automatically set a default krb5.conf path.
+	// Auto-discovery will be used if KerberosRealm is set but KerberosConfig is not.
 
 	// Extract realm from username if not specified and username contains @
 	if cfg.KerberosRealm == "" && strings.Contains(cfg.Username, "@") {
@@ -407,6 +475,34 @@ func fileExists(path string) bool {
 	}
 	file.Close()
 	return true
+}
+
+// createTempKrb5Conf creates a temporary file with the provided krb5.conf content.
+func createTempKrb5Conf(content string) (string, error) {
+	tempFile, err := os.CreateTemp("", "krb5-*.conf")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temporary file: %w", err)
+	}
+
+	if _, err := tempFile.WriteString(content); err != nil {
+		tempFile.Close()
+		os.Remove(tempFile.Name())
+		return "", fmt.Errorf("failed to write to temporary file: %w", err)
+	}
+
+	if err := tempFile.Close(); err != nil {
+		os.Remove(tempFile.Name())
+		return "", fmt.Errorf("failed to close temporary file: %w", err)
+	}
+
+	return tempFile.Name(), nil
+}
+
+// removeTempFile safely removes a temporary file, ignoring errors.
+func removeTempFile(path string) {
+	if path != "" {
+		os.Remove(path) // Ignore errors for cleanup
+	}
 }
 
 // generateExampleKrb5Conf generates example krb5.conf content for error messages.

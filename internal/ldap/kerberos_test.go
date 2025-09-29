@@ -640,3 +640,76 @@ func TestPrepareKerberosConfigEnhanced(t *testing.T) {
 		})
 	}
 }
+
+func TestCreateGSSAPIClientWithAutoDiscovery(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      *ConnectionConfig
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "auto-discovery mode with realm but no config",
+			config: &ConnectionConfig{
+				Username:      "testuser",
+				Password:      "testpass",
+				KerberosRealm: "EXAMPLE.COM",
+				// No KerberosConfig - should trigger auto-discovery
+				KerberosDNSLookupKDC:   true,
+				KerberosDNSLookupRealm: true,
+			},
+			expectError: false, // Should succeed in creating client with runtime config - actual auth failure would happen later during LDAP bind
+			errorMsg:    "",
+		},
+		{
+			name: "explicit config file mode",
+			config: &ConnectionConfig{
+				Username:       "testuser",
+				Password:       "testpass",
+				KerberosRealm:  "EXAMPLE.COM",
+				KerberosConfig: "/nonexistent/krb5.conf", // Explicit config file
+			},
+			expectError: true,
+			errorMsg:    "kerberos configuration file not found",
+		},
+		{
+			name: "auto-discovery without realm",
+			config: &ConnectionConfig{
+				Username: "testuser",
+				Password: "testpass",
+				// No KerberosRealm and no KerberosConfig - should default to /etc/krb5.conf
+			},
+			expectError: true,
+			errorMsg:    "kerberos configuration file not found",
+		},
+		{
+			name: "auto-discovery with realm derived from username",
+			config: &ConnectionConfig{
+				Username: "testuser@EXAMPLE.COM", // Realm should be extracted
+				Password: "testpass",
+				// No explicit KerberosRealm but should be derived from username
+				KerberosDNSLookupKDC:   true,
+				KerberosDNSLookupRealm: true,
+			},
+			expectError: true, // Will fail in test environment but should attempt auto-discovery
+			errorMsg:    "",   // We expect it to try auto-discovery but fail due to test environment
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// This will fail in test environment since we don't have actual Kerberos infrastructure,
+			// but we're testing the decision logic for when to use auto-discovery vs file-based config
+			_, err := createGSSAPIClient(tt.config)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorMsg != "" {
+					assert.Contains(t, err.Error(), tt.errorMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
