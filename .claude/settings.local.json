@@ -4,9 +4,10 @@
       "mcp__gopls__go_search",
       "mcp__gopls__go_workspace",
       "mcp__gopls__go_package_api",
+      "mcp__gopls__go_diagnostics",
+      "mcp__gopls__go_file_context",
       "mcp__context7__resolve-library-id",
       "mcp__context7__get-library-docs",
-      "Bash(git clone:*)",
       "Bash(go get:*)",
       "Bash(go test:*)",
       "Bash(go build:*)",
@@ -22,11 +23,14 @@
       "WebFetch(domain:developer.hashicorp.com)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:pkg.go.dev)",
-      "WebSearch",
-      "mcp__gopls__go_diagnostics",
-      "mcp__gopls__go_file_context"
+      "mcp__serena__get_current_config",
+      "mcp__serena__check_onboarding_performed",
+      "mcp__serena__onboarding",
+      "mcp__serena__list_dir",
+      "mcp__serena__write_memory"
     ],
     "deny": [],
     "ask": []
-  }
+  },
+  "enabledMcpjsonServers": ["serena"]
 }
