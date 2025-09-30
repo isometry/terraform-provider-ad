@@ -159,6 +159,16 @@ func (gm *GroupManager) SetTimeout(timeout time.Duration) {
 	gm.normalizer.SetTimeout(timeout)
 }
 
+// getAllGroupAttributes returns the standard set of LDAP attributes to retrieve for groups.
+// This ensures consistency across all group search and retrieval operations.
+func (gm *GroupManager) getAllGroupAttributes() []string {
+	return []string{
+		"objectGUID", "distinguishedName", "objectSid", "cn", "sAMAccountName",
+		"description", "groupType", "mail", "mailNickname", "managedBy",
+		"member", "memberOf", "whenCreated", "whenChanged",
+	}
+}
+
 // CalculateGroupType calculates the Active Directory groupType value from scope and category.
 func CalculateGroupType(scope GroupScope, category GroupCategory) int32 {
 	var groupType int32
@@ -959,10 +969,7 @@ func (gm *GroupManager) SearchGroups(filter string, attributes []string) ([]*Gro
 	tflog.SubsystemDebug(gm.ctx, "ldap", "Starting SearchGroups", searchFields)
 
 	if len(attributes) == 0 {
-		attributes = []string{
-			"objectGUID", "distinguishedName", "objectSid", "cn", "sAMAccountName",
-			"description", "groupType", "mail", "mailNickname", "whenCreated", "whenChanged",
-		}
+		attributes = gm.getAllGroupAttributes()
 		searchFields["attributes"] = attributes
 		tflog.SubsystemTrace(gm.ctx, "ldap", "Using default attributes for group search", searchFields)
 	}
@@ -1175,10 +1182,7 @@ func (gm *GroupManager) ListGroupsByContainer(containerDN string) ([]*Group, err
 	}
 
 	filter := "(objectClass=group)"
-	attributes := []string{
-		"objectGUID", "distinguishedName", "objectSid", "cn", "sAMAccountName",
-		"description", "groupType", "member", "memberOf",
-	}
+	attributes := gm.getAllGroupAttributes()
 
 	searchReq := &SearchRequest{
 		BaseDN:     containerDN,
@@ -1345,10 +1349,7 @@ func (gm *GroupManager) searchGroupsInContainer(baseDN, filter string, attribute
 	tflog.SubsystemDebug(gm.ctx, "ldap", "Starting searchGroupsInContainer", searchFields)
 
 	if len(attributes) == 0 {
-		attributes = []string{
-			"objectGUID", "distinguishedName", "objectSid", "cn", "sAMAccountName",
-			"description", "groupType", "mail", "mailNickname", "whenCreated", "whenChanged",
-		}
+		attributes = gm.getAllGroupAttributes()
 		searchFields["attributes"] = attributes
 		tflog.SubsystemTrace(gm.ctx, "ldap", "Using default attributes for container group search", searchFields)
 	}

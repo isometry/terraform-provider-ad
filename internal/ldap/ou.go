@@ -115,6 +115,16 @@ func (om *OUManager) SetTimeout(timeout time.Duration) {
 	om.timeout = timeout
 }
 
+// getAllOUAttributes returns the standard set of LDAP attributes to retrieve for OUs.
+// This ensures consistency across all OU search and retrieval operations.
+func (om *OUManager) getAllOUAttributes() []string {
+	return []string{
+		"objectGUID", "distinguishedName", "ou", "name",
+		"description", "ntSecurityDescriptor", "managedBy",
+		"whenCreated", "whenChanged",
+	}
+}
+
 // BuildOUDN constructs a proper Distinguished Name for an OU.
 func (om *OUManager) BuildOUDN(name, parentDN string) string {
 	// Escape special characters in the OU name for LDAP
@@ -495,14 +505,11 @@ func (om *OUManager) SearchOUs(baseDN string, filter string) ([]*OU, error) {
 	}
 
 	searchReq := &SearchRequest{
-		BaseDN: baseDN,
-		Scope:  ScopeWholeSubtree,
-		Filter: filter,
-		Attributes: []string{
-			"objectGUID", "distinguishedName", "ou", "name",
-			"description", "ntSecurityDescriptor", "whenCreated", "whenChanged",
-		},
-		TimeLimit: om.timeout,
+		BaseDN:     baseDN,
+		Scope:      ScopeWholeSubtree,
+		Filter:     filter,
+		Attributes: om.getAllOUAttributes(),
+		TimeLimit:  om.timeout,
 	}
 
 	result, err := om.client.SearchWithPaging(om.ctx, searchReq)
@@ -530,14 +537,11 @@ func (om *OUManager) GetOUChildren(ctx context.Context, ouDN string) ([]*OU, err
 	}
 
 	searchReq := &SearchRequest{
-		BaseDN: ouDN,
-		Scope:  ScopeSingleLevel, // Only immediate children
-		Filter: "(objectClass=organizationalUnit)",
-		Attributes: []string{
-			"objectGUID", "distinguishedName", "ou", "name",
-			"description", "ntSecurityDescriptor", "whenCreated", "whenChanged",
-		},
-		TimeLimit: om.timeout,
+		BaseDN:     ouDN,
+		Scope:      ScopeSingleLevel, // Only immediate children
+		Filter:     "(objectClass=organizationalUnit)",
+		Attributes: om.getAllOUAttributes(),
+		TimeLimit:  om.timeout,
 	}
 
 	result, err := om.client.Search(om.ctx, searchReq)
@@ -647,10 +651,7 @@ func (om *OUManager) ListOUsByContainer(ctx context.Context, containerDN string)
 	}
 
 	filter := "(objectClass=organizationalUnit)"
-	attributes := []string{
-		"objectGUID", "distinguishedName", "ou", "name",
-		"description", "ntSecurityDescriptor",
-	}
+	attributes := om.getAllOUAttributes()
 
 	searchReq := &SearchRequest{
 		BaseDN:     containerDN,
