@@ -1,33 +1,7 @@
 ---
 name: active-directory-ldap-expert
 description: Use this agent when working with Active Directory LDAP operations, including managing Organizational Units, Groups, and Users through LDAP protocols. This agent specializes in the github.com/go-ldap/ldap/v3 Go client library and Active Directory's specific LDAP implementation nuances. Expertise includes DN manipulation, LDAP filters, AD-specific attributes, group management, user account operations, and efficient LDAP client patterns for enterprise environments.
-
-Examples:
-- <example>
-  Context: User needs to implement user management functionality in Active Directory.
-  user: "I need to create users in Active Directory and set their group memberships using go-ldap"
-  assistant: "I'll use the active-directory-ldap-expert agent to help you implement proper user creation and group membership management with AD-specific patterns."
-  <commentary>
-  Since the user is asking about Active Directory user management with LDAP, use the Task tool to launch the active-directory-ldap-expert agent.
-  </commentary>
-</example>
-- <example>
-  Context: User is having issues with LDAP search filters for Active Directory.
-  user: "My LDAP search for users is returning too many results and I need to filter by organizational unit"
-  assistant: "Let me invoke the active-directory-ldap-expert agent to help optimize your LDAP search filters for AD organizational units."
-  <commentary>
-  LDAP search filtering and AD organizational structure are core expertise areas, so the active-directory-ldap-expert agent should be used.
-  </commentary>
-</example>
-- <example>
-  Context: User needs guidance on managing Active Directory groups through LDAP.
-  user: "How should I handle nested group membership and different group types in Active Directory?"
-  assistant: "I'll engage the active-directory-ldap-expert agent to provide guidance on AD group management best practices and LDAP operations."
-  <commentary>
-  Group management strategies and AD-specific group types require specialized knowledge, making this a perfect use case for the agent.
-  </commentary>
-</example>
-tools: Bash, Glob, Grep, LS, Read, Edit, MultiEdit, Write, NotebookEdit, WebFetch, TodoWrite, WebSearch, BashOutput, KillBash, mcp__context7__resolve-library-id, mcp__context7__get-library-docs, mcp__gopls__go_diagnostics, mcp__gopls__go_file_context, mcp__gopls__go_package_api, mcp__gopls__go_search, mcp__gopls__go_symbol_references, mcp__gopls__go_workspace, ListMcpResourcesTool, ReadMcpResourceTool
+tools: Bash, Glob, Grep, Read, Edit, Write, NotebookEdit, WebFetch, TodoWrite, WebSearch, BashOutput, mcp__context7__resolve-library-id, mcp__context7__get-library-docs, ListMcpResourcesTool, ReadMcpResourceTool, mcp__serena__list_dir, mcp__serena__find_file, mcp__serena__search_for_pattern, mcp__serena__get_symbols_overview, mcp__serena__find_symbol, mcp__serena__find_referencing_symbols, mcp__serena__replace_symbol_body, mcp__serena__insert_after_symbol, mcp__serena__insert_before_symbol, mcp__serena__write_memory, mcp__serena__read_memory, mcp__serena__list_memories, mcp__serena__delete_memory, mcp__serena__activate_project, mcp__serena__get_current_config, mcp__serena__check_onboarding_performed, mcp__serena__onboarding, mcp__serena__think_about_collected_information, mcp__serena__think_about_task_adherence, mcp__serena__think_about_whether_you_are_done
 model: inherit
 color: green
 ---
