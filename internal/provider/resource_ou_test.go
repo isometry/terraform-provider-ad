@@ -243,6 +243,150 @@ func TestAccOUResource_importByDN(t *testing.T) {
 	})
 }
 
+func TestAccOUResource_managedBy(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create OU with managed_by specified
+			{
+				Config: testAccOUResourceConfig_withManagedBy("tf-test-ou-managed"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_ou.test", "name", "tf-test-ou-managed"),
+					resource.TestCheckResourceAttrPair("ad_ou.test", "managed_by", "ad_group.manager", "dn"),
+				),
+			},
+			// ImportState testing - verify managed_by is imported
+			{
+				ResourceName:      "ad_ou.test",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+func TestAccOUResource_managedByNotSpecified(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create OU without managed_by (computed field should be empty)
+			{
+				Config: testAccOUResourceConfig_basic("tf-test-ou-no-manager"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_ou.test", "name", "tf-test-ou-no-manager"),
+					resource.TestCheckResourceAttr("ad_ou.test", "managed_by", ""),
+				),
+			},
+		},
+	})
+}
+
+func TestAccOUResource_managedByUpdate(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create OU with initial managed_by
+			{
+				Config: testAccOUResourceConfig_withManagedBy("tf-test-ou-mgr-update"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_ou.test", "name", "tf-test-ou-mgr-update"),
+					resource.TestCheckResourceAttrPair("ad_ou.test", "managed_by", "ad_group.manager", "dn"),
+				),
+			},
+			// Update managed_by to different manager
+			{
+				Config: testAccOUResourceConfig_withDifferentManagedBy("tf-test-ou-mgr-update"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_ou.test", "name", "tf-test-ou-mgr-update"),
+					resource.TestCheckResourceAttrPair("ad_ou.test", "managed_by", "ad_group.manager2", "dn"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccOUResource_managedByClear(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create OU with managed_by set
+			{
+				Config: testAccOUResourceConfig_withManagedBy("tf-test-ou-mgr-clear"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_ou.test", "name", "tf-test-ou-mgr-clear"),
+					resource.TestCheckResourceAttrPair("ad_ou.test", "managed_by", "ad_group.manager", "dn"),
+				),
+			},
+			// Remove managed_by from config (clear it)
+			{
+				Config: testAccOUResourceConfig_basic("tf-test-ou-mgr-clear"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_ou.test", "name", "tf-test-ou-mgr-clear"),
+					resource.TestCheckResourceAttr("ad_ou.test", "managed_by", ""),
+				),
+			},
+		},
+	})
+}
+
+func TestAccOUResource_managedByWithOtherChanges(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create OU with description and managed_by
+			{
+				Config: testAccOUResourceConfig_withManagedByAndDescription("tf-test-ou-mgr-combo", "Initial description"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_ou.test", "name", "tf-test-ou-mgr-combo"),
+					resource.TestCheckResourceAttr("ad_ou.test", "description", "Initial description"),
+					resource.TestCheckResourceAttrPair("ad_ou.test", "managed_by", "ad_group.manager", "dn"),
+				),
+			},
+			// Update both description and managed_by simultaneously
+			{
+				Config: testAccOUResourceConfig_withDifferentManagedByAndDescription("tf-test-ou-mgr-combo", "Updated description"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_ou.test", "name", "tf-test-ou-mgr-combo"),
+					resource.TestCheckResourceAttr("ad_ou.test", "description", "Updated description"),
+					resource.TestCheckResourceAttrPair("ad_ou.test", "managed_by", "ad_group.manager2", "dn"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccOUResource_managedByWithProtected(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create protected OU with managed_by
+			{
+				Config: testAccOUResourceConfig_withManagedByAndProtected("tf-test-ou-mgr-prot", true),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_ou.test", "name", "tf-test-ou-mgr-prot"),
+					resource.TestCheckResourceAttr("ad_ou.test", "protected", "true"),
+					resource.TestCheckResourceAttrPair("ad_ou.test", "managed_by", "ad_group.manager", "dn"),
+				),
+			},
+			// Update protection status (managed_by unchanged)
+			{
+				Config: testAccOUResourceConfig_withManagedByAndProtected("tf-test-ou-mgr-prot", false),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_ou.test", "name", "tf-test-ou-mgr-prot"),
+					resource.TestCheckResourceAttr("ad_ou.test", "protected", "false"),
+					resource.TestCheckResourceAttrPair("ad_ou.test", "managed_by", "ad_group.manager", "dn"),
+				),
+			},
+		},
+	})
+}
+
 // Test configuration functions
 
 func testAccOUResourceConfig_basic(name string) string {
@@ -305,4 +449,128 @@ resource "ad_ou" "test3" {
   path = "dc=example,dc=com"
 }
 `, name1, name2, name3)
+}
+
+// Helper functions for managed_by test configurations.
+
+func testAccOUResourceConfig_withManagedBy(name string) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+# Create a manager group to use as managed_by
+resource "ad_group" "manager" {
+  name             = "%[3]s-manager"
+  sam_account_name = "%[3]sManager"
+  container        = "%[4]s,${data.ad_domain.test.dn}"
+}
+
+resource "ad_ou" "test" {
+  name       = %[3]q
+  path       = data.ad_domain.test.dn
+  managed_by = ad_group.manager.dn
+}
+`, testProviderConfig(), testDomainDataSource(), name, DefaultTestContainer)
+}
+
+func testAccOUResourceConfig_withDifferentManagedBy(name string) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+# Create first manager group (not used in this step)
+resource "ad_group" "manager" {
+  name             = "%[3]s-manager"
+  sam_account_name = "%[3]sManager"
+  container        = "%[4]s,${data.ad_domain.test.dn}"
+}
+
+# Create second manager group to use as managed_by
+resource "ad_group" "manager2" {
+  name             = "%[3]s-manager2"
+  sam_account_name = "%[3]sManager2"
+  container        = "%[4]s,${data.ad_domain.test.dn}"
+}
+
+resource "ad_ou" "test" {
+  name       = %[3]q
+  path       = data.ad_domain.test.dn
+  managed_by = ad_group.manager2.dn
+}
+`, testProviderConfig(), testDomainDataSource(), name, DefaultTestContainer)
+}
+
+func testAccOUResourceConfig_withManagedByAndDescription(name, description string) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+# Create a manager group to use as managed_by
+resource "ad_group" "manager" {
+  name             = "%[3]s-manager"
+  sam_account_name = "%[3]sManager"
+  container        = "%[5]s,${data.ad_domain.test.dn}"
+}
+
+resource "ad_ou" "test" {
+  name        = %[3]q
+  path        = data.ad_domain.test.dn
+  description = %[4]q
+  managed_by  = ad_group.manager.dn
+}
+`, testProviderConfig(), testDomainDataSource(), name, description, DefaultTestContainer)
+}
+
+func testAccOUResourceConfig_withDifferentManagedByAndDescription(name, description string) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+# Create first manager group (not used in this step)
+resource "ad_group" "manager" {
+  name             = "%[3]s-manager"
+  sam_account_name = "%[3]sManager"
+  container        = "%[5]s,${data.ad_domain.test.dn}"
+}
+
+# Create second manager group to use as managed_by
+resource "ad_group" "manager2" {
+  name             = "%[3]s-manager2"
+  sam_account_name = "%[3]sManager2"
+  container        = "%[5]s,${data.ad_domain.test.dn}"
+}
+
+resource "ad_ou" "test" {
+  name        = %[3]q
+  path        = data.ad_domain.test.dn
+  description = %[4]q
+  managed_by  = ad_group.manager2.dn
+}
+`, testProviderConfig(), testDomainDataSource(), name, description, DefaultTestContainer)
+}
+
+func testAccOUResourceConfig_withManagedByAndProtected(name string, protected bool) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+# Create a manager group to use as managed_by
+resource "ad_group" "manager" {
+  name             = "%[3]s-manager"
+  sam_account_name = "%[3]sManager"
+  container        = "%[5]s,${data.ad_domain.test.dn}"
+}
+
+resource "ad_ou" "test" {
+  name       = %[3]q
+  path       = data.ad_domain.test.dn
+  protected  = %[4]t
+  managed_by = ad_group.manager.dn
+}
+`, testProviderConfig(), testDomainDataSource(), name, protected, DefaultTestContainer)
 }

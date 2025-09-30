@@ -144,6 +144,7 @@ output "created_structure" {
 - `child_count` (Number) The total number of immediate child OUs.
 - `children` (List of String) A list of Distinguished Names of all immediate child OUs.
 - `description` (String) The description of the organizational unit.
+- `managed_by` (String) Distinguished Name (DN) of the user or computer that manages this organizational unit.
 - `parent` (String) The parent container DN of the OU.
 - `protected` (Boolean) Whether the OU is protected from accidental deletion.
 - `when_changed` (String) The timestamp when the OU was last modified (RFC3339 format).

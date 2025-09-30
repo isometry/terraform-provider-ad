@@ -80,6 +80,7 @@ resource "ad_group" "support_team" {
 - `display_name` (String) The display name of the group (equivalent to common name).
 - `mail` (String) The email address for distribution groups.
 - `mail_nickname` (String) The Exchange mail nickname for distribution groups.
+- `managed_by` (String) Distinguished Name (DN) of the user or computer that manages this group.
 - `member_count` (Number) The total number of members in the group.
 - `member_of` (Set of String) A set of Distinguished Names of groups that this group is a member of. This represents nested group membership.
 - `members` (Set of String) A set of Distinguished Names of all group members. Includes users, groups, and other objects.

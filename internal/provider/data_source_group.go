@@ -56,6 +56,7 @@ type GroupDataSourceModel struct {
 	Scope       types.String `tfsdk:"scope"`        // Global/Universal/DomainLocal
 	Category    types.String `tfsdk:"category"`     // Security/Distribution
 	SID         types.String `tfsdk:"sid"`          // Security Identifier
+	ManagedBy   types.String `tfsdk:"managed_by"`   // ManagedBy DN
 
 	// Member information
 	Members     types.Set   `tfsdk:"members"`      // Set of member DNs
@@ -144,6 +145,10 @@ func (d *GroupDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 			},
 			"sid": schema.StringAttribute{
 				MarkdownDescription: "The Security Identifier (SID) of the group.",
+				Computed:            true,
+			},
+			"managed_by": schema.StringAttribute{
+				MarkdownDescription: "Distinguished Name (DN) of the user or computer that manages this group.",
 				Computed:            true,
 			},
 
@@ -379,6 +384,23 @@ func (d *GroupDataSource) mapGroupToModel(ctx context.Context, group *ldapclient
 	}
 	data.DistinguishedName = types.StringValue(normalizedDN)
 	data.SID = types.StringValue(group.ObjectSid)
+
+	// ManagedBy information
+	if group.ManagedBy != "" {
+		// Normalize managedBy DN case
+		normalizedManagedBy, err := ldapclient.NormalizeDNCase(group.ManagedBy)
+		if err != nil {
+			// Log error but use original DN as fallback
+			tflog.Warn(ctx, "Failed to normalize managedBy DN case", map[string]any{
+				"original_managed_by": group.ManagedBy,
+				"error":               err.Error(),
+			})
+			normalizedManagedBy = group.ManagedBy
+		}
+		data.ManagedBy = types.StringValue(normalizedManagedBy)
+	} else {
+		data.ManagedBy = types.StringNull()
+	}
 
 	// Members information
 	var memberDNs []string

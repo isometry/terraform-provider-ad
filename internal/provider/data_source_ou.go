@@ -47,6 +47,7 @@ type OUDataSourceModel struct {
 	// Computed outputs
 	Description types.String `tfsdk:"description"` // OU description
 	Protected   types.Bool   `tfsdk:"protected"`   // Protection status
+	ManagedBy   types.String `tfsdk:"managed_by"`  // ManagedBy DN
 	Children    types.List   `tfsdk:"children"`    // Child OU DNs
 	ChildCount  types.Int64  `tfsdk:"child_count"` // Number of children
 	Parent      types.String `tfsdk:"parent"`      // Parent container DN
@@ -101,6 +102,10 @@ func (d *OUDataSource) Schema(ctx context.Context, req datasource.SchemaRequest,
 			},
 			"protected": schema.BoolAttribute{
 				MarkdownDescription: "Whether the OU is protected from accidental deletion.",
+				Computed:            true,
+			},
+			"managed_by": schema.StringAttribute{
+				MarkdownDescription: "Distinguished Name (DN) of the user or computer that manages this organizational unit.",
 				Computed:            true,
 			},
 			"children": schema.ListAttribute{
@@ -313,6 +318,23 @@ func (d *OUDataSource) mapOUToModel(ctx context.Context, ou *ldapclient.OU, data
 	data.Description = types.StringValue(ou.Description)
 	data.Protected = types.BoolValue(ou.Protected)
 	data.Parent = types.StringValue(normalizedPath) // Already normalized above
+
+	// ManagedBy information
+	if ou.ManagedBy != "" {
+		// Normalize managedBy DN case
+		normalizedManagedBy, err := ldapclient.NormalizeDNCase(ou.ManagedBy)
+		if err != nil {
+			// Log error but use original DN as fallback
+			tflog.Warn(ctx, "Failed to normalize managedBy DN case", map[string]any{
+				"original_managed_by": ou.ManagedBy,
+				"error":               err.Error(),
+			})
+			normalizedManagedBy = ou.ManagedBy
+		}
+		data.ManagedBy = types.StringValue(normalizedManagedBy)
+	} else {
+		data.ManagedBy = types.StringNull()
+	}
 
 	// Get child OUs
 	children, err := d.ouManager.GetOUChildren(ctx, ou.DistinguishedName)

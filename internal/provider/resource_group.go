@@ -49,6 +49,7 @@ type GroupResourceModel struct {
 	Scope          types.String              `tfsdk:"scope"`            // Optional+Computed+Default: "Global"
 	Category       types.String              `tfsdk:"category"`         // Optional+Computed+Default: "Security"
 	Description    types.String              `tfsdk:"description"`      // Optional
+	ManagedBy      types.String              `tfsdk:"managed_by"`       // Optional+Computed - managedBy attribute
 	// Computed attributes
 	DistinguishedName customtypes.DNStringValue `tfsdk:"dn"`  // Computed
 	SID               types.String              `tfsdk:"sid"` // Computed
@@ -130,6 +131,18 @@ func (r *GroupResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				Optional:            true,
 				Validators: []validator.String{
 					stringvalidator.LengthAtMost(1024),
+				},
+			},
+			"managed_by": schema.StringAttribute{
+				MarkdownDescription: "Distinguished Name (DN) of the user or computer that manages this group. " +
+					"Must be a valid DN format (e.g., `CN=User,OU=Users,DC=example,DC=com`).",
+				Optional: true,
+				Computed: true,
+				Validators: []validator.String{
+					validators.IsValidDN(),
+				},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
 			"dn": schema.StringAttribute{
@@ -234,6 +247,11 @@ func (r *GroupResource) Create(ctx context.Context, req resource.CreateRequest, 
 	// Add optional description
 	if !data.Description.IsNull() && data.Description.ValueString() != "" {
 		createReq.Description = data.Description.ValueString()
+	}
+
+	// Add optional managedBy
+	if !data.ManagedBy.IsNull() && data.ManagedBy.ValueString() != "" {
+		createReq.ManagedBy = data.ManagedBy.ValueString()
 	}
 
 	// Create the group
@@ -389,9 +407,23 @@ func (r *GroupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		hasChanges = true
 	}
 
+	// Check for managedBy changes
+	if !data.ManagedBy.Equal(currentData.ManagedBy) {
+		if data.ManagedBy.IsNull() {
+			// Clear the managedBy attribute
+			emptyString := ""
+			updateReq.ManagedBy = &emptyString
+		} else {
+			// Set new managedBy value
+			managedByValue := data.ManagedBy.ValueString()
+			updateReq.ManagedBy = &managedByValue
+		}
+		hasChanges = true
+	}
+
+	// If no changes at all, return current state
 	if !hasChanges {
 		tflog.Debug(ctx, "No changes detected for AD group")
-		// No changes needed, just return current state
 		resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 		return
 	}
@@ -556,6 +588,13 @@ func (r *GroupResource) updateModelFromGroup(model *GroupResourceModel, group *l
 		model.Description = types.StringValue(group.Description)
 	} else {
 		model.Description = types.StringNull()
+	}
+
+	// Handle optional managedBy
+	if group.ManagedBy != "" {
+		model.ManagedBy = types.StringValue(group.ManagedBy)
+	} else {
+		model.ManagedBy = types.StringNull()
 	}
 }
 

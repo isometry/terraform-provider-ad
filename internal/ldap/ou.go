@@ -45,9 +45,10 @@ type OU struct {
 	DistinguishedName string `json:"distinguishedName"`
 
 	// OU attributes
-	Name        string `json:"name"`        // ou attribute value
-	Description string `json:"description"` // OU description
-	Protected   bool   `json:"protected"`   // Protection flag (from ntSecurityDescriptor)
+	Name        string `json:"name"`                // ou attribute value
+	Description string `json:"description"`         // OU description
+	Protected   bool   `json:"protected"`           // Protection flag (from ntSecurityDescriptor)
+	ManagedBy   string `json:"managedBy,omitempty"` // DN of user/computer that manages this OU
 
 	// Container information
 	Parent string `json:"parent"` // Parent container DN
@@ -62,10 +63,11 @@ type OU struct {
 
 // CreateOURequest represents a request to create a new OU.
 type CreateOURequest struct {
-	Name        string `json:"name"`        // Required: OU name
-	ParentDN    string `json:"parentDN"`    // Required: Parent container DN
-	Description string `json:"description"` // Optional: OU description
-	Protected   bool   `json:"protected"`   // Optional: Enable OU protection
+	Name        string `json:"name"`                // Required: OU name
+	ParentDN    string `json:"parentDN"`            // Required: Parent container DN
+	Description string `json:"description"`         // Optional: OU description
+	Protected   bool   `json:"protected"`           // Optional: Enable OU protection
+	ManagedBy   string `json:"managedBy,omitempty"` // Optional: DN of manager
 }
 
 // UpdateOURequest represents a request to update an existing OU.
@@ -73,6 +75,7 @@ type UpdateOURequest struct {
 	Name        *string `json:"name,omitempty"`        // Optional: New OU name
 	Description *string `json:"description,omitempty"` // Optional: New description
 	Protected   *bool   `json:"protected,omitempty"`   // Optional: Change protection status
+	ManagedBy   *string `json:"managedBy,omitempty"`   // Optional: DN of manager (nil = no change, empty string = clear)
 }
 
 // OUEntry represents a simplified OU entry for the interface.
@@ -199,6 +202,10 @@ func (om *OUManager) CreateOU(req *CreateOURequest) (*OU, error) {
 		attributes["description"] = []string{req.Description}
 	}
 
+	if req.ManagedBy != "" {
+		attributes["managedBy"] = []string{req.ManagedBy}
+	}
+
 	// Create the OU
 	addReq := &AddRequest{
 		DN:         ouDN,
@@ -245,7 +252,7 @@ func (om *OUManager) GetOU(guid string) (*OU, error) {
 	// Expand attributes to include all OU-relevant fields
 	searchReq.Attributes = []string{
 		"objectGUID", "distinguishedName", "ou", "name",
-		"description", "ntSecurityDescriptor", "whenCreated", "whenChanged",
+		"description", "ntSecurityDescriptor", "whenCreated", "whenChanged", "managedBy",
 	}
 	searchReq.TimeLimit = om.timeout
 
@@ -286,7 +293,7 @@ func (om *OUManager) getOUByDN(dn string) (*OU, error) {
 		Filter: "(objectClass=organizationalUnit)",
 		Attributes: []string{
 			"objectGUID", "distinguishedName", "ou", "name",
-			"description", "ntSecurityDescriptor", "whenCreated", "whenChanged",
+			"description", "ntSecurityDescriptor", "whenCreated", "whenChanged", "managedBy",
 		},
 		SizeLimit: 1,
 		TimeLimit: om.timeout,
@@ -349,6 +356,17 @@ func (om *OUManager) UpdateOU(guid string, req *UpdateOURequest) (*OU, error) {
 			modReq.DeleteAttributes = append(modReq.DeleteAttributes, "description")
 		} else {
 			modReq.ReplaceAttributes["description"] = []string{*req.Description}
+		}
+		hasChanges = true
+	}
+
+	// Handle managedBy change
+	if req.ManagedBy != nil {
+		if *req.ManagedBy == "" {
+			// Clear the attribute
+			modReq.ReplaceAttributes["managedBy"] = []string{}
+		} else {
+			modReq.ReplaceAttributes["managedBy"] = []string{*req.ManagedBy}
 		}
 		hasChanges = true
 	}
@@ -564,6 +582,7 @@ func (om *OUManager) entryToOU(entry *ldap.Entry) (*OU, error) {
 	}
 
 	ou.Description = entry.GetAttributeValue("description")
+	ou.ManagedBy = entry.GetAttributeValue("managedBy")
 
 	// Extract parent from DN
 	if ou.DistinguishedName != "" {

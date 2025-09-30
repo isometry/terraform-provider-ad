@@ -76,6 +76,7 @@ resource "ad_group" "it_admins" {
 ### Optional
 
 - `description` (String) A description for the organizational unit. This is optional and can be used to provide additional context about the OU's purpose.
+- `managed_by` (String) Distinguished Name (DN) of the user or computer that manages this organizational unit. Must be a valid DN format (e.g., `CN=User,OU=Users,DC=example,DC=com`).
 - `protected` (Boolean) Whether the OU is protected from accidental deletion. When true, the OU cannot be deleted until protection is disabled. Defaults to `false`.
 
 ### Read-Only

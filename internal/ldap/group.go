@@ -87,6 +87,7 @@ type Group struct {
 	GroupType      int32         `json:"groupType"`              // Raw AD groupType value
 	Mail           string        `json:"mail,omitempty"`         // Email address for distribution groups
 	MailNickname   string        `json:"mailNickname,omitempty"` // Exchange mail nickname
+	ManagedBy      string        `json:"managedBy,omitempty"`    // DN of user/computer that manages this group
 
 	// Container information
 	Container string `json:"container"` // Parent container DN
@@ -110,6 +111,7 @@ type CreateGroupRequest struct {
 	Category       GroupCategory `json:"category"`               // Required: Group category
 	Mail           string        `json:"mail,omitempty"`         // Optional: Email for distribution groups
 	MailNickname   string        `json:"mailNickname,omitempty"` // Optional: Exchange nickname
+	ManagedBy      string        `json:"managedBy,omitempty"`    // Optional: DN of manager
 }
 
 // UpdateGroupRequest represents a request to update an existing group.
@@ -119,6 +121,7 @@ type UpdateGroupRequest struct {
 	Description    *string        `json:"description,omitempty"`    // Optional: New description
 	Mail           *string        `json:"mail,omitempty"`           // Optional: New email address
 	MailNickname   *string        `json:"mailNickname,omitempty"`   // Optional: New mail nickname
+	ManagedBy      *string        `json:"managedBy,omitempty"`      // Optional: DN of manager (nil = no change, empty string = clear)
 	Scope          *GroupScope    `json:"scope,omitempty"`          // Optional: New scope (limited conversions)
 	Category       *GroupCategory `json:"category,omitempty"`       // Optional: New category
 	Container      *string        `json:"container,omitempty"`      // Optional: New container DN (triggers move)
@@ -291,6 +294,10 @@ func (gm *GroupManager) CreateGroup(req *CreateGroupRequest) (*Group, error) {
 		attributes["mailNickname"] = []string{req.MailNickname}
 	}
 
+	if req.ManagedBy != "" {
+		attributes["managedBy"] = []string{req.ManagedBy}
+	}
+
 	// Create the group
 	addReq := &AddRequest{
 		DN:         groupDN,
@@ -331,7 +338,7 @@ func (gm *GroupManager) GetGroup(guid string) (*Group, error) {
 	searchReq.Attributes = []string{
 		"objectGUID", "distinguishedName", "objectSid", "cn", "sAMAccountName",
 		"description", "groupType", "mail", "mailNickname", "member", "memberOf",
-		"whenCreated", "whenChanged",
+		"whenCreated", "whenChanged", "managedBy",
 	}
 	searchReq.TimeLimit = gm.timeout
 
@@ -370,7 +377,7 @@ func (gm *GroupManager) getGroupByDN(dn string) (*Group, error) {
 		Attributes: []string{
 			"objectGUID", "distinguishedName", "objectSid", "cn", "sAMAccountName",
 			"description", "groupType", "mail", "mailNickname", "member", "memberOf",
-			"whenCreated", "whenChanged",
+			"whenCreated", "whenChanged", "managedBy",
 		},
 		SizeLimit: 1,
 		TimeLimit: gm.timeout,
@@ -481,6 +488,17 @@ func (gm *GroupManager) UpdateGroup(guid string, req *UpdateGroupRequest) (*Grou
 			modReq.DeleteAttributes = append(modReq.DeleteAttributes, "mailNickname")
 		} else {
 			modReq.ReplaceAttributes["mailNickname"] = []string{*req.MailNickname}
+		}
+		hasAttributeChanges = true
+	}
+
+	// Handle managedBy change
+	if req.ManagedBy != nil {
+		if *req.ManagedBy == "" {
+			// Clear the attribute
+			modReq.ReplaceAttributes["managedBy"] = []string{}
+		} else {
+			modReq.ReplaceAttributes["managedBy"] = []string{*req.ManagedBy}
 		}
 		hasAttributeChanges = true
 	}
@@ -1035,6 +1053,7 @@ func (gm *GroupManager) entryToGroup(entry *ldap.Entry) (*Group, error) {
 	group.Description = entry.GetAttributeValue("description")
 	group.Mail = entry.GetAttributeValue("mail")
 	group.MailNickname = entry.GetAttributeValue("mailNickname")
+	group.ManagedBy = entry.GetAttributeValue("managedBy")
 
 	// Parse group type
 	groupTypeStr := entry.GetAttributeValue("groupType")

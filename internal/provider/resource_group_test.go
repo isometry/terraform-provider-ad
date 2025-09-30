@@ -587,4 +587,229 @@ func testAccCheckGroupGUIDUnchanged() resource.TestCheckFunc {
 	}
 }
 
+func TestAccGroupResource_managedBy(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create group with managed_by specified
+			{
+				Config: testAccGroupResourceConfig_withManagedBy("tf-test-group-managed", "TFTestGroupManaged"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-group-managed"),
+					resource.TestCheckResourceAttr("ad_group.test", "sam_account_name", "TFTestGroupManaged"),
+					resource.TestCheckResourceAttrPair("ad_group.test", "managed_by", "ad_group.manager", "dn"),
+				),
+			},
+			// ImportState testing - verify managed_by is imported
+			{
+				ResourceName:      "ad_group.test",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+func TestAccGroupResource_managedByNotSpecified(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create group without managed_by (computed field should be empty)
+			{
+				Config: testAccGroupResourceConfig_basic("tf-test-group-no-manager", "TFTestGroupNoMgr"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-group-no-manager"),
+					resource.TestCheckResourceAttr("ad_group.test", "sam_account_name", "TFTestGroupNoMgr"),
+					resource.TestCheckResourceAttr("ad_group.test", "managed_by", ""),
+				),
+			},
+		},
+	})
+}
+
+func TestAccGroupResource_managedByUpdate(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create group with initial managed_by
+			{
+				Config: testAccGroupResourceConfig_withManagedBy("tf-test-group-mgr-update", "TFTestGroupMgrUpd"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-group-mgr-update"),
+					resource.TestCheckResourceAttrPair("ad_group.test", "managed_by", "ad_group.manager", "dn"),
+				),
+			},
+			// Update managed_by to different manager
+			{
+				Config: testAccGroupResourceConfig_withDifferentManagedBy("tf-test-group-mgr-update", "TFTestGroupMgrUpd"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-group-mgr-update"),
+					resource.TestCheckResourceAttrPair("ad_group.test", "managed_by", "ad_group.manager2", "dn"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccGroupResource_managedByClear(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create group with managed_by set
+			{
+				Config: testAccGroupResourceConfig_withManagedBy("tf-test-group-mgr-clear", "TFTestGroupMgrClr"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-group-mgr-clear"),
+					resource.TestCheckResourceAttrPair("ad_group.test", "managed_by", "ad_group.manager", "dn"),
+				),
+			},
+			// Remove managed_by from config (clear it)
+			{
+				Config: testAccGroupResourceConfig_basic("tf-test-group-mgr-clear", "TFTestGroupMgrClr"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-group-mgr-clear"),
+					resource.TestCheckResourceAttr("ad_group.test", "managed_by", ""),
+				),
+			},
+		},
+	})
+}
+
+func TestAccGroupResource_managedByWithOtherChanges(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create group with description and managed_by
+			{
+				Config: testAccGroupResourceConfig_withManagedByAndDescription("tf-test-group-mgr-combo", "TFTestGroupMgrCmb", "Initial description"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-group-mgr-combo"),
+					resource.TestCheckResourceAttr("ad_group.test", "description", "Initial description"),
+					resource.TestCheckResourceAttrPair("ad_group.test", "managed_by", "ad_group.manager", "dn"),
+				),
+			},
+			// Update both description and managed_by simultaneously
+			{
+				Config: testAccGroupResourceConfig_withDifferentManagedByAndDescription("tf-test-group-mgr-combo", "TFTestGroupMgrCmb", "Updated description"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-group-mgr-combo"),
+					resource.TestCheckResourceAttr("ad_group.test", "description", "Updated description"),
+					resource.TestCheckResourceAttrPair("ad_group.test", "managed_by", "ad_group.manager2", "dn"),
+				),
+			},
+		},
+	})
+}
+
+// Helper functions for managed_by test configurations.
+
+func testAccGroupResourceConfig_withManagedBy(name, samName string) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+# Create a manager group to use as managed_by
+resource "ad_group" "manager" {
+  name             = "%[1]s-manager"
+  sam_account_name = "%[2]sManager"
+  container        = "%[3]s,${data.ad_domain.test.dn}"
+}
+
+resource "ad_group" "test" {
+  name             = %[1]q
+  sam_account_name = %[2]q
+  container        = "%[3]s,${data.ad_domain.test.dn}"
+  managed_by       = ad_group.manager.dn
+}
+`, testProviderConfig(), testDomainDataSource(), name, samName, DefaultTestContainer)
+}
+
+func testAccGroupResourceConfig_withDifferentManagedBy(name, samName string) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+# Create first manager group (not used in this step)
+resource "ad_group" "manager" {
+  name             = "%[1]s-manager"
+  sam_account_name = "%[2]sManager"
+  container        = "%[3]s,${data.ad_domain.test.dn}"
+}
+
+# Create second manager group to use as managed_by
+resource "ad_group" "manager2" {
+  name             = "%[1]s-manager2"
+  sam_account_name = "%[2]sManager2"
+  container        = "%[3]s,${data.ad_domain.test.dn}"
+}
+
+resource "ad_group" "test" {
+  name             = %[1]q
+  sam_account_name = %[2]q
+  container        = "%[3]s,${data.ad_domain.test.dn}"
+  managed_by       = ad_group.manager2.dn
+}
+`, testProviderConfig(), testDomainDataSource(), name, samName, DefaultTestContainer)
+}
+
+func testAccGroupResourceConfig_withManagedByAndDescription(name, samName, description string) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+# Create a manager group to use as managed_by
+resource "ad_group" "manager" {
+  name             = "%[1]s-manager"
+  sam_account_name = "%[2]sManager"
+  container        = "%[4]s,${data.ad_domain.test.dn}"
+}
+
+resource "ad_group" "test" {
+  name             = %[1]q
+  sam_account_name = %[2]q
+  container        = "%[4]s,${data.ad_domain.test.dn}"
+  description      = %[3]q
+  managed_by       = ad_group.manager.dn
+}
+`, testProviderConfig(), testDomainDataSource(), name, samName, description, DefaultTestContainer)
+}
+
+func testAccGroupResourceConfig_withDifferentManagedByAndDescription(name, samName, description string) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+# Create first manager group (not used in this step)
+resource "ad_group" "manager" {
+  name             = "%[1]s-manager"
+  sam_account_name = "%[2]sManager"
+  container        = "%[4]s,${data.ad_domain.test.dn}"
+}
+
+# Create second manager group to use as managed_by
+resource "ad_group" "manager2" {
+  name             = "%[1]s-manager2"
+  sam_account_name = "%[2]sManager2"
+  container        = "%[4]s,${data.ad_domain.test.dn}"
+}
+
+resource "ad_group" "test" {
+  name             = %[1]q
+  sam_account_name = %[2]q
+  container        = "%[4]s,${data.ad_domain.test.dn}"
+  description      = %[3]q
+  managed_by       = ad_group.manager2.dn
+}
+`, testProviderConfig(), testDomainDataSource(), name, samName, description, DefaultTestContainer)
+}
+
 // Note: testAccPreCheck is defined in provider_test.go

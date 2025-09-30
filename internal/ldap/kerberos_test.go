@@ -48,7 +48,7 @@ func TestPrepareKerberosConfig(t *testing.T) {
 				Username:       "testuser",
 				KerberosRealm:  "EXAMPLE.COM",
 				KerberosKeytab: testKeytab,
-				KerberosConfig: "/etc/krb5.conf", // Should be set to default
+				KerberosConfig: "", // Empty = auto-discovery mode
 			},
 		},
 		{
@@ -63,7 +63,7 @@ func TestPrepareKerberosConfig(t *testing.T) {
 				Username:       "testuser",
 				Password:       "testpass",
 				KerberosRealm:  "EXAMPLE.COM",
-				KerberosConfig: "/etc/krb5.conf", // Should be set to default
+				KerberosConfig: "", // Empty = auto-discovery mode
 			},
 		},
 		{
@@ -77,7 +77,7 @@ func TestPrepareKerberosConfig(t *testing.T) {
 				Username:       "testuser",    // Should be extracted
 				KerberosRealm:  "EXAMPLE.COM", // Should be extracted
 				KerberosKeytab: testKeytab,
-				KerberosConfig: "/etc/krb5.conf",
+				KerberosConfig: "", // Empty = auto-discovery mode
 			},
 		},
 		{

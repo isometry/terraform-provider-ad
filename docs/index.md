@@ -297,7 +297,9 @@ provider "ad" {
 - `domain` (String) Active Directory domain name for SRV-based discovery (e.g., `example.com`). Mutually exclusive with `ldap_url`. Can be set via the `AD_DOMAIN` environment variable.
 - `initial_backoff` (Number) Initial backoff delay in milliseconds for retry attempts. Defaults to `500`. Can be set via the `AD_INITIAL_BACKOFF` environment variable.
 - `kerberos_ccache` (String) Path to Kerberos credential cache file for authentication. When specified, existing Kerberos tickets will be used for authentication. Can be set via the `AD_KERBEROS_CCACHE` environment variable.
-- `kerberos_config` (String) Path to Kerberos configuration file. Defaults to system default. Can be set via the `AD_KERBEROS_CONFIG` environment variable.
+- `kerberos_config` (String) Path to Kerberos configuration file (krb5.conf). If not specified but `kerberos_realm` is set, DNS-based auto-discovery will be used to locate KDCs. Can be set via the `AD_KERBEROS_CONFIG` environment variable.
+- `kerberos_dns_lookup_kdc` (Boolean) Enable DNS-based KDC discovery for Kerberos authentication. Defaults to `true` when `kerberos_config` is not specified but `kerberos_realm` is set. Can be set via the `AD_KERBEROS_DNS_LOOKUP_KDC` environment variable.
+- `kerberos_dns_lookup_realm` (Boolean) Enable DNS-based realm discovery for Kerberos authentication. Defaults to `true` when `kerberos_config` is not specified but `kerberos_realm` is set. Can be set via the `AD_KERBEROS_DNS_LOOKUP_REALM` environment variable.
 - `kerberos_keytab` (String) Path to Kerberos keytab file for authentication. Can be set via the `AD_KERBEROS_KEYTAB` environment variable.
 - `kerberos_realm` (String) Kerberos realm for GSSAPI authentication (e.g., `EXAMPLE.COM`). Can be set via the `AD_KERBEROS_REALM` environment variable.
 - `kerberos_spn` (String) Override Service Principal Name (SPN) for Kerberos authentication. Use when connecting to a domain controller by IP address where the SPN doesn't match the IP. Format: `ldap/<hostname>` (e.g., `ldap/dc1.example.com`). Can be set via the `AD_KERBEROS_SPN` environment variable.

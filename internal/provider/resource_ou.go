@@ -44,6 +44,7 @@ type OUResourceModel struct {
 	Path        customtypes.DNStringValue `tfsdk:"path"`        // Required - Parent container DN
 	Description types.String              `tfsdk:"description"` // Optional - OU description
 	Protected   types.Bool                `tfsdk:"protected"`   // Optional+Computed+Default: false
+	ManagedBy   types.String              `tfsdk:"managed_by"`  // Optional+Computed - managedBy attribute
 	// Computed attributes
 	DN   customtypes.DNStringValue `tfsdk:"dn"`   // Computed - Full Distinguished Name
 	GUID types.String              `tfsdk:"guid"` // Computed - GUID string (same as ID)
@@ -100,6 +101,18 @@ func (r *OUResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				Optional:            true,
 				Computed:            true,
 				Default:             booldefault.StaticBool(false),
+			},
+			"managed_by": schema.StringAttribute{
+				MarkdownDescription: "Distinguished Name (DN) of the user or computer that manages this organizational unit. " +
+					"Must be a valid DN format (e.g., `CN=User,OU=Users,DC=example,DC=com`).",
+				Optional: true,
+				Computed: true,
+				Validators: []validator.String{
+					validators.IsValidDN(),
+				},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"dn": schema.StringAttribute{
 				MarkdownDescription: "The distinguished name of the OU. This is automatically generated based on the name and path.",
@@ -184,6 +197,11 @@ func (r *OUResource) Create(ctx context.Context, req resource.CreateRequest, res
 	// Add optional description
 	if !data.Description.IsNull() && data.Description.ValueString() != "" {
 		createReq.Description = data.Description.ValueString()
+	}
+
+	// Add optional managedBy
+	if !data.ManagedBy.IsNull() && data.ManagedBy.ValueString() != "" {
+		createReq.ManagedBy = data.ManagedBy.ValueString()
 	}
 
 	// Create the OU
@@ -312,9 +330,23 @@ func (r *OUResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		hasChanges = true
 	}
 
+	// Check for managedBy changes
+	if !data.ManagedBy.Equal(currentData.ManagedBy) {
+		if data.ManagedBy.IsNull() {
+			// Clear the managedBy attribute
+			emptyString := ""
+			updateReq.ManagedBy = &emptyString
+		} else {
+			// Set new managedBy value
+			managedByValue := data.ManagedBy.ValueString()
+			updateReq.ManagedBy = &managedByValue
+		}
+		hasChanges = true
+	}
+
+	// If no changes at all, return current state
 	if !hasChanges {
 		tflog.Debug(ctx, "No changes detected for AD OU")
-		// No changes needed, just return current state
 		resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 		return
 	}
@@ -486,6 +518,13 @@ func (r *OUResource) updateModelFromOU(model *OUResourceModel, ou *ldapclient.OU
 		model.Description = types.StringValue(ou.Description)
 	} else {
 		model.Description = types.StringNull()
+	}
+
+	// Handle optional managedBy
+	if ou.ManagedBy != "" {
+		model.ManagedBy = types.StringValue(ou.ManagedBy)
+	} else {
+		model.ManagedBy = types.StringNull()
 	}
 }
 

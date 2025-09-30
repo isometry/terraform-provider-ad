@@ -67,6 +67,7 @@ resource "ad_group" "resource_access" {
 
 - `category` (String) The category of the group. Valid values are `Security` or `Distribution`. Defaults to `Security`.
 - `description` (String) A description for the group. This is optional and can be used to provide additional context about the group's purpose.
+- `managed_by` (String) Distinguished Name (DN) of the user or computer that manages this group. Must be a valid DN format (e.g., `CN=User,OU=Users,DC=example,DC=com`).
 - `sam_account_name` (String) The SAM account name (pre-Windows 2000 group name). Must be unique within the domain. If not specified, defaults to the value of 'name' if it's 64 characters or less and contains only valid characters (letters, numbers, dots, underscores, hyphens).
 - `scope` (String) The scope of the group. Valid values are `Global`, `Universal`, or `DomainLocal`. Defaults to `Global`.
 
