@@ -455,21 +455,57 @@ func (r *GroupMembershipResource) Delete(ctx context.Context, req resource.Delet
 }
 
 func (r *GroupMembershipResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	// Import by group GUID
-	groupGUID := strings.TrimSpace(req.ID)
+	// Import by various group identifier formats (DN, GUID, SID, UPN, SAM)
+	importID := strings.TrimSpace(req.ID)
 
 	tflog.Debug(ctx, "Importing AD group membership", map[string]any{
-		"group_id": groupGUID,
+		"import_id": importID,
 	})
 
-	// Validate that the import ID looks like a GUID
-	if !r.isGUID(groupGUID) {
+	// Get base DN for identifier normalization
+	baseDN, err := r.client.GetBaseDN(ctx)
+	if err != nil {
 		resp.Diagnostics.AddError(
-			"Invalid Import ID",
-			fmt.Sprintf("Import ID must be a valid group objectGUID. Got: %s", groupGUID),
+			"Error Getting Base DN",
+			fmt.Sprintf("Could not get base DN for identifier normalization: %s", err.Error()),
 		)
 		return
 	}
+
+	// Normalize the import ID to a DN (supports DN, GUID, SID, UPN, SAM formats)
+	normalizer := ldapclient.NewMemberNormalizer(r.client, baseDN, r.cacheManager)
+	groupDN, err := normalizer.NormalizeToDN(importID)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error Resolving Group Identifier",
+			fmt.Sprintf("Could not resolve group identifier '%s' to DN. Supported formats: DN, GUID, SID, UPN, SAM Account Name. Error: %s", importID, err.Error()),
+		)
+		return
+	}
+
+	tflog.Debug(ctx, "Resolved group identifier to DN", map[string]any{
+		"import_id": importID,
+		"group_dn":  groupDN,
+	})
+
+	// Get the group by DN to extract its GUID
+	groupManager := ldapclient.NewGroupManager(ctx, r.client, baseDN, r.cacheManager)
+	group, err := groupManager.GetGroupByDN(groupDN)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error Importing Group Membership",
+			fmt.Sprintf("Could not find group at DN '%s': %s", groupDN, err.Error()),
+		)
+		return
+	}
+
+	groupGUID := group.ObjectGUID
+
+	tflog.Debug(ctx, "Resolved group GUID from DN", map[string]any{
+		"import_id":  importID,
+		"group_dn":   groupDN,
+		"group_guid": groupGUID,
+	})
 
 	// Create GroupMembershipManager
 	membershipManager, err := r.getMembershipManager(ctx)
@@ -513,8 +549,10 @@ func (r *GroupMembershipResource) ImportState(ctx context.Context, req resource.
 		data.MembersNormalized = emptySet
 	}
 
-	tflog.Debug(ctx, "Imported AD group membership", map[string]any{
-		"group_id":     groupGUID,
+	tflog.Info(ctx, "Successfully imported AD group membership", map[string]any{
+		"import_id":    importID,
+		"group_guid":   groupGUID,
+		"group_dn":     groupDN,
 		"member_count": len(currentMembers),
 	})
 
@@ -551,12 +589,4 @@ func (r *GroupMembershipResource) refreshMembershipState(ctx context.Context, me
 	})
 
 	return nil
-}
-
-// isGUID checks if a string looks like a GUID.
-func (r *GroupMembershipResource) isGUID(s string) bool {
-	// Use the same GUID validation as the group resource
-	// GUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-	return len(s) == 36 &&
-		s[8] == '-' && s[13] == '-' && s[18] == '-' && s[23] == '-'
 }

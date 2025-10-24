@@ -492,11 +492,37 @@ func (r *GroupResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 }
 
 func (r *GroupResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	// Support import by GUID or DN
+	// Support import by various identifier formats (DN, GUID, SID, UPN, SAM)
 	importID := strings.TrimSpace(req.ID)
 
 	tflog.Debug(ctx, "Importing AD group", map[string]any{
 		"import_id": importID,
+	})
+
+	// Get base DN for identifier normalization
+	baseDN, err := r.client.GetBaseDN(ctx)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error Getting Base DN",
+			fmt.Sprintf("Could not get base DN for identifier normalization: %s", err.Error()),
+		)
+		return
+	}
+
+	// Normalize the import ID to a DN (supports DN, GUID, SID, UPN, SAM formats)
+	normalizer := ldapclient.NewMemberNormalizer(r.client, baseDN, r.cacheManager)
+	groupDN, err := normalizer.NormalizeToDN(importID)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error Resolving Group Identifier",
+			fmt.Sprintf("Could not resolve group identifier '%s' to DN. Supported formats: DN, GUID, SID, UPN, SAM Account Name. Error: %s", importID, err.Error()),
+		)
+		return
+	}
+
+	tflog.Debug(ctx, "Resolved group identifier to DN", map[string]any{
+		"import_id": importID,
+		"group_dn":  groupDN,
 	})
 
 	// Create GroupManager
@@ -509,38 +535,25 @@ func (r *GroupResource) ImportState(ctx context.Context, req resource.ImportStat
 		return
 	}
 
+	// Get the group by DN
 	var group *ldapclient.Group
-
-	// Check if the import ID looks like a GUID
-	if r.isGUID(importID) {
-		// Import by GUID
-		group, err = groupManager.GetGroup(importID)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Error Importing Group by GUID",
-				fmt.Sprintf("Could not import group with GUID %s: %s", importID, err.Error()),
-			)
-			return
-		}
-	} else {
-		// Import by DN
-		group, err = groupManager.GetGroupByDN(importID)
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Error Importing Group by DN",
-				fmt.Sprintf("Could not import group with DN %s: %s", importID, err.Error()),
-			)
-			return
-		}
+	group, err = groupManager.GetGroupByDN(groupDN)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error Importing Group",
+			fmt.Sprintf("Could not import group at DN '%s': %s", groupDN, err.Error()),
+		)
+		return
 	}
 
 	// Create model from the imported group
 	var data GroupResourceModel
 	r.updateModelFromGroup(&data, group)
 
-	tflog.Debug(ctx, "Imported AD group", map[string]any{
-		"guid": group.ObjectGUID,
-		"dn":   group.DistinguishedName,
+	tflog.Info(ctx, "Successfully imported AD group", map[string]any{
+		"import_id":  importID,
+		"group_guid": group.ObjectGUID,
+		"group_dn":   group.DistinguishedName,
 	})
 
 	// Set the resource state
@@ -608,11 +621,4 @@ func (r *GroupResource) getGroupManager(ctx context.Context) (*ldapclient.GroupM
 
 	// Create GroupManager
 	return ldapclient.NewGroupManager(ctx, r.client, baseDN, r.cacheManager), nil
-}
-
-// isGUID checks if a string looks like a GUID.
-func (r *GroupResource) isGUID(s string) bool {
-	// GUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-	guidRegex := regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
-	return guidRegex.MatchString(s)
 }
