@@ -109,21 +109,21 @@ func (r *GroupResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				},
 			},
 			"scope": schema.StringAttribute{
-				MarkdownDescription: "The scope of the group. Valid values are `Global`, `Universal`, or `DomainLocal`. Defaults to `Global`.",
+				MarkdownDescription: "The scope of the group. Valid values are `Global`, `Universal`, or `DomainLocal` (case-insensitive). Defaults to `Global`.",
 				Optional:            true,
 				Computed:            true,
 				Default:             stringdefault.StaticString("Global"),
 				Validators: []validator.String{
-					stringvalidator.OneOf("Global", "Universal", "DomainLocal"),
+					validators.CaseInsensitiveOneOf("Global", "Universal", "DomainLocal"),
 				},
 			},
 			"category": schema.StringAttribute{
-				MarkdownDescription: "The category of the group. Valid values are `Security` or `Distribution`. Defaults to `Security`.",
+				MarkdownDescription: "The category of the group. Valid values are `Security` or `Distribution` (case-insensitive). Defaults to `Security`.",
 				Optional:            true,
 				Computed:            true,
 				Default:             stringdefault.StaticString("Security"),
 				Validators: []validator.String{
-					stringvalidator.OneOf("Security", "Distribution"),
+					validators.CaseInsensitiveOneOf("Security", "Distribution"),
 				},
 			},
 			"description": schema.StringAttribute{
@@ -235,13 +235,32 @@ func (r *GroupResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
+	// Normalize scope and category to canonical form
+	normalizedScope, err := ldapclient.NormalizeGroupScope(data.Scope.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Invalid Group Scope",
+			fmt.Sprintf("Could not normalize group scope: %s", err.Error()),
+		)
+		return
+	}
+
+	normalizedCategory, err := ldapclient.NormalizeGroupCategory(data.Category.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Invalid Group Category",
+			fmt.Sprintf("Could not normalize group category: %s", err.Error()),
+		)
+		return
+	}
+
 	// Convert Terraform model to LDAP create request
 	createReq := &ldapclient.CreateGroupRequest{
 		Name:           data.Name.ValueString(),
 		SAMAccountName: data.SAMAccountName.ValueString(),
 		Container:      data.Container.ValueString(),
-		Scope:          ldapclient.GroupScope(data.Scope.ValueString()),
-		Category:       ldapclient.GroupCategory(data.Category.ValueString()),
+		Scope:          normalizedScope,
+		Category:       normalizedCategory,
 	}
 
 	// Add optional description
@@ -388,15 +407,29 @@ func (r *GroupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 
 	// Check for scope changes
 	if !data.Scope.Equal(currentData.Scope) {
-		scope := ldapclient.GroupScope(data.Scope.ValueString())
-		updateReq.Scope = &scope
+		normalizedScope, err := ldapclient.NormalizeGroupScope(data.Scope.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Invalid Group Scope",
+				fmt.Sprintf("Could not normalize group scope: %s", err.Error()),
+			)
+			return
+		}
+		updateReq.Scope = &normalizedScope
 		hasChanges = true
 	}
 
 	// Check for category changes
 	if !data.Category.Equal(currentData.Category) {
-		category := ldapclient.GroupCategory(data.Category.ValueString())
-		updateReq.Category = &category
+		normalizedCategory, err := ldapclient.NormalizeGroupCategory(data.Category.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Invalid Group Category",
+				fmt.Sprintf("Could not normalize group category: %s", err.Error()),
+			)
+			return
+		}
+		updateReq.Category = &normalizedCategory
 		hasChanges = true
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -556,7 +557,7 @@ func TestBuildCertPool_InvalidPEM(t *testing.T) {
 		t.Error("buildCertPool() should fail with invalid PEM")
 	}
 
-	if err != nil && !contains(err.Error(), "invalid PEM format") {
+	if err != nil && !strings.Contains(err.Error(), "invalid PEM format") {
 		t.Errorf("Expected 'invalid PEM format' error, got: %v", err)
 	}
 }
@@ -567,7 +568,7 @@ func TestBuildCertPool_FileNotFound(t *testing.T) {
 		t.Error("buildCertPool() should fail with nonexistent file")
 	}
 
-	if err != nil && !contains(err.Error(), "failed to read CA certificate file") {
+	if err != nil && !strings.Contains(err.Error(), "failed to read CA certificate file") {
 		t.Errorf("Expected 'failed to read CA certificate file' error, got: %v", err)
 	}
 }
@@ -588,20 +589,4 @@ func TestNewConnectionPool_CertPoolSet(t *testing.T) {
 	if config.TLSConfig.RootCAs == nil {
 		t.Error("TLSConfig.RootCAs should be set by NewConnectionPool")
 	}
-}
-
-// Helper function for error message checks.
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) &&
-		(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr ||
-			findSubstring(s, substr)))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

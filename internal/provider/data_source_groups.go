@@ -177,17 +177,17 @@ func (d *GroupsDataSource) Schema(ctx context.Context, req datasource.SchemaRequ
 						Optional:            true,
 					},
 					"category": schema.StringAttribute{
-						MarkdownDescription: "Filter by group category. Valid values: `security`, `distribution`.",
+						MarkdownDescription: "Filter by group category. Valid values: `Security`, `Distribution` (case-insensitive).",
 						Optional:            true,
 						Validators: []validator.String{
-							stringvalidator.OneOf("security", "distribution"),
+							validators.CaseInsensitiveOneOf("Security", "Distribution"),
 						},
 					},
 					"scope": schema.StringAttribute{
-						MarkdownDescription: "Filter by group scope. Valid values: `global`, `domainlocal`, `universal`.",
+						MarkdownDescription: "Filter by group scope. Valid values: `Global`, `DomainLocal`, `Universal` (case-insensitive).",
 						Optional:            true,
 						Validators: []validator.String{
-							stringvalidator.OneOf("global", "domainlocal", "universal"),
+							validators.CaseInsensitiveOneOf("Global", "DomainLocal", "Universal"),
 						},
 					},
 					"has_members": schema.BoolAttribute{

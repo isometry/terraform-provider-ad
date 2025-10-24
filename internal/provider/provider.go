@@ -120,7 +120,7 @@ func (p *ActiveDirectoryProvider) Schema(ctx context.Context, req provider.Schem
 			// Authentication settings
 			"username": schema.StringAttribute{
 				MarkdownDescription: "Username for LDAP authentication. Supports DN, UPN, or SAM account name formats. " +
-					"Can be set via the `AD_USERNAME` environment variable.",
+					"Can be set via the `AD_USERNAME` or `AD_USER` environment variables.",
 				Optional: true,
 			},
 			"password": schema.StringAttribute{
@@ -442,7 +442,7 @@ func (p *ActiveDirectoryProvider) buildLDAPConfig(data *ActiveDirectoryProviderM
 	}
 
 	// Authentication settings - validate that we have credentials
-	username := p.getStringValue(data.Username, "AD_USERNAME")
+	username := p.getStringValue(data.Username, "AD_USERNAME", "AD_USER")
 	password := p.getStringValue(data.Password, "AD_PASSWORD")
 	kerberosRealm := p.getStringValue(data.KerberosRealm, "AD_KERBEROS_REALM")
 	kerberosKeytab := p.getStringValue(data.KerberosKeytab, "AD_KERBEROS_KEYTAB")
@@ -458,7 +458,7 @@ func (p *ActiveDirectoryProvider) buildLDAPConfig(data *ActiveDirectoryProviderM
 		diags.AddError(
 			"Missing Authentication Configuration",
 			"Either username/password authentication or Kerberos authentication must be configured. "+
-				"For username/password: provide 'username' and 'password' attributes or set AD_USERNAME and AD_PASSWORD environment variables. "+
+				"For username/password: provide 'username' and 'password' attributes or set AD_USERNAME|AD_USER and AD_PASSWORD environment variables. "+
 				"For Kerberos: provide 'kerberos_realm' and optionally 'username'/'password' (for password auth), 'kerberos_keytab' (for keytab auth), or 'kerberos_ccache' (for credential cache auth).",
 		)
 		return config
@@ -536,11 +536,19 @@ func (p *ActiveDirectoryProvider) buildLDAPConfig(data *ActiveDirectoryProviderM
 
 // Helper functions for configuration value resolution
 
-func (p *ActiveDirectoryProvider) getStringValue(configValue types.String, envVar string) string {
+func (p *ActiveDirectoryProvider) getStringValue(configValue types.String, envVars ...string) string {
 	if !configValue.IsNull() && configValue.ValueString() != "" {
 		return configValue.ValueString()
 	}
-	return os.Getenv(envVar)
+
+	// Check environment variables in order, return first non-empty value
+	for _, envVar := range envVars {
+		if value := os.Getenv(envVar); value != "" {
+			return value
+		}
+	}
+
+	return ""
 }
 
 func (p *ActiveDirectoryProvider) getBoolValue(configValue types.Bool, envVar string, defaultValue bool) bool {

@@ -1,6 +1,7 @@
 package provider_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/provider"
@@ -344,7 +345,7 @@ func TestProviderEnvironmentVariables(t *testing.T) {
 		found := false
 		for _, attr := range resp.Schema.Attributes {
 			if attr.GetMarkdownDescription() != "" {
-				if contains(attr.GetMarkdownDescription(), envVar) {
+				if strings.Contains(attr.GetMarkdownDescription(), envVar) {
 					found = true
 					break
 				}
@@ -355,10 +356,4 @@ func TestProviderEnvironmentVariables(t *testing.T) {
 			t.Logf("Environment variable %s not found in schema documentation", envVar)
 		}
 	}
-}
-
-// Helper function to check if a string contains a substring.
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) > 0 &&
-		(s[:len(substr)] == substr || contains(s[1:], substr)))
 }

@@ -236,6 +236,210 @@ func TestParseGroupType(t *testing.T) {
 	}
 }
 
+func TestNormalizeGroupScope(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         string
+		expectedScope GroupScope
+		expectError   bool
+	}{
+		{
+			name:          "Global - exact case",
+			input:         "Global",
+			expectedScope: GroupScopeGlobal,
+			expectError:   false,
+		},
+		{
+			name:          "Global - lowercase",
+			input:         "global",
+			expectedScope: GroupScopeGlobal,
+			expectError:   false,
+		},
+		{
+			name:          "Global - uppercase",
+			input:         "GLOBAL",
+			expectedScope: GroupScopeGlobal,
+			expectError:   false,
+		},
+		{
+			name:          "Global - mixed case",
+			input:         "gLoBaL",
+			expectedScope: GroupScopeGlobal,
+			expectError:   false,
+		},
+		{
+			name:          "Global - with whitespace",
+			input:         "  Global  ",
+			expectedScope: GroupScopeGlobal,
+			expectError:   false,
+		},
+		{
+			name:          "Universal - exact case",
+			input:         "Universal",
+			expectedScope: GroupScopeUniversal,
+			expectError:   false,
+		},
+		{
+			name:          "Universal - lowercase",
+			input:         "universal",
+			expectedScope: GroupScopeUniversal,
+			expectError:   false,
+		},
+		{
+			name:          "Universal - uppercase",
+			input:         "UNIVERSAL",
+			expectedScope: GroupScopeUniversal,
+			expectError:   false,
+		},
+		{
+			name:          "DomainLocal - exact case",
+			input:         "DomainLocal",
+			expectedScope: GroupScopeDomainLocal,
+			expectError:   false,
+		},
+		{
+			name:          "DomainLocal - lowercase",
+			input:         "domainlocal",
+			expectedScope: GroupScopeDomainLocal,
+			expectError:   false,
+		},
+		{
+			name:          "DomainLocal - uppercase",
+			input:         "DOMAINLOCAL",
+			expectedScope: GroupScopeDomainLocal,
+			expectError:   false,
+		},
+		{
+			name:          "DomainLocal - mixed case",
+			input:         "DoMaInLoCaL",
+			expectedScope: GroupScopeDomainLocal,
+			expectError:   false,
+		},
+		{
+			name:        "Invalid scope",
+			input:       "Invalid",
+			expectError: true,
+		},
+		{
+			name:        "Empty string",
+			input:       "",
+			expectError: true,
+		},
+		{
+			name:        "Whitespace only",
+			input:       "   ",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := NormalizeGroupScope(tt.input)
+
+			if tt.expectError {
+				assert.Error(t, err, "Expected an error for input: %s", tt.input)
+				assert.Empty(t, result, "Expected empty result for invalid input")
+			} else {
+				assert.NoError(t, err, "Unexpected error for input: %s", tt.input)
+				assert.Equal(t, tt.expectedScope, result, "Scope normalization mismatch")
+			}
+		})
+	}
+}
+
+func TestNormalizeGroupCategory(t *testing.T) {
+	tests := []struct {
+		name             string
+		input            string
+		expectedCategory GroupCategory
+		expectError      bool
+	}{
+		{
+			name:             "Security - exact case",
+			input:            "Security",
+			expectedCategory: GroupCategorySecurity,
+			expectError:      false,
+		},
+		{
+			name:             "Security - lowercase",
+			input:            "security",
+			expectedCategory: GroupCategorySecurity,
+			expectError:      false,
+		},
+		{
+			name:             "Security - uppercase",
+			input:            "SECURITY",
+			expectedCategory: GroupCategorySecurity,
+			expectError:      false,
+		},
+		{
+			name:             "Security - mixed case",
+			input:            "SeCuRiTy",
+			expectedCategory: GroupCategorySecurity,
+			expectError:      false,
+		},
+		{
+			name:             "Security - with whitespace",
+			input:            "  Security  ",
+			expectedCategory: GroupCategorySecurity,
+			expectError:      false,
+		},
+		{
+			name:             "Distribution - exact case",
+			input:            "Distribution",
+			expectedCategory: GroupCategoryDistribution,
+			expectError:      false,
+		},
+		{
+			name:             "Distribution - lowercase",
+			input:            "distribution",
+			expectedCategory: GroupCategoryDistribution,
+			expectError:      false,
+		},
+		{
+			name:             "Distribution - uppercase",
+			input:            "DISTRIBUTION",
+			expectedCategory: GroupCategoryDistribution,
+			expectError:      false,
+		},
+		{
+			name:             "Distribution - mixed case",
+			input:            "DiStRiBuTiOn",
+			expectedCategory: GroupCategoryDistribution,
+			expectError:      false,
+		},
+		{
+			name:        "Invalid category",
+			input:       "Invalid",
+			expectError: true,
+		},
+		{
+			name:        "Empty string",
+			input:       "",
+			expectError: true,
+		},
+		{
+			name:        "Whitespace only",
+			input:       "   ",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := NormalizeGroupCategory(tt.input)
+
+			if tt.expectError {
+				assert.Error(t, err, "Expected an error for input: %s", tt.input)
+				assert.Empty(t, result, "Expected empty result for invalid input")
+			} else {
+				assert.NoError(t, err, "Unexpected error for input: %s", tt.input)
+				assert.Equal(t, tt.expectedCategory, result, "Category normalization mismatch")
+			}
+		})
+	}
+}
+
 func TestValidateGroupRequest(t *testing.T) {
 	gm, _ := createTestGroupManager(t)
 

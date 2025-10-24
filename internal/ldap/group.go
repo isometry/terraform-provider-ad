@@ -38,6 +38,40 @@ func (gc GroupCategory) String() string {
 	return string(gc)
 }
 
+// NormalizeGroupScope normalizes a group scope string to the canonical form.
+// It accepts any case variation and returns the canonical GroupScope constant.
+// Returns an error if the scope is not recognized.
+func NormalizeGroupScope(scope string) (GroupScope, error) {
+	normalized := strings.ToLower(strings.TrimSpace(scope))
+
+	switch normalized {
+	case "global":
+		return GroupScopeGlobal, nil
+	case "universal":
+		return GroupScopeUniversal, nil
+	case "domainlocal":
+		return GroupScopeDomainLocal, nil
+	default:
+		return "", fmt.Errorf("invalid group scope %q: must be Global, Universal, or DomainLocal (case-insensitive)", scope)
+	}
+}
+
+// NormalizeGroupCategory normalizes a group category string to the canonical form.
+// It accepts any case variation and returns the canonical GroupCategory constant.
+// Returns an error if the category is not recognized.
+func NormalizeGroupCategory(category string) (GroupCategory, error) {
+	normalized := strings.ToLower(strings.TrimSpace(category))
+
+	switch normalized {
+	case "security":
+		return GroupCategorySecurity, nil
+	case "distribution":
+		return GroupCategoryDistribution, nil
+	default:
+		return "", fmt.Errorf("invalid group category %q: must be Security or Distribution (case-insensitive)", category)
+	}
+}
+
 // Active Directory group type bit flags.
 const (
 	// Group scope flags (mutually exclusive).
