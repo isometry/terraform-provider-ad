@@ -24,8 +24,8 @@ func TestSRVDiscovery_DiscoverServers(t *testing.T) {
 		{
 			name:     "invalid domain",
 			domain:   "nonexistent.invalid.domain.test",
-			wantErr:  false, // Should fallback to direct connection
-			minCount: 2,     // Should return fallback servers
+			wantErr:  true, // Should error when SRV records not found
+			minCount: 0,
 		},
 	}
 
@@ -316,36 +316,5 @@ func TestSortServersByPriority(t *testing.T) {
 
 	if servers[len(servers)-1].Priority != 2 {
 		t.Errorf("Last server priority = %d, want 2", servers[len(servers)-1].Priority)
-	}
-}
-
-func TestCreateFallbackServers(t *testing.T) {
-	discovery := NewSRVDiscovery(context.Background())
-	domain := "example.com"
-
-	servers := discovery.createFallbackServers(domain)
-
-	if len(servers) != 2 {
-		t.Errorf("Expected 2 fallback servers, got %d", len(servers))
-	}
-
-	// First should be LDAPS
-	if !servers[0].UseTLS || servers[0].Port != 636 {
-		t.Errorf("First fallback server should be LDAPS on port 636")
-	}
-
-	// Second should be LDAP
-	if servers[1].UseTLS || servers[1].Port != 389 {
-		t.Errorf("Second fallback server should be LDAP on port 389")
-	}
-
-	// Both should have the correct domain
-	for i, server := range servers {
-		if server.Host != domain {
-			t.Errorf("Server %d host = %s, want %s", i, server.Host, domain)
-		}
-		if server.Source != "fallback" {
-			t.Errorf("Server %d source = %s, want fallback", i, server.Source)
-		}
 	}
 }

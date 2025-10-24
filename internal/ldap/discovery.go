@@ -26,11 +26,10 @@ func NewSRVDiscovery(ctx context.Context) *SRVDiscovery {
 	}
 }
 
-// DiscoverServers discovers LDAP servers for a domain using SRV records
-// Implements the discovery priority:
-// 1. _ldaps._tcp.<domain> (LDAPS - preferred)
-// 2. _ldap._tcp.<domain> (LDAP+StartTLS - fallback)
-// 3. _gc._tcp.<domain> (Global Catalog - last resort).
+// DiscoverServers discovers LDAP servers for a domain using SRV records.
+// Queries the standard Active Directory SRV record: _ldap._tcp.<domain>
+// Returns error if no SRV records found. Use ldap_url provider configuration
+// to specify servers directly when SRV records are not available.
 func (d *SRVDiscovery) DiscoverServers(ctx context.Context, domain string) ([]*ServerInfo, error) {
 	start := time.Now()
 	tflog.SubsystemDebug(d.ctx, "ldap", "Starting server discovery for domain", map[string]any{
@@ -41,71 +40,52 @@ func (d *SRVDiscovery) DiscoverServers(ctx context.Context, domain string) ([]*S
 		return nil, fmt.Errorf("domain cannot be empty")
 	}
 
-	var allServers []*ServerInfo
+	// Query standard Active Directory SRV record
+	service := "_ldap._tcp." + domain
 
-	// Discovery order based on security and functionality
-	srvRecords := []struct {
-		service string
-		useTLS  bool
-		source  string
-	}{
-		{"_ldaps._tcp." + domain, true, "srv"},
-		{"_ldap._tcp." + domain, false, "srv"},
-		{"_gc._tcp." + domain, false, "srv"},
-	}
-
-	tflog.SubsystemDebug(d.ctx, "ldap", "Will attempt SRV lookups", map[string]any{
-		"service_type_count": len(srvRecords),
+	tflog.SubsystemDebug(d.ctx, "ldap", "Attempting SRV lookup", map[string]any{
+		"service": service,
 	})
 
-	for i, record := range srvRecords {
-		tflog.SubsystemDebug(d.ctx, "ldap", "Attempting SRV lookup", map[string]any{
-			"attempt":       i + 1,
-			"total_records": len(srvRecords),
-			"service":       record.service,
-		})
-		servers, err := d.lookupSRV(ctx, record.service, record.useTLS, record.source)
-		if err != nil {
-			tflog.SubsystemDebug(d.ctx, "ldap", "SRV lookup failed, continuing to next service", map[string]any{
-				"service": record.service,
-			})
-			continue
-		}
-		allServers = append(allServers, servers...)
-		tflog.SubsystemDebug(d.ctx, "ldap", "Added servers from service", map[string]any{
-			"servers_added": len(servers),
-			"service":       record.service,
-			"total_servers": len(allServers),
+	servers, err := d.lookupSRV(ctx, service)
+	if err != nil {
+		tflog.SubsystemError(d.ctx, "ldap", "SRV lookup failed", map[string]any{
+			"service": service,
+			"error":   err.Error(),
 		})
 
-		// If we found LDAPS servers, prefer them and don't look further
-		if record.useTLS && len(servers) > 0 {
-			break
-		}
+		return nil, fmt.Errorf(
+			"no LDAP servers discovered via DNS SRV records for domain %s. "+
+				"Verify DNS configuration with 'nslookup -type=SRV %s' or "+
+				"use 'ldap_url' provider configuration to specify server directly: %w",
+			domain, service, err,
+		)
 	}
 
-	if len(allServers) == 0 {
-		// Fallback to standard ports if SRV discovery fails
-		fallbackServers := d.createFallbackServers(domain)
-		tflog.SubsystemDebug(d.ctx, "ldap", "No SRV records found, using fallback servers", map[string]any{
-			"total_discovery_duration": time.Since(start).String(),
-		})
-		return fallbackServers, nil
+	if len(servers) == 0 {
+		return nil, fmt.Errorf(
+			"no LDAP servers found in SRV record %s for domain %s. "+
+				"Verify DNS configuration or use 'ldap_url' provider configuration",
+			service, domain,
+		)
 	}
 
 	// Sort servers by priority (lower priority = higher preference)
-	// Within same priority, randomize by weight
-	d.sortServersByPriority(allServers)
+	d.sortServersByPriority(servers)
 
-	tflog.SubsystemDebug(d.ctx, "ldap", "Server discovery completed", map[string]any{
+	tflog.SubsystemInfo(d.ctx, "ldap", "Server discovery completed", map[string]any{
 		"duration":     time.Since(start).String(),
-		"server_count": len(allServers),
+		"server_count": len(servers),
 	})
-	return allServers, nil
+
+	return servers, nil
 }
 
 // lookupSRV performs SRV record lookup for a specific service.
-func (d *SRVDiscovery) lookupSRV(ctx context.Context, service string, useTLS bool, source string) ([]*ServerInfo, error) {
+// Discovered servers are always configured for plain LDAP (UseTLS=false)
+// as AD SRV records point to port 389. TLS is applied via StartTLS based
+// on ConnectionConfig.UseTLS, not per-server configuration.
+func (d *SRVDiscovery) lookupSRV(ctx context.Context, service string) ([]*ServerInfo, error) {
 	start := time.Now()
 	tflog.SubsystemDebug(d.ctx, "ldap", "Looking up SRV records for service", map[string]any{
 		"service": service,
@@ -141,40 +121,15 @@ func (d *SRVDiscovery) lookupSRV(ctx context.Context, service string, useTLS boo
 		server := &ServerInfo{
 			Host:     host,
 			Port:     int(srv.Port),
-			UseTLS:   useTLS,
+			UseTLS:   false, // SRV records always point to plain LDAP (port 389)
 			Priority: int(srv.Priority),
 			Weight:   int(srv.Weight),
-			Source:   source,
+			Source:   "srv", // This function is specifically for SRV discovery
 		}
 		servers = append(servers, server)
 	}
 
 	return servers, nil
-}
-
-// createFallbackServers creates fallback servers when SRV discovery fails.
-func (d *SRVDiscovery) createFallbackServers(domain string) []*ServerInfo {
-	// Standard Active Directory LDAP ports
-	fallbackServers := []*ServerInfo{
-		{
-			Host:     domain,
-			Port:     636, // LDAPS
-			UseTLS:   true,
-			Priority: 0,
-			Weight:   100,
-			Source:   "fallback",
-		},
-		{
-			Host:     domain,
-			Port:     389, // LDAP
-			UseTLS:   false,
-			Priority: 1,
-			Weight:   100,
-			Source:   "fallback",
-		},
-	}
-
-	return fallbackServers
 }
 
 // sortServersByPriority sorts servers by priority and weight according to RFC 2782.
