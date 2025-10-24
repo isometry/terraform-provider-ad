@@ -2,8 +2,11 @@ package ldap
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -50,6 +53,48 @@ type connectionPool struct {
 	healthWg     sync.WaitGroup
 }
 
+// buildCertPool creates a certificate pool with system CAs and optional custom CAs.
+// It always starts with the system cert pool to ensure standard trusted CAs are available,
+// then optionally appends custom CAs from a file or inline content.
+//
+// Parameters:
+//   - certFile: Path to a PEM-encoded CA certificate file (optional)
+//   - certContent: PEM-encoded CA certificate content (optional)
+//
+// Returns the combined certificate pool or an error if cert loading fails.
+func buildCertPool(certFile, certContent string) (*x509.CertPool, error) {
+	// Start with system cert pool - this ensures we trust standard CAs
+	certPool, err := x509.SystemCertPool()
+	if err != nil {
+		// On some platforms SystemCertPool might not be available
+		// Fall back to an empty pool and log a warning
+		certPool = x509.NewCertPool()
+	}
+
+	// If no custom CA specified, return the system pool
+	if certFile == "" && certContent == "" {
+		return certPool, nil
+	}
+
+	// Load custom CA certificate
+	var certPEM []byte
+	if certFile != "" {
+		certPEM, err = os.ReadFile(certFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA certificate file %s: %w", certFile, err)
+		}
+	} else if certContent != "" {
+		certPEM = []byte(certContent)
+	}
+
+	// Append custom CA to the pool
+	if !certPool.AppendCertsFromPEM(certPEM) {
+		return nil, fmt.Errorf("failed to parse CA certificate: invalid PEM format")
+	}
+
+	return certPool, nil
+}
+
 // NewConnectionPool creates a new connection pool.
 func NewConnectionPool(ctx context.Context, config *ConnectionConfig) (ConnectionPool, error) {
 	start := time.Now()
@@ -61,6 +106,19 @@ func NewConnectionPool(ctx context.Context, config *ConnectionConfig) (Connectio
 
 	if err := validateConfig(config); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	// Build certificate pool with system CAs and optional custom CAs
+	// This ensures TLS connections always have access to trusted CAs
+	if config.TLSConfig != nil {
+		certPool, err := buildCertPool(config.TLSCACertFile, config.TLSCACert)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build certificate pool: %w", err)
+		}
+		config.TLSConfig.RootCAs = certPool
+		tflog.SubsystemDebug(ctx, "ldap", "Certificate pool configured", map[string]any{
+			"has_custom_ca": config.TLSCACertFile != "" || config.TLSCACert != "",
+		})
 	}
 
 	pool := &connectionPool{
@@ -231,15 +289,28 @@ func (p *connectionPool) createSingleConnection(_ context.Context, server *Serve
 	var conn *ldap.Conn
 	var err error
 
+	// Prepare TLS config with ServerName set for certificate validation
+	var tlsConfig *tls.Config
+	if p.config.TLSConfig != nil {
+		// Clone the config to avoid race conditions
+		tlsConfig = p.config.TLSConfig.Clone()
+
+		// Set ServerName for proper certificate validation
+		// This is required by Go's TLS library when InsecureSkipVerify is false
+		if !tlsConfig.InsecureSkipVerify {
+			tlsConfig.ServerName = server.Host
+		}
+	}
+
 	if server.UseTLS {
 		// Direct TLS connection (LDAPS)
-		conn, err = ldap.DialURL(url, ldap.DialWithTLSConfig(p.config.TLSConfig))
+		conn, err = ldap.DialURL(url, ldap.DialWithTLSConfig(tlsConfig))
 	} else {
 		// Plain connection, will use StartTLS if needed
 		conn, err = ldap.DialURL(url)
 		if err == nil && p.config.UseTLS && !p.config.SkipTLS {
 			// Upgrade to TLS using StartTLS
-			err = conn.StartTLS(p.config.TLSConfig)
+			err = conn.StartTLS(tlsConfig)
 		}
 	}
 

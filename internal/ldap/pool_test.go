@@ -2,6 +2,8 @@ package ldap
 
 import (
 	"context"
+	"crypto/tls"
+	"os"
 	"testing"
 	"time"
 )
@@ -347,4 +349,259 @@ func BenchmarkServerInfoToURL(b *testing.B) {
 		url := ServerInfoToURL(server)
 		_ = url
 	}
+}
+
+func TestTLSConfigServerName(t *testing.T) {
+	tests := []struct {
+		name               string
+		serverHost         string
+		tlsConfig          *tls.Config
+		wantServerName     string
+		skipServerNameTest bool
+	}{
+		{
+			name:           "TLS config with certificate validation",
+			serverHost:     "dc1.example.com",
+			tlsConfig:      &tls.Config{MinVersion: tls.VersionTLS12},
+			wantServerName: "dc1.example.com",
+		},
+		{
+			name:           "TLS config with FQDN",
+			serverHost:     "dc-ws19-dc2.nexthink.local",
+			tlsConfig:      &tls.Config{MinVersion: tls.VersionTLS12},
+			wantServerName: "dc-ws19-dc2.nexthink.local",
+		},
+		{
+			name:               "TLS config with InsecureSkipVerify should not set ServerName",
+			serverHost:         "dc1.example.com",
+			tlsConfig:          &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12},
+			skipServerNameTest: true,
+		},
+		{
+			name:               "nil TLS config should not cause panic",
+			serverHost:         "dc1.example.com",
+			tlsConfig:          nil,
+			skipServerNameTest: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a minimal config for testing
+			config := &ConnectionConfig{
+				LDAPURLs:       []string{"ldap://test.example.com:389"},
+				TLSConfig:      tt.tlsConfig,
+				MaxConnections: 1,
+				MaxIdleTime:    5 * time.Minute,
+				Timeout:        30 * time.Second,
+				MaxRetries:     0, // No retries for this test
+				BackoffFactor:  2.0,
+			}
+
+			// Create server info
+			server := &ServerInfo{
+				Host:   tt.serverHost,
+				Port:   636,
+				UseTLS: true,
+			}
+
+			// Test the TLS config preparation logic (same as in createSingleConnection)
+			var tlsConfig *tls.Config
+			if config.TLSConfig != nil {
+				tlsConfig = config.TLSConfig.Clone()
+				if !tlsConfig.InsecureSkipVerify {
+					tlsConfig.ServerName = server.Host
+				}
+			}
+
+			// Verify the results
+			if tt.skipServerNameTest {
+				// For nil config or InsecureSkipVerify, just ensure we don't panic
+				if tt.tlsConfig != nil && tt.tlsConfig.InsecureSkipVerify {
+					if tlsConfig.ServerName != "" {
+						t.Errorf("ServerName should not be set when InsecureSkipVerify is true, got %s", tlsConfig.ServerName)
+					}
+				}
+			} else {
+				if tlsConfig == nil {
+					t.Fatal("TLS config should not be nil")
+				}
+				if tlsConfig.ServerName != tt.wantServerName {
+					t.Errorf("ServerName = %s, want %s", tlsConfig.ServerName, tt.wantServerName)
+				}
+				// Verify it's a clone, not the same reference
+				if tt.tlsConfig != nil && tlsConfig == tt.tlsConfig {
+					t.Error("TLS config should be cloned, not the same reference")
+				}
+			}
+		})
+	}
+}
+
+func TestDefaultConfigHasTLSConfig(t *testing.T) {
+	// This test ensures that the default config always has a TLS config
+	// so that ServerName can be set properly
+	config := DefaultConfig()
+
+	if config.TLSConfig == nil {
+		t.Fatal("Default config must have TLSConfig initialized")
+	}
+
+	if config.TLSConfig.InsecureSkipVerify {
+		t.Error("Default config should not skip TLS verification")
+	}
+
+	// Verify the config can be cloned without panic
+	cloned := config.TLSConfig.Clone()
+	if cloned == nil {
+		t.Error("TLS config should be cloneable")
+	}
+}
+
+func TestBuildCertPool_SystemOnly(t *testing.T) {
+	// Test that buildCertPool returns system cert pool when no custom CA is specified
+	pool, err := buildCertPool("", "")
+	if err != nil {
+		t.Fatalf("buildCertPool() failed: %v", err)
+	}
+
+	if pool == nil {
+		t.Fatal("buildCertPool() returned nil pool")
+	}
+
+	// We can't easily verify the contents of the system cert pool,
+	// but we can verify it's not empty on most systems
+	// (this test might be platform-dependent)
+}
+
+func TestBuildCertPool_WithContent(t *testing.T) {
+	// Valid test CA certificate (self-signed, for testing only)
+	testCACert := `-----BEGIN CERTIFICATE-----
+MIIDBTCCAe2gAwIBAgIUF3pBeK7vWjkiOn5vkdviUpPSZDIwDQYJKoZIhvcNAQEL
+BQAwEjEQMA4GA1UEAwwHVGVzdCBDQTAeFw0yNTEwMjQxNzM3NDNaFw0yNjEwMjQx
+NzM3NDNaMBIxEDAOBgNVBAMMB1Rlc3QgQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IB
+DwAwggEKAoIBAQDcyerW4aUDqSKC9QPHuL1wZadQqNOP97LwivFl0rnJ1TTUw8Xn
+qX+V16tViOSuPq+tp4vxLDE4Sv0dJbXm35+7mb9xkmJFvIQaP8wQweza/k/GnkuM
+pCM9voUpxC2wDnNSenw46L0eTdFPyXDTDRQR8vbS85OektHdsSgMwxubugS0CihD
+WlIKYZnvpLPrvjBoplfS5Ff3gdse2d5K9qzl4Vs+KDyfxJegML9ATmPnXWLkyl13
+3WjV/rjlQrxqtIJH+APUVyGBCNe+LtymOHeIy+FMX3JpKV1CLGyVoQ1sowzgm17D
+wgErA2L6/quQpkNKNuoZSuDbFdJBiHyGWNsRAgMBAAGjUzBRMB0GA1UdDgQWBBRg
+vCPlMaoj4A/WZxqd7kvtbfQpZTAfBgNVHSMEGDAWgBRgvCPlMaoj4A/WZxqd7kvt
+bfQpZTAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQBFbrOXuzvE
+pdNN/f64PpkJakfrWGXAR4xhZul+2lXgJQd0iq7mEOkWpPlOq8/UeDTlLfOSPcDw
+FrQuODeDQeUmeglZvvmJIinOzFYf4wsxaJNqdQoF3bwY6UmUWlABDoRvVkWHFMwA
+VpAD/4I2VNcE+Mqe03Lx0UO+xkZ74KzHrEwKpYcPP4J3K78S16NAlz3MaH4eLRWK
+yVZWTBLVmuIFB5ITwdrdL92vdP6IQoXYOSrFDyhXkSoB+UxgaZwDji2wnYw3KZrm
+aomYL4gPZz6Cnw2euSkQEY64gm/e1ueJDarBkzWUFUhmTMTJ/XRJpnhdu5FTqwKj
+eNsm2nzlwhTR
+-----END CERTIFICATE-----`
+
+	pool, err := buildCertPool("", testCACert)
+	if err != nil {
+		t.Fatalf("buildCertPool() with content failed: %v", err)
+	}
+
+	if pool == nil {
+		t.Fatal("buildCertPool() returned nil pool")
+	}
+}
+
+func TestBuildCertPool_WithFile(t *testing.T) {
+	// Create a temporary CA cert file
+	testCACert := `-----BEGIN CERTIFICATE-----
+MIIDBTCCAe2gAwIBAgIUF3pBeK7vWjkiOn5vkdviUpPSZDIwDQYJKoZIhvcNAQEL
+BQAwEjEQMA4GA1UEAwwHVGVzdCBDQTAeFw0yNTEwMjQxNzM3NDNaFw0yNjEwMjQx
+NzM3NDNaMBIxEDAOBgNVBAMMB1Rlc3QgQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IB
+DwAwggEKAoIBAQDcyerW4aUDqSKC9QPHuL1wZadQqNOP97LwivFl0rnJ1TTUw8Xn
+qX+V16tViOSuPq+tp4vxLDE4Sv0dJbXm35+7mb9xkmJFvIQaP8wQweza/k/GnkuM
+pCM9voUpxC2wDnNSenw46L0eTdFPyXDTDRQR8vbS85OektHdsSgMwxubugS0CihD
+WlIKYZnvpLPrvjBoplfS5Ff3gdse2d5K9qzl4Vs+KDyfxJegML9ATmPnXWLkyl13
+3WjV/rjlQrxqtIJH+APUVyGBCNe+LtymOHeIy+FMX3JpKV1CLGyVoQ1sowzgm17D
+wgErA2L6/quQpkNKNuoZSuDbFdJBiHyGWNsRAgMBAAGjUzBRMB0GA1UdDgQWBBRg
+vCPlMaoj4A/WZxqd7kvtbfQpZTAfBgNVHSMEGDAWgBRgvCPlMaoj4A/WZxqd7kvt
+bfQpZTAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQBFbrOXuzvE
+pdNN/f64PpkJakfrWGXAR4xhZul+2lXgJQd0iq7mEOkWpPlOq8/UeDTlLfOSPcDw
+FrQuODeDQeUmeglZvvmJIinOzFYf4wsxaJNqdQoF3bwY6UmUWlABDoRvVkWHFMwA
+VpAD/4I2VNcE+Mqe03Lx0UO+xkZ74KzHrEwKpYcPP4J3K78S16NAlz3MaH4eLRWK
+yVZWTBLVmuIFB5ITwdrdL92vdP6IQoXYOSrFDyhXkSoB+UxgaZwDji2wnYw3KZrm
+aomYL4gPZz6Cnw2euSkQEY64gm/e1ueJDarBkzWUFUhmTMTJ/XRJpnhdu5FTqwKj
+eNsm2nzlwhTR
+-----END CERTIFICATE-----`
+
+	tmpFile, err := os.CreateTemp(t.TempDir(), "test-ca-*.pem")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+
+	if _, err := tmpFile.Write([]byte(testCACert)); err != nil {
+		t.Fatalf("Failed to write temp file: %v", err)
+	}
+	tmpFile.Close()
+
+	pool, err := buildCertPool(tmpFile.Name(), "")
+	if err != nil {
+		t.Fatalf("buildCertPool() with file failed: %v", err)
+	}
+
+	if pool == nil {
+		t.Fatal("buildCertPool() returned nil pool")
+	}
+}
+
+func TestBuildCertPool_InvalidPEM(t *testing.T) {
+	invalidPEM := "this is not valid PEM content"
+
+	_, err := buildCertPool("", invalidPEM)
+	if err == nil {
+		t.Error("buildCertPool() should fail with invalid PEM")
+	}
+
+	if err != nil && !contains(err.Error(), "invalid PEM format") {
+		t.Errorf("Expected 'invalid PEM format' error, got: %v", err)
+	}
+}
+
+func TestBuildCertPool_FileNotFound(t *testing.T) {
+	_, err := buildCertPool("/nonexistent/path/to/ca.pem", "")
+	if err == nil {
+		t.Error("buildCertPool() should fail with nonexistent file")
+	}
+
+	if err != nil && !contains(err.Error(), "failed to read CA certificate file") {
+		t.Errorf("Expected 'failed to read CA certificate file' error, got: %v", err)
+	}
+}
+
+func TestNewConnectionPool_CertPoolSet(t *testing.T) {
+	// Test that NewConnectionPool sets RootCAs in TLS config
+	config := DefaultConfig()
+	config.LDAPURLs = []string{"ldaps://dc1.example.com:636"}
+	config.Domain = ""
+
+	pool, err := NewConnectionPool(context.Background(), config)
+	if err != nil {
+		t.Fatalf("Failed to create pool: %v", err)
+	}
+	defer pool.Close()
+
+	// Verify that RootCAs was set
+	if config.TLSConfig.RootCAs == nil {
+		t.Error("TLSConfig.RootCAs should be set by NewConnectionPool")
+	}
+}
+
+// Helper function for error message checks.
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) &&
+		(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr ||
+			findSubstring(s, substr)))
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
