@@ -316,14 +316,33 @@ func (d *GroupDataSource) retrieveGroup(ctx context.Context, data *GroupDataSour
 		name := data.Name.ValueString()
 		container := data.Container.ValueString()
 
+		// Escape the name value for DN construction per RFC 4514
+		// This handles special characters like commas, quotes, angle brackets, etc.
+		escapedName := ldapclient.EscapeDNValue(name)
+
 		// Construct the full DN from name and container
-		groupDN := fmt.Sprintf("CN=%s,%s", name, container)
+		groupDN := fmt.Sprintf("CN=%s,%s", escapedName, container)
 		tflog.Debug(ctx, "Looking up group by name in container", map[string]any{
-			"name":      name,
-			"container": container,
-			"full_dn":   groupDN,
+			"name":         name,
+			"escaped_name": escapedName,
+			"container":    container,
+			"full_dn":      groupDN,
 		})
-		return d.groupManager.GetGroupByDN(groupDN)
+
+		group, err := d.groupManager.GetGroupByDN(groupDN)
+		if err != nil {
+			// Enhance error with troubleshooting guidance
+			return nil, fmt.Errorf("failed to find group '%s' in container '%s': %w\n\n"+
+				"Troubleshooting:\n"+
+				"  • Verify the group name is correct (CN attribute in AD)\n"+
+				"  • Check if you should use 'sam_account_name' instead of 'name'\n"+
+				"  • Confirm the container DN is accurate\n"+
+				"  • Check if the group is in a nested OU (e.g., OU=Groups,%s)\n"+
+				"  • Try using 'id' (GUID) or 'dn' lookup instead\n"+
+				"  • Verify the group exists: Get-ADGroup -Filter \"Name -eq '%s'\"",
+				name, container, err, container, name)
+		}
+		return group, nil
 	}
 
 	// SAM account name lookup - requires search

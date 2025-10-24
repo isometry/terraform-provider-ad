@@ -202,6 +202,46 @@ func TestAccGroupMembershipResource_empty(t *testing.T) {
 	})
 }
 
+// TestAccGroupMembershipResource_unknownGroupId tests handling of unknown group_id
+// during planning when the group is created in the same plan.
+func TestAccGroupMembershipResource_unknownGroupId(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create group and membership in same plan with group ID dependency
+			{
+				Config: testAccGroupMembershipResourceConfig_unknownGroupId(),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "2"),
+					resource.TestCheckResourceAttrSet("ad_group_membership.test", "group_id"),
+				),
+			},
+		},
+	})
+}
+
+// TestAccGroupMembershipResource_unknownMembers tests handling of unknown member values
+// during planning when members reference groups created in the same plan.
+func TestAccGroupMembershipResource_unknownMembers(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create multiple groups and a membership that references their IDs
+			{
+				Config: testAccGroupMembershipResourceConfig_unknownMembers(),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					// The filter group should have 2 member groups
+					resource.TestCheckResourceAttr("ad_group_membership.filter", "members.#", "2"),
+					resource.TestCheckResourceAttrSet("ad_group_membership.filter", "group_id"),
+					resource.TestCheckResourceAttrSet("ad_group_membership.filter", "members_normalized.#"),
+				),
+			},
+		},
+	})
+}
+
 // testAccGroupMembershipImportStateIdFunc returns the group GUID for import testing.
 func testAccGroupMembershipImportStateIdFunc(s *terraform.State) (string, error) {
 	rs, ok := s.RootModule().Resources["ad_group_membership.test"]
@@ -378,6 +418,78 @@ resource "ad_group" "test" {
   scope            = "Global"
   category         = "Security"
   description      = "Test group for membership testing"
+}
+`
+}
+
+// Test configuration for unknown group_id scenario.
+func testAccGroupMembershipResourceConfig_unknownGroupId() string {
+	return `
+data "ad_domain" "test" {}
+
+# Group is created in same plan, so ID is unknown during planning
+resource "ad_group" "dynamic" {
+  name             = "tf-test-dynamic-group"
+  sam_account_name = "TFTestDynamicGroup"
+  container        = "CN=Users,${data.ad_domain.test.base_dn}"
+  scope            = "Global"
+  category         = "Security"
+  description      = "Test group created dynamically"
+}
+
+# Membership references the dynamic group's ID (unknown during planning)
+resource "ad_group_membership" "test" {
+  group_id = ad_group.dynamic.id
+  members = [
+    "CN=testuser1,OU=TestUsers,DC=test,DC=local",
+    "CN=testuser2,OU=TestUsers,DC=test,DC=local"
+  ]
+}
+`
+}
+
+// Test configuration for unknown members scenario (simulates user's exact use case).
+func testAccGroupMembershipResourceConfig_unknownMembers() string {
+	return `
+data "ad_domain" "test" {}
+
+# Create two groups dynamically (similar to user's aws roles)
+resource "ad_group" "aws_role_1" {
+  name             = "tf-test-aws-role-1"
+  sam_account_name = "TFTestAWSRole1"
+  container        = "CN=Users,${data.ad_domain.test.base_dn}"
+  scope            = "DomainLocal"
+  category         = "Security"
+  description      = "Test AWS role 1"
+}
+
+resource "ad_group" "aws_role_2" {
+  name             = "tf-test-aws-role-2"
+  sam_account_name = "TFTestAWSRole2"
+  container        = "CN=Users,${data.ad_domain.test.base_dn}"
+  scope            = "DomainLocal"
+  category         = "Security"
+  description      = "Test AWS role 2"
+}
+
+# Create a filter group
+resource "ad_group" "filter" {
+  name             = "tf-test-aws-filter"
+  sam_account_name = "TFTestAWSFilter"
+  container        = "CN=Users,${data.ad_domain.test.base_dn}"
+  scope            = "DomainLocal"
+  category         = "Security"
+  description      = "Test AWS filter group"
+}
+
+# Add membership where members are the IDs of groups created above
+# This simulates the user's exact scenario where members are unknown during planning
+resource "ad_group_membership" "filter" {
+  group_id = ad_group.filter.id
+  members  = [
+    ad_group.aws_role_1.id,
+    ad_group.aws_role_2.id
+  ]
 }
 `
 }

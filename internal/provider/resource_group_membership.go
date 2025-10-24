@@ -125,13 +125,52 @@ func (r *GroupMembershipResource) ModifyPlan(ctx context.Context, req resource.M
 		return
 	}
 
+	// Handle unknown group_id (when resource depends on group being created)
+	if plan.GroupID.IsUnknown() {
+		tflog.Debug(ctx, "Group ID is unknown during planning, cannot normalize members yet")
+		// When group_id is unknown, we can't normalize members
+		// Set members_normalized to unknown as well
+		plan.MembersNormalized = types.SetUnknown(types.StringType)
+		resp.Diagnostics.Append(resp.Plan.Set(ctx, plan)...)
+		return
+	}
+
 	// Always re-normalize members_normalized based on the current members in the plan
 	// This ensures that when members change, members_normalized is updated accordingly
 
+	// Handle unknown members (dependencies on resources not yet created during planning)
+	if plan.Members.IsUnknown() {
+		tflog.Debug(ctx, "Members is unknown during planning, setting normalized members to unknown", map[string]any{
+			"group_id": plan.GroupID.ValueString(),
+		})
+		plan.MembersNormalized = types.SetUnknown(types.StringType)
+		resp.Diagnostics.Append(resp.Plan.Set(ctx, plan)...)
+		return
+	}
+
+	// Handle null members
+	if plan.Members.IsNull() {
+		tflog.Debug(ctx, "Members is null during planning, setting normalized members to null", map[string]any{
+			"group_id": plan.GroupID.ValueString(),
+		})
+		plan.MembersNormalized = types.SetNull(types.StringType)
+		resp.Diagnostics.Append(resp.Plan.Set(ctx, plan)...)
+		return
+	}
+
 	// Extract member identifiers from the plan
+	// Note: This may still fail if individual elements are unknown, which we handle below
 	var members []string
-	resp.Diagnostics.Append(plan.Members.ElementsAs(ctx, &members, false)...)
-	if resp.Diagnostics.HasError() {
+	diags := plan.Members.ElementsAs(ctx, &members, false)
+	if diags.HasError() {
+		// Extraction failed, likely due to unknown elements within the set
+		// This can happen when individual member identifiers depend on resources being created
+		tflog.Debug(ctx, "Failed to extract members during planning (likely unknown elements), setting normalized members to unknown", map[string]any{
+			"group_id": plan.GroupID.ValueString(),
+			"errors":   diags.Errors(),
+		})
+		plan.MembersNormalized = types.SetUnknown(types.StringType)
+		resp.Diagnostics.Append(resp.Plan.Set(ctx, plan)...)
 		return
 	}
 
