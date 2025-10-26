@@ -29,28 +29,28 @@ provider "ad" {
   password = "secure_password"
 }
 
-# Security group (default scope: Global, category: Security)
+# Security group (default scope: global, category: security)
 resource "ad_group" "security_group" {
   name        = "IT Security Team"
   container   = "ou=Groups,dc=example,dc=com"
   description = "IT Security team members"
 }
 
-# Distribution group with Universal scope
+# Distribution group with universal scope
 resource "ad_group" "distribution_group" {
   name             = "Marketing Distribution List"
   sam_account_name = "MarketingList"
   container        = "ou=Groups,dc=example,dc=com"
-  scope            = "Universal"
-  category         = "Distribution"
+  scope            = "universal"
+  category         = "distribution"
   description      = "Marketing team email distribution list"
 }
 
-# Domain Local group for resource access
+# Domain local group for resource access
 resource "ad_group" "resource_access" {
   name        = "File Share Access"
   container   = "cn=users,dc=example,dc=com"
-  scope       = "DomainLocal"
+  scope       = "domainlocal"
   description = "Access to shared file resources"
 }
 ```
@@ -65,11 +65,11 @@ resource "ad_group" "resource_access" {
 
 ### Optional
 
-- `category` (String) The category of the group. Valid values are `Security` or `Distribution` (case-insensitive). Defaults to `Security`.
+- `category` (String) The category of the group. Valid values: `security`, `distribution`. Defaults to `security`.
 - `description` (String) A description for the group. This is optional and can be used to provide additional context about the group's purpose.
 - `managed_by` (String) Distinguished Name (DN) of the user or computer that manages this group. Must be a valid DN format (e.g., `CN=User,OU=Users,DC=example,DC=com`).
 - `sam_account_name` (String) The SAM account name (pre-Windows 2000 group name). Must be unique within the domain. If not specified, defaults to the value of 'name' if it's 64 characters or less and contains only valid characters (letters, numbers, dots, underscores, hyphens).
-- `scope` (String) The scope of the group. Valid values are `Global`, `Universal`, or `DomainLocal` (case-insensitive). Defaults to `Global`.
+- `scope` (String) The scope of the group. Valid values: `global`, `universal`, `domainlocal`. Defaults to `global`.
 
 ### Read-Only
 

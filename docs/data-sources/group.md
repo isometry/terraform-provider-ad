@@ -75,7 +75,7 @@ resource "ad_group" "support_team" {
 
 ### Read-Only
 
-- `category` (String) The category of the group. Valid values: `Security`, `Distribution`.
+- `category` (String) The category of the group. Valid values: `security`, `distribution`.
 - `description` (String) The description of the group.
 - `display_name` (String) The display name of the group (equivalent to common name).
 - `mail` (String) The email address for distribution groups.
@@ -84,7 +84,7 @@ resource "ad_group" "support_team" {
 - `member_count` (Number) The total number of members in the group.
 - `member_of` (Set of String) A set of Distinguished Names of groups that this group is a member of. This represents nested group membership.
 - `members` (Set of String) A set of Distinguished Names of all group members. Includes users, groups, and other objects.
-- `scope` (String) The scope of the group. Valid values: `Global`, `Universal`, `DomainLocal`.
+- `scope` (String) The scope of the group. Valid values: `global`, `universal`, `domainlocal`.
 - `sid` (String) The Security Identifier (SID) of the group.
 - `when_changed` (String) The timestamp when the group was last modified (RFC3339 format).
 - `when_created` (String) The timestamp when the group was created (RFC3339 format).

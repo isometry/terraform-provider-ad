@@ -20,8 +20,8 @@ func TestAccGroupResource_basic(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-group-basic"),
 					resource.TestCheckResourceAttr("ad_group.test", "sam_account_name", "TFTestGroupBasic"),
-					resource.TestCheckResourceAttr("ad_group.test", "scope", "Global"),
-					resource.TestCheckResourceAttr("ad_group.test", "category", "Security"),
+					resource.TestCheckResourceAttr("ad_group.test", "scope", "global"),
+					resource.TestCheckResourceAttr("ad_group.test", "category", "security"),
 					resource.TestCheckResourceAttrSet("ad_group.test", "id"),
 					resource.TestCheckResourceAttrSet("ad_group.test", "dn"),
 					resource.TestCheckResourceAttrSet("ad_group.test", "sid"),
@@ -49,8 +49,8 @@ func TestAccGroupResource_withDescription(t *testing.T) {
 					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-group-desc"),
 					resource.TestCheckResourceAttr("ad_group.test", "sam_account_name", "TFTestGroupDesc"),
 					resource.TestCheckResourceAttr("ad_group.test", "description", "Test group with description"),
-					resource.TestCheckResourceAttr("ad_group.test", "scope", "Global"),
-					resource.TestCheckResourceAttr("ad_group.test", "category", "Security"),
+					resource.TestCheckResourceAttr("ad_group.test", "scope", "global"),
+					resource.TestCheckResourceAttr("ad_group.test", "category", "security"),
 				),
 			},
 		},
@@ -63,10 +63,10 @@ func TestAccGroupResource_globalSecurity(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccGroupResourceConfig_scopeCategory("tf-test-global-security", "TFTestGlobalSec", "Global", "Security"),
+				Config: testAccGroupResourceConfig_scopeCategory("tf-test-global-security", "TFTestGlobalSec", "global", "security"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ad_group.test", "scope", "Global"),
-					resource.TestCheckResourceAttr("ad_group.test", "category", "Security"),
+					resource.TestCheckResourceAttr("ad_group.test", "scope", "global"),
+					resource.TestCheckResourceAttr("ad_group.test", "category", "security"),
 					// Global Security group type is 0x80000002 = -2147483646
 				),
 			},
@@ -80,10 +80,10 @@ func TestAccGroupResource_globalDistribution(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccGroupResourceConfig_scopeCategory("tf-test-global-dist", "TFTestGlobalDist", "Global", "Distribution"),
+				Config: testAccGroupResourceConfig_scopeCategory("tf-test-global-dist", "TFTestGlobalDist", "global", "distribution"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ad_group.test", "scope", "Global"),
-					resource.TestCheckResourceAttr("ad_group.test", "category", "Distribution"),
+					resource.TestCheckResourceAttr("ad_group.test", "scope", "global"),
+					resource.TestCheckResourceAttr("ad_group.test", "category", "distribution"),
 					// Global Distribution group type is 0x00000002 = 2
 				),
 			},
@@ -97,10 +97,10 @@ func TestAccGroupResource_universalSecurity(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccGroupResourceConfig_scopeCategory("tf-test-universal-security", "TFTestUnivSec", "Universal", "Security"),
+				Config: testAccGroupResourceConfig_scopeCategory("tf-test-universal-security", "TFTestUnivSec", "universal", "security"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ad_group.test", "scope", "Universal"),
-					resource.TestCheckResourceAttr("ad_group.test", "category", "Security"),
+					resource.TestCheckResourceAttr("ad_group.test", "scope", "universal"),
+					resource.TestCheckResourceAttr("ad_group.test", "category", "security"),
 					// Universal Security group type is 0x80000008 = -2147483640
 				),
 			},
@@ -114,10 +114,10 @@ func TestAccGroupResource_universalDistribution(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccGroupResourceConfig_scopeCategory("tf-test-universal-dist", "TFTestUnivDist", "Universal", "Distribution"),
+				Config: testAccGroupResourceConfig_scopeCategory("tf-test-universal-dist", "TFTestUnivDist", "universal", "distribution"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ad_group.test", "scope", "Universal"),
-					resource.TestCheckResourceAttr("ad_group.test", "category", "Distribution"),
+					resource.TestCheckResourceAttr("ad_group.test", "scope", "universal"),
+					resource.TestCheckResourceAttr("ad_group.test", "category", "distribution"),
 					// Universal Distribution group type is 0x00000008 = 8
 				),
 			},
@@ -131,10 +131,10 @@ func TestAccGroupResource_domainLocalSecurity(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccGroupResourceConfig_scopeCategory("tf-test-domainlocal-security", "TFTestDLSec", "DomainLocal", "Security"),
+				Config: testAccGroupResourceConfig_scopeCategory("tf-test-domainlocal-security", "TFTestDLSec", "domainlocal", "security"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ad_group.test", "scope", "DomainLocal"),
-					resource.TestCheckResourceAttr("ad_group.test", "category", "Security"),
+					resource.TestCheckResourceAttr("ad_group.test", "scope", "domainlocal"),
+					resource.TestCheckResourceAttr("ad_group.test", "category", "security"),
 					// DomainLocal Security group type is 0x80000004 = -2147483644
 				),
 			},
@@ -148,10 +148,10 @@ func TestAccGroupResource_domainLocalDistribution(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccGroupResourceConfig_scopeCategory("tf-test-domainlocal-dist", "TFTestDLDist", "DomainLocal", "Distribution"),
+				Config: testAccGroupResourceConfig_scopeCategory("tf-test-domainlocal-dist", "TFTestDLDist", "domainlocal", "distribution"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ad_group.test", "scope", "DomainLocal"),
-					resource.TestCheckResourceAttr("ad_group.test", "category", "Distribution"),
+					resource.TestCheckResourceAttr("ad_group.test", "scope", "domainlocal"),
+					resource.TestCheckResourceAttr("ad_group.test", "category", "distribution"),
 					// DomainLocal Distribution group type is 0x00000004 = 4
 				),
 			},
@@ -170,8 +170,8 @@ func TestAccGroupResource_update(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-group-update"),
 					resource.TestCheckResourceAttr("ad_group.test", "description", "Original description"),
-					resource.TestCheckResourceAttr("ad_group.test", "scope", "Global"),
-					resource.TestCheckResourceAttr("ad_group.test", "category", "Security"),
+					resource.TestCheckResourceAttr("ad_group.test", "scope", "global"),
+					resource.TestCheckResourceAttr("ad_group.test", "category", "security"),
 				),
 			},
 			// Update name and description
@@ -180,8 +180,8 @@ func TestAccGroupResource_update(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-group-updated"),
 					resource.TestCheckResourceAttr("ad_group.test", "description", "Updated description"),
-					resource.TestCheckResourceAttr("ad_group.test", "scope", "Global"),
-					resource.TestCheckResourceAttr("ad_group.test", "category", "Security"),
+					resource.TestCheckResourceAttr("ad_group.test", "scope", "global"),
+					resource.TestCheckResourceAttr("ad_group.test", "category", "security"),
 				),
 			},
 			// Remove description
@@ -203,26 +203,26 @@ func TestAccGroupResource_scopeChange(t *testing.T) {
 		Steps: []resource.TestStep{
 			// Create Global group
 			{
-				Config: testAccGroupResourceConfig_scopeCategory("tf-test-scope-change", "TFTestScopeChg", "Global", "Security"),
+				Config: testAccGroupResourceConfig_scopeCategory("tf-test-scope-change", "TFTestScopeChg", "global", "security"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ad_group.test", "scope", "Global"),
-					resource.TestCheckResourceAttr("ad_group.test", "category", "Security"),
+					resource.TestCheckResourceAttr("ad_group.test", "scope", "global"),
+					resource.TestCheckResourceAttr("ad_group.test", "category", "security"),
 				),
 			},
 			// Change to Universal
 			{
-				Config: testAccGroupResourceConfig_scopeCategory("tf-test-scope-change", "TFTestScopeChg", "Universal", "Security"),
+				Config: testAccGroupResourceConfig_scopeCategory("tf-test-scope-change", "TFTestScopeChg", "universal", "security"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ad_group.test", "scope", "Universal"),
-					resource.TestCheckResourceAttr("ad_group.test", "category", "Security"),
+					resource.TestCheckResourceAttr("ad_group.test", "scope", "universal"),
+					resource.TestCheckResourceAttr("ad_group.test", "category", "security"),
 				),
 			},
 			// Change to DomainLocal
 			{
-				Config: testAccGroupResourceConfig_scopeCategory("tf-test-scope-change", "TFTestScopeChg", "DomainLocal", "Security"),
+				Config: testAccGroupResourceConfig_scopeCategory("tf-test-scope-change", "TFTestScopeChg", "domainlocal", "security"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ad_group.test", "scope", "DomainLocal"),
-					resource.TestCheckResourceAttr("ad_group.test", "category", "Security"),
+					resource.TestCheckResourceAttr("ad_group.test", "scope", "domainlocal"),
+					resource.TestCheckResourceAttr("ad_group.test", "category", "security"),
 				),
 			},
 		},
@@ -236,18 +236,18 @@ func TestAccGroupResource_categoryChange(t *testing.T) {
 		Steps: []resource.TestStep{
 			// Create Security group
 			{
-				Config: testAccGroupResourceConfig_scopeCategory("tf-test-category-change", "TFTestCatChg", "Global", "Security"),
+				Config: testAccGroupResourceConfig_scopeCategory("tf-test-category-change", "TFTestCatChg", "global", "security"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ad_group.test", "scope", "Global"),
-					resource.TestCheckResourceAttr("ad_group.test", "category", "Security"),
+					resource.TestCheckResourceAttr("ad_group.test", "scope", "global"),
+					resource.TestCheckResourceAttr("ad_group.test", "category", "security"),
 				),
 			},
 			// Change to Distribution
 			{
-				Config: testAccGroupResourceConfig_scopeCategory("tf-test-category-change", "TFTestCatChg", "Global", "Distribution"),
+				Config: testAccGroupResourceConfig_scopeCategory("tf-test-category-change", "TFTestCatChg", "global", "distribution"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ad_group.test", "scope", "Global"),
-					resource.TestCheckResourceAttr("ad_group.test", "category", "Distribution"),
+					resource.TestCheckResourceAttr("ad_group.test", "scope", "global"),
+					resource.TestCheckResourceAttr("ad_group.test", "category", "distribution"),
 				),
 			},
 		},

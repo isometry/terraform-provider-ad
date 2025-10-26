@@ -53,8 +53,8 @@ type GroupDataSourceModel struct {
 	// Group attributes (all computed)
 	DisplayName types.String `tfsdk:"display_name"` // Display name (computed from cn)
 	Description types.String `tfsdk:"description"`  // Description
-	Scope       types.String `tfsdk:"scope"`        // Global/Universal/DomainLocal
-	Category    types.String `tfsdk:"category"`     // Security/Distribution
+	Scope       types.String `tfsdk:"scope"`        // global/universal/domainlocal
+	Category    types.String `tfsdk:"category"`     // security/distribution
 	SID         types.String `tfsdk:"sid"`          // Security Identifier
 	ManagedBy   types.String `tfsdk:"managed_by"`   // ManagedBy DN
 
@@ -136,11 +136,11 @@ func (d *GroupDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 				Computed:            true,
 			},
 			"scope": schema.StringAttribute{
-				MarkdownDescription: "The scope of the group. Valid values: `Global`, `Universal`, `DomainLocal`.",
+				MarkdownDescription: "The scope of the group. Valid values: `global`, `universal`, `domainlocal`.",
 				Computed:            true,
 			},
 			"category": schema.StringAttribute{
-				MarkdownDescription: "The category of the group. Valid values: `Security`, `Distribution`.",
+				MarkdownDescription: "The category of the group. Valid values: `security`, `distribution`.",
 				Computed:            true,
 			},
 			"sid": schema.StringAttribute{

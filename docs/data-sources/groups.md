@@ -199,14 +199,14 @@ output "group_statistics" {
 
 Optional:
 
-- `category` (String) Filter by group category. Valid values: `Security`, `Distribution` (case-insensitive).
+- `category` (String) Filter by group category. Valid values: `security`, `distribution`.
 - `has_member` (String) Filter groups that contain the specified member (Distinguished Name). Includes nested group membership. Can be a user or group DN. Example: `CN=User,CN=Users,DC=example,DC=com`
 - `has_members` (Boolean) Filter by membership status. `true` returns only groups with members, `false` returns only empty groups. If not specified, returns all groups.
 - `member_of` (String) Filter groups that are members of the specified group (Distinguished Name). Includes nested group membership. Example: `CN=Parent Group,CN=Groups,DC=example,DC=com`
 - `name_contains` (String) Groups whose name contains this string. Case-insensitive.
 - `name_prefix` (String) Groups whose name starts with this string. Case-insensitive.
 - `name_suffix` (String) Groups whose name ends with this string. Case-insensitive.
-- `scope` (String) Filter by group scope. Valid values: `Global`, `DomainLocal`, `Universal` (case-insensitive).
+- `scope` (String) Filter by group scope. Valid values: `global`, `domainlocal`, `universal`.
 
 
 <a id="nestedatt--groups"></a>
@@ -214,7 +214,7 @@ Optional:
 
 Read-Only:
 
-- `category` (String) The category of the group (Security, Distribution).
+- `category` (String) The category of the group. Valid values: `security`, `distribution`.
 - `description` (String) The description of the group.
 - `display_name` (String) The display name of the group (equivalent to name).
 - `dn` (String) The full Distinguished Name of the group.
@@ -222,5 +222,5 @@ Read-Only:
 - `member_count` (Number) The total number of members in the group.
 - `name` (String) The common name (cn) of the group.
 - `sam_account_name` (String) The SAM account name (pre-Windows 2000 name) of the group.
-- `scope` (String) The scope of the group (Global, Universal, DomainLocal).
+- `scope` (String) The scope of the group. Valid values: `global`, `universal`, `domainlocal`.
 - `sid` (String) The Security Identifier (SID) of the group.

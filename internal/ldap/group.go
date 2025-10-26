@@ -15,9 +15,9 @@ import (
 type GroupScope string
 
 const (
-	GroupScopeGlobal      GroupScope = "Global"      // Global groups can contain members from the same domain
-	GroupScopeUniversal   GroupScope = "Universal"   // Universal groups can contain members from any domain in the forest
-	GroupScopeDomainLocal GroupScope = "DomainLocal" // Domain Local groups can contain members from any domain
+	GroupScopeGlobal      GroupScope = "global"      // Global groups can contain members from the same domain
+	GroupScopeUniversal   GroupScope = "universal"   // Universal groups can contain members from any domain in the forest
+	GroupScopeDomainLocal GroupScope = "domainlocal" // Domain Local groups can contain members from any domain
 )
 
 // String returns the string representation of the group scope.
@@ -29,8 +29,8 @@ func (gs GroupScope) String() string {
 type GroupCategory string
 
 const (
-	GroupCategorySecurity     GroupCategory = "Security"     // Security group for access control
-	GroupCategoryDistribution GroupCategory = "Distribution" // Distribution group for email distribution lists
+	GroupCategorySecurity     GroupCategory = "security"     // Security group for access control
+	GroupCategoryDistribution GroupCategory = "distribution" // Distribution group for email distribution lists
 )
 
 // String returns the string representation of the group category.
@@ -52,7 +52,7 @@ func NormalizeGroupScope(scope string) (GroupScope, error) {
 	case "domainlocal":
 		return GroupScopeDomainLocal, nil
 	default:
-		return "", fmt.Errorf("invalid group scope %q: must be Global, Universal, or DomainLocal (case-insensitive)", scope)
+		return "", fmt.Errorf("invalid group scope %q: must be global, universal, or domainlocal", scope)
 	}
 }
 
@@ -68,7 +68,7 @@ func NormalizeGroupCategory(category string) (GroupCategory, error) {
 	case "distribution":
 		return GroupCategoryDistribution, nil
 	default:
-		return "", fmt.Errorf("invalid group category %q: must be Security or Distribution (case-insensitive)", category)
+		return "", fmt.Errorf("invalid group category %q: must be security or distribution", category)
 	}
 }
 

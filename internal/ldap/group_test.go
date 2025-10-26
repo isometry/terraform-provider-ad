@@ -1118,14 +1118,14 @@ func TestValidateScopeChange(t *testing.T) {
 			currentScope: GroupScopeGlobal,
 			newScope:     GroupScopeDomainLocal,
 			expectError:  true,
-			errorMsg:     "direct conversion from Global to DomainLocal is not allowed",
+			errorMsg:     "direct conversion from global to domainlocal is not allowed",
 		},
 		{
 			name:         "Domain Local to Global (invalid)",
 			currentScope: GroupScopeDomainLocal,
 			newScope:     GroupScopeGlobal,
 			expectError:  true,
-			errorMsg:     "direct conversion from DomainLocal to Global is not allowed",
+			errorMsg:     "direct conversion from domainlocal to global is not allowed",
 		},
 	}
 
@@ -1182,13 +1182,13 @@ func TestGetGroupStats(t *testing.T) {
 
 func TestGroupScopeAndCategoryStrings(t *testing.T) {
 	// Test GroupScope String method
-	assert.Equal(t, "Global", GroupScopeGlobal.String())
-	assert.Equal(t, "Universal", GroupScopeUniversal.String())
-	assert.Equal(t, "DomainLocal", GroupScopeDomainLocal.String())
+	assert.Equal(t, "global", GroupScopeGlobal.String())
+	assert.Equal(t, "universal", GroupScopeUniversal.String())
+	assert.Equal(t, "domainlocal", GroupScopeDomainLocal.String())
 
 	// Test GroupCategory String method
-	assert.Equal(t, "Security", GroupCategorySecurity.String())
-	assert.Equal(t, "Distribution", GroupCategoryDistribution.String())
+	assert.Equal(t, "security", GroupCategorySecurity.String())
+	assert.Equal(t, "distribution", GroupCategoryDistribution.String())
 }
 
 func TestSetTimeout(t *testing.T) {

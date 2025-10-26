@@ -46,8 +46,8 @@ type GroupResourceModel struct {
 	Name           types.String              `tfsdk:"name"`             // Required - cn attribute
 	SAMAccountName types.String              `tfsdk:"sam_account_name"` // Required - sAMAccountName
 	Container      customtypes.DNStringValue `tfsdk:"container"`        // Required - parent container DN
-	Scope          types.String              `tfsdk:"scope"`            // Optional+Computed+Default: "Global"
-	Category       types.String              `tfsdk:"category"`         // Optional+Computed+Default: "Security"
+	Scope          types.String              `tfsdk:"scope"`            // Optional+Computed+Default: "global"
+	Category       types.String              `tfsdk:"category"`         // Optional+Computed+Default: "security"
 	Description    types.String              `tfsdk:"description"`      // Optional
 	ManagedBy      types.String              `tfsdk:"managed_by"`       // Optional+Computed - managedBy attribute
 	// Computed attributes
@@ -109,21 +109,21 @@ func (r *GroupResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				},
 			},
 			"scope": schema.StringAttribute{
-				MarkdownDescription: "The scope of the group. Valid values are `Global`, `Universal`, or `DomainLocal` (case-insensitive). Defaults to `Global`.",
+				MarkdownDescription: "The scope of the group. Valid values: `global`, `universal`, `domainlocal`. Defaults to `global`.",
 				Optional:            true,
 				Computed:            true,
-				Default:             stringdefault.StaticString("Global"),
+				Default:             stringdefault.StaticString("global"),
 				Validators: []validator.String{
-					validators.CaseInsensitiveOneOf("Global", "Universal", "DomainLocal"),
+					stringvalidator.OneOf("global", "universal", "domainlocal"),
 				},
 			},
 			"category": schema.StringAttribute{
-				MarkdownDescription: "The category of the group. Valid values are `Security` or `Distribution` (case-insensitive). Defaults to `Security`.",
+				MarkdownDescription: "The category of the group. Valid values: `security`, `distribution`. Defaults to `security`.",
 				Optional:            true,
 				Computed:            true,
-				Default:             stringdefault.StaticString("Security"),
+				Default:             stringdefault.StaticString("security"),
 				Validators: []validator.String{
-					validators.CaseInsensitiveOneOf("Security", "Distribution"),
+					stringvalidator.OneOf("security", "distribution"),
 				},
 			},
 			"description": schema.StringAttribute{

@@ -140,11 +140,11 @@ func (d *GroupsDataSource) Schema(ctx context.Context, req datasource.SchemaRequ
 							Computed:            true,
 						},
 						"scope": schema.StringAttribute{
-							MarkdownDescription: "The scope of the group (Global, Universal, DomainLocal).",
+							MarkdownDescription: "The scope of the group. Valid values: `global`, `universal`, `domainlocal`.",
 							Computed:            true,
 						},
 						"category": schema.StringAttribute{
-							MarkdownDescription: "The category of the group (Security, Distribution).",
+							MarkdownDescription: "The category of the group. Valid values: `security`, `distribution`.",
 							Computed:            true,
 						},
 						"sid": schema.StringAttribute{
@@ -177,17 +177,17 @@ func (d *GroupsDataSource) Schema(ctx context.Context, req datasource.SchemaRequ
 						Optional:            true,
 					},
 					"category": schema.StringAttribute{
-						MarkdownDescription: "Filter by group category. Valid values: `Security`, `Distribution` (case-insensitive).",
+						MarkdownDescription: "Filter by group category. Valid values: `security`, `distribution`.",
 						Optional:            true,
 						Validators: []validator.String{
-							validators.CaseInsensitiveOneOf("Security", "Distribution"),
+							stringvalidator.OneOf("security", "distribution"),
 						},
 					},
 					"scope": schema.StringAttribute{
-						MarkdownDescription: "Filter by group scope. Valid values: `Global`, `DomainLocal`, `Universal` (case-insensitive).",
+						MarkdownDescription: "Filter by group scope. Valid values: `global`, `domainlocal`, `universal`.",
 						Optional:            true,
 						Validators: []validator.String{
-							validators.CaseInsensitiveOneOf("Global", "DomainLocal", "Universal"),
+							stringvalidator.OneOf("global", "domainlocal", "universal"),
 						},
 					},
 					"has_members": schema.BoolAttribute{

@@ -32,8 +32,8 @@ func TestAccGroupDataSource_ByID(t *testing.T) {
 					// Test specific expected values
 					resource.TestCheckResourceAttr("data.ad_group.test", "display_name", "TestGroup"),
 					resource.TestCheckResourceAttr("data.ad_group.test", "description", "Test group for data source"),
-					resource.TestCheckResourceAttr("data.ad_group.test", "scope", "Global"),
-					resource.TestCheckResourceAttr("data.ad_group.test", "category", "Security"),
+					resource.TestCheckResourceAttr("data.ad_group.test", "scope", "global"),
+					resource.TestCheckResourceAttr("data.ad_group.test", "category", "security"),
 				),
 			},
 		},
@@ -58,8 +58,8 @@ func TestAccGroupDataSource_ByDN(t *testing.T) {
 					resource.TestCheckResourceAttrSet("data.ad_group.test", "when_created"),
 					resource.TestCheckResourceAttrSet("data.ad_group.test", "when_changed"),
 					resource.TestCheckResourceAttr("data.ad_group.test", "display_name", "TestGroup"),
-					resource.TestCheckResourceAttr("data.ad_group.test", "scope", "Global"),
-					resource.TestCheckResourceAttr("data.ad_group.test", "category", "Security"),
+					resource.TestCheckResourceAttr("data.ad_group.test", "scope", "global"),
+					resource.TestCheckResourceAttr("data.ad_group.test", "category", "security"),
 				),
 			},
 		},
@@ -84,8 +84,8 @@ func TestAccGroupDataSource_ByName(t *testing.T) {
 					resource.TestCheckResourceAttrSet("data.ad_group.test", "when_created"),
 					resource.TestCheckResourceAttrSet("data.ad_group.test", "when_changed"),
 					resource.TestCheckResourceAttr("data.ad_group.test", "display_name", "TestGroup"),
-					resource.TestCheckResourceAttr("data.ad_group.test", "scope", "Global"),
-					resource.TestCheckResourceAttr("data.ad_group.test", "category", "Security"),
+					resource.TestCheckResourceAttr("data.ad_group.test", "scope", "global"),
+					resource.TestCheckResourceAttr("data.ad_group.test", "category", "security"),
 				),
 			},
 		},
@@ -110,8 +110,8 @@ func TestAccGroupDataSource_BySAMAccountName(t *testing.T) {
 					resource.TestCheckResourceAttrSet("data.ad_group.test", "when_created"),
 					resource.TestCheckResourceAttrSet("data.ad_group.test", "when_changed"),
 					resource.TestCheckResourceAttr("data.ad_group.test", "display_name", "TestGroup"),
-					resource.TestCheckResourceAttr("data.ad_group.test", "scope", "Global"),
-					resource.TestCheckResourceAttr("data.ad_group.test", "category", "Security"),
+					resource.TestCheckResourceAttr("data.ad_group.test", "scope", "global"),
+					resource.TestCheckResourceAttr("data.ad_group.test", "category", "security"),
 				),
 			},
 		},
@@ -212,8 +212,8 @@ resource "ad_group" "test" {
   name               = "TestGroup"
   sam_account_name   = "TestGroup"
   container          = "CN=Users,${data.ad_domain.test.dn}"
-  scope              = "Global"
-  category           = "Security"
+  scope              = "global"
+  category           = "security"
   description        = "Test group for data source"
 }
 
@@ -231,8 +231,8 @@ resource "ad_group" "test" {
   name               = "TestGroup"
   sam_account_name   = "TestGroup"
   container          = "CN=Users,${data.ad_domain.test.dn}"
-  scope              = "Global"
-  category           = "Security"
+  scope              = "global"
+  category           = "security"
   description        = "Test group for data source"
 }
 
@@ -250,8 +250,8 @@ resource "ad_group" "test" {
   name               = "TestGroup"
   sam_account_name   = "TestGroup"
   container          = "CN=Users,${data.ad_domain.test.dn}"
-  scope              = "Global"
-  category           = "Security"
+  scope              = "global"
+  category           = "security"
   description        = "Test group for data source"
 }
 
@@ -270,8 +270,8 @@ resource "ad_group" "test" {
   name               = "TestGroup"
   sam_account_name   = "TestGroup"
   container          = "CN=Users,${data.ad_domain.test.dn}"
-  scope              = "Global"
-  category           = "Security"
+  scope              = "global"
+  category           = "security"
   description        = "Test group for data source"
 }
 
@@ -290,8 +290,8 @@ resource "ad_group" "test" {
   name               = "TestGroupWithMembers"
   sam_account_name   = "TestGroupWithMembers"
   container          = "CN=Users,${data.ad_domain.test.dn}"
-  scope              = "Global"
-  category           = "Security"
+  scope              = "global"
+  category           = "security"
   description        = "Test group with members for data source"
 }
 
@@ -300,8 +300,8 @@ resource "ad_group" "member" {
   name               = "TestMemberGroup"
   sam_account_name   = "TestMemberGroup"
   container          = "CN=Users,${data.ad_domain.test.dn}"
-  scope              = "Global"
-  category           = "Security"
+  scope              = "global"
+  category           = "security"
   description        = "Test member group"
 }
 
