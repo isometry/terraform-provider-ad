@@ -118,6 +118,9 @@ func (r *OUResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				MarkdownDescription: "The distinguished name of the OU. This is automatically generated based on the name and path.",
 				Computed:            true,
 				CustomType:          customtypes.DNStringType{},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"guid": schema.StringAttribute{
 				MarkdownDescription: "The objectGUID of the OU in string format. This is the same value as the `id` attribute.",

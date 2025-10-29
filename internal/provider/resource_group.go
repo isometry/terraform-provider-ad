@@ -149,6 +149,9 @@ func (r *GroupResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				MarkdownDescription: "The distinguished name of the group. This is automatically generated based on the name and container.",
 				Computed:            true,
 				CustomType:          customtypes.DNStringType{},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"sid": schema.StringAttribute{
 				MarkdownDescription: "The Security Identifier (SID) of the group. This is automatically assigned by Active Directory.",
