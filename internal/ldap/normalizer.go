@@ -180,12 +180,15 @@ func (m *MemberNormalizer) NormalizeToDN(identifier string) (string, error) {
 }
 
 // NormalizeToDNBatch normalizes multiple identifiers in a single operation for better performance.
-func (m *MemberNormalizer) NormalizeToDNBatch(identifiers []string) (map[string]string, error) {
+// Returns two maps: successful normalizations (identifier -> DN) and failures (identifier -> error).
+// This allows callers to decide how to handle partial failures based on configuration.
+func (m *MemberNormalizer) NormalizeToDNBatch(identifiers []string) (map[string]string, map[string]error) {
 	if len(identifiers) == 0 {
-		return make(map[string]string), nil
+		return make(map[string]string), make(map[string]error)
 	}
 
 	results := make(map[string]string)
+	failures := make(map[string]error)
 	uncached := make([]string, 0)
 
 	// Check cache for all identifiers first
@@ -216,12 +219,14 @@ func (m *MemberNormalizer) NormalizeToDNBatch(identifiers []string) (map[string]
 	for _, identifier := range uncached {
 		dn, err := m.NormalizeToDN(identifier)
 		if err != nil {
-			return nil, fmt.Errorf("failed to normalize identifier '%s': %w", identifier, err)
+			// Don't double-wrap - NormalizeToDN already includes identifier context
+			failures[identifier] = err
+		} else {
+			results[identifier] = dn
 		}
-		results[identifier] = dn
 	}
 
-	return results, nil
+	return results, failures
 }
 
 // validateDN verifies that a DN exists in Active Directory.

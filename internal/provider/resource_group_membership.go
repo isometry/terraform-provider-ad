@@ -30,16 +30,18 @@ func NewGroupMembershipResource() resource.Resource {
 
 // GroupMembershipResource defines the resource implementation.
 type GroupMembershipResource struct {
-	client       ldapclient.Client
-	cacheManager *ldapclient.CacheManager
+	client               ldapclient.Client
+	cacheManager         *ldapclient.CacheManager
+	ignoreMissingMembers bool
 }
 
 // GroupMembershipResourceModel describes the resource data model.
 type GroupMembershipResourceModel struct {
-	ID                types.String `tfsdk:"id"`                 // Group objectGUID (same as group_id)
-	GroupID           types.String `tfsdk:"group_id"`           // Group objectGUID (required)
-	Members           types.Set    `tfsdk:"members"`            // Set of member identifiers (required, user-provided)
-	MembersNormalized types.Set    `tfsdk:"members_normalized"` // Set of normalized DNs (computed)
+	ID                   types.String `tfsdk:"id"`                     // Group objectGUID (same as group_id)
+	GroupID              types.String `tfsdk:"group_id"`               // Group objectGUID (required)
+	Members              types.Set    `tfsdk:"members"`                // Set of member identifiers (required, user-provided)
+	MembersNormalized    types.Set    `tfsdk:"members_normalized"`     // Set of normalized DNs (computed)
+	IgnoreMissingMembers types.Bool   `tfsdk:"ignore_missing_members"` // Per-resource override for ignore_missing_members (optional)
 }
 
 func (r *GroupMembershipResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -88,6 +90,15 @@ func (r *GroupMembershipResource) Schema(ctx context.Context, req resource.Schem
 				Computed:    true,
 				ElementType: types.StringType,
 			},
+			"ignore_missing_members": schema.BoolAttribute{
+				MarkdownDescription: "When `true`, member identifiers that cannot be resolved " +
+					"(e.g., deleted AD objects) emit warnings instead of errors during planning, " +
+					"and the unresolvable members are excluded from the group. " +
+					"When `false` (strict mode), unresolvable members cause a planning error.\n\n" +
+					"If not specified, inherits from the provider-level `ignore_missing_members` setting. " +
+					"The effective default is `false` when neither resource nor provider specifies a value.",
+				Optional: true,
+			},
 		},
 	}
 }
@@ -109,6 +120,7 @@ func (r *GroupMembershipResource) Configure(ctx context.Context, req resource.Co
 
 	r.client = providerData.Client
 	r.cacheManager = providerData.CacheManager
+	r.ignoreMissingMembers = providerData.IgnoreMissingMembers
 }
 
 // ModifyPlan implements resource.ResourceWithModifyPlan to normalize members
@@ -201,33 +213,60 @@ func (r *GroupMembershipResource) ModifyPlan(ctx context.Context, req resource.M
 	normalizer := ldapclient.NewMemberNormalizer(r.client, baseDN, r.cacheManager)
 
 	// Normalize all identifiers to DNs
-	normalizedMap, err := normalizer.NormalizeToDNBatch(members)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error Normalizing Member Identifiers During Planning",
-			fmt.Sprintf("Could not normalize member identifiers: %s", err.Error()),
-		)
-		return
+	normalizedMap, failures := normalizer.NormalizeToDNBatch(members)
+
+	// Resolve effective ignore_missing_members value
+	// Priority: resource explicit > provider setting
+	var effectiveIgnoreMissing bool
+	if !plan.IgnoreMissingMembers.IsNull() && !plan.IgnoreMissingMembers.IsUnknown() {
+		effectiveIgnoreMissing = plan.IgnoreMissingMembers.ValueBool()
+		tflog.Debug(ctx, "Using resource-level ignore_missing_members", map[string]any{
+			"value": effectiveIgnoreMissing,
+		})
+	} else {
+		effectiveIgnoreMissing = r.ignoreMissingMembers
+		tflog.Debug(ctx, "Using provider-level ignore_missing_members", map[string]any{
+			"value": effectiveIgnoreMissing,
+		})
 	}
 
-	// Extract normalized DNs in same order as input
-	normalizedMembers := make([]string, 0, len(members))
-	var failedIdentifiers []string
-	for _, member := range members {
-		if dn, ok := normalizedMap[member]; ok {
-			normalizedMembers = append(normalizedMembers, dn)
-		} else {
-			failedIdentifiers = append(failedIdentifiers, member)
+	// Handle any normalization failures
+	if len(failures) > 0 {
+		for identifier, err := range failures {
+			msg := fmt.Sprintf("Member '%s' could not be resolved: %s", identifier, err.Error())
+
+			if effectiveIgnoreMissing {
+				tflog.Warn(ctx, "Ignoring unresolvable member", map[string]any{
+					"identifier": identifier,
+					"error":      err.Error(),
+				})
+				resp.Diagnostics.AddWarning("Member could not be resolved", msg)
+			} else {
+				resp.Diagnostics.AddError("Member could not be resolved", msg)
+			}
+		}
+
+		// In strict mode, stop if there are any errors
+		if !effectiveIgnoreMissing {
+			return
 		}
 	}
 
-	// Report any identifiers that failed normalization
-	if len(failedIdentifiers) > 0 {
+	// Extract normalized DNs in same order as input (only for successfully normalized members)
+	normalizedMembers := make([]string, 0, len(normalizedMap))
+	for _, member := range members {
+		if dn, ok := normalizedMap[member]; ok {
+			normalizedMembers = append(normalizedMembers, dn)
+		}
+		// Skip members that failed normalization (already reported above)
+	}
+
+	// Safety net: prevent accidental group emptying when all members fail normalization
+	if len(normalizedMembers) == 0 && len(members) > 0 {
 		resp.Diagnostics.AddError(
-			"Failed to Normalize Member Identifiers During Planning",
-			fmt.Sprintf("Could not normalize the following member identifiers: %v. "+
-				"Please verify these identifiers exist in Active Directory and are valid.",
-				failedIdentifiers),
+			"All Members Failed to Resolve",
+			"All configured members failed normalization. Refusing to proceed with empty membership. "+
+				"Set ignore_missing_members = false to see individual errors, or remove invalid members from configuration.",
 		)
 		return
 	}

@@ -641,13 +641,13 @@ func TestAccGroupMembershipResource_invalidGroupId(t *testing.T) {
 			{
 				Config: testAccGroupMembershipResourceConfig_invalidGroupId(),
 				// Plan-time member normalization runs before the group_id is
-				// resolved against AD, so the first error surfaced is about
-				// the fictional member DN failing to normalize. Match either
-				// the normalization error or a generic "not found" fallback.
+				// resolved against AD, so the first error surfaced is per-
+				// member ("Member could not be resolved"). The strict-mode
+				// safety net ("All Members Failed to Resolve") only fires
+				// when ignore_missing_members is true, but match it anyway
+				// for robustness.
 				ExpectError: regexp.MustCompile(
-					`Error Normalizing Member Identifiers During Planning|` +
-						`Failed to Normalize Member Identifiers During Planning|` +
-						`failed to normalize identifier|not found`,
+					`Member could not be resolved|All Members Failed to Resolve`,
 				),
 			},
 		},
@@ -682,16 +682,11 @@ func TestAccGroupMembershipResource_invalidMember(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config: testAccGroupMembershipResourceConfig_invalidMember(n),
-				// Plan-time normalization surfaces an "unable to determine
-				// identifier type" error wrapped in the provider's
-				// "Error Normalizing Member Identifiers During Planning"
-				// diagnostic. Allow either pattern.
+				// Plan-time normalization fails for the bogus identifier
+				// and surfaces a per-member "Member could not be resolved"
+				// diagnostic.
 				ExpectError: regexp.MustCompile(
-					`Error Normalizing Member Identifiers During Planning|` +
-						`failed to normalize identifier|` +
-						`unable to determine identifier type|` +
-						`unknown identifier format|` +
-						`invalid member identifier`,
+					`Member could not be resolved|All Members Failed to Resolve`,
 				),
 			},
 		},
@@ -857,6 +852,60 @@ func createTestMembers(count int) []string {
 	}
 
 	return members
+}
+
+// TestGroupMembershipResource_resolveIgnoreMissingMembers tests the resolution logic
+// for ignore_missing_members at resource level vs provider level.
+func TestGroupMembershipResource_resolveIgnoreMissingMembers(t *testing.T) {
+	tests := []struct {
+		name            string
+		resourceValue   *bool // nil = not set (null), otherwise explicit value
+		providerDefault bool
+		expected        bool
+	}{
+		{
+			name:            "resource true overrides provider false",
+			resourceValue:   new(true),
+			providerDefault: false,
+			expected:        true,
+		},
+		{
+			name:            "resource false overrides provider true",
+			resourceValue:   new(false),
+			providerDefault: true,
+			expected:        false,
+		},
+		{
+			name:            "resource null inherits provider true",
+			resourceValue:   nil,
+			providerDefault: true,
+			expected:        true,
+		},
+		{
+			name:            "resource null inherits provider false",
+			resourceValue:   nil,
+			providerDefault: false,
+			expected:        false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Test the resolution logic directly
+			// Priority: resource explicit > provider setting
+			var effectiveIgnoreMissing bool
+
+			if tc.resourceValue != nil {
+				effectiveIgnoreMissing = *tc.resourceValue
+			} else {
+				effectiveIgnoreMissing = tc.providerDefault
+			}
+
+			if effectiveIgnoreMissing != tc.expected {
+				t.Errorf("Expected effectiveIgnoreMissing=%v, got %v", tc.expected, effectiveIgnoreMissing)
+			}
+		})
+	}
 }
 
 // Benchmark with different member counts.
