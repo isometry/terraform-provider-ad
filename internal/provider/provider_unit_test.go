@@ -71,6 +71,7 @@ func TestProviderResources(t *testing.T) {
 		"ad_group",
 		"ad_group_membership",
 		"ad_ou",
+		"ad_user",
 	}
 
 	if len(resources) != len(expectedResources) {

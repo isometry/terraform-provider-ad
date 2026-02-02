@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -17,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	"github.com/isometry/terraform-provider-ad/internal/provider/helpers"
 	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
 	"github.com/isometry/terraform-provider-ad/internal/utils"
 )
@@ -32,7 +32,7 @@ func NewUsersDataSource() datasource.DataSource {
 type UsersDataSource struct {
 	client       ldapclient.Client
 	cacheManager *ldapclient.CacheManager
-	userReader   *ldapclient.UserReader
+	userManager  *ldapclient.UserManager
 }
 
 // UsersDataSourceModel describes the data source data model.
@@ -309,7 +309,7 @@ func (d *UsersDataSource) Configure(ctx context.Context, req datasource.Configur
 		)
 		return
 	}
-	d.userReader = ldapclient.NewUserReader(ctx, d.client, baseDN, d.cacheManager)
+	d.userManager = ldapclient.NewUserManager(ctx, d.client, baseDN, d.cacheManager)
 }
 
 func (d *UsersDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
@@ -352,7 +352,7 @@ func (d *UsersDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	})
 
 	// Perform the search
-	users, err := d.userReader.SearchUsersWithFilter(searchFilter)
+	users, err := d.userManager.SearchUsersWithFilter(searchFilter)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Searching Users",
@@ -502,12 +502,6 @@ func (d *UsersDataSource) mapUsersToModel(ctx context.Context, users []*ldapclie
 	// Convert each user to a Terraform object
 	userElements := make([]attr.Value, len(users))
 	for i, user := range users {
-		// Handle nullable timestamp for last logon
-		lastLogonValue := types.StringNull()
-		if user.LastLogon != nil {
-			lastLogonValue = types.StringValue(user.LastLogon.Format(time.RFC3339))
-		}
-
 		userAttrs := map[string]attr.Value{
 			"id":               types.StringValue(user.ObjectGUID),
 			"dn":               types.StringValue(user.DistinguishedName),
@@ -524,8 +518,8 @@ func (d *UsersDataSource) mapUsersToModel(ctx context.Context, users []*ldapclie
 			"manager":          types.StringValue(user.Manager),
 			"office":           types.StringValue(user.Office),
 			"account_enabled":  types.BoolValue(user.AccountEnabled),
-			"when_created":     types.StringValue(user.WhenCreated.Format(time.RFC3339)),
-			"last_logon":       lastLogonValue,
+			"when_created":     helpers.Timestamp(user.WhenCreated),
+			"last_logon":       helpers.TimestampOrNull(user.LastLogon),
 		}
 
 		userObj, objDiags := types.ObjectValue(userObjectType.AttrTypes, userAttrs)

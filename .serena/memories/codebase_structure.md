@@ -8,7 +8,8 @@ terraform-provider-ad/
 │   ├── ldap/              # LDAP client and Active Directory logic
 │   │   ├── client.go      # Main LDAP client with connection pooling
 │   │   ├── pool.go        # Connection pool implementation
-│   │   ├── auth.go        # Authentication (password, Kerberos)
+│   │   ├── password.go    # Password generation and encoding
+│   │   ├── dn_escape.go   # DN escaping utilities
 │   │   ├── discovery.go   # SRV record domain controller discovery
 │   │   ├── kerberos*.go   # Kerberos authentication
 │   │   ├── guid.go        # GUID encoding/decoding
@@ -26,7 +27,10 @@ terraform-provider-ad/
 │   │
 │   ├── provider/          # Terraform provider implementation
 │   │   ├── provider.go    # Provider schema and Configure()
-│   │   ├── resource_*.go  # Resource implementations
+│   │   ├── resource_group.go      # ad_group resource
+│   │   ├── resource_ou.go         # ad_ou resource
+│   │   ├── resource_user.go       # ad_user resource
+│   │   ├── resource_group_membership.go  # ad_group_membership resource
 │   │   ├── data_source_*.go  # Data source implementations
 │   │   ├── function_*.go  # Provider function implementations
 │   │   ├── types/         # Custom Terraform types

@@ -3,10 +3,8 @@ package provider
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/datasourcevalidator"
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -15,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	"github.com/isometry/terraform-provider-ad/internal/provider/helpers"
 	"github.com/isometry/terraform-provider-ad/internal/utils"
 )
 
@@ -30,7 +29,7 @@ func NewUserDataSource() datasource.DataSource {
 type UserDataSource struct {
 	client       ldapclient.Client
 	cacheManager *ldapclient.CacheManager
-	userReader   *ldapclient.UserReader
+	userManager  *ldapclient.UserManager
 }
 
 // UserDataSourceModel describes the data source data model with multiple lookup methods.
@@ -407,7 +406,7 @@ func (d *UserDataSource) Configure(ctx context.Context, req datasource.Configure
 		)
 		return
 	}
-	d.userReader = ldapclient.NewUserReader(ctx, d.client, baseDN, d.cacheManager)
+	d.userManager = ldapclient.NewUserManager(ctx, d.client, baseDN, d.cacheManager)
 }
 
 func (d *UserDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
@@ -466,7 +465,7 @@ func (d *UserDataSource) retrieveUser(ctx context.Context, data *UserDataSourceM
 		tflog.Debug(ctx, "Looking up user by objectGUID", map[string]any{
 			"guid": guid,
 		})
-		return d.userReader.GetUserByGUID(guid)
+		return d.userManager.GetUserByGUID(guid)
 	}
 
 	// DN lookup
@@ -475,7 +474,7 @@ func (d *UserDataSource) retrieveUser(ctx context.Context, data *UserDataSourceM
 		tflog.Debug(ctx, "Looking up user by DN", map[string]any{
 			"dn": dn,
 		})
-		return d.userReader.GetUserByDN(dn)
+		return d.userManager.GetUserByDN(dn)
 	}
 
 	// UPN lookup
@@ -484,7 +483,7 @@ func (d *UserDataSource) retrieveUser(ctx context.Context, data *UserDataSourceM
 		tflog.Debug(ctx, "Looking up user by UPN", map[string]any{
 			"upn": upn,
 		})
-		return d.userReader.GetUserByUPN(upn)
+		return d.userManager.GetUserByUPN(upn)
 	}
 
 	// SAM account name lookup
@@ -493,7 +492,7 @@ func (d *UserDataSource) retrieveUser(ctx context.Context, data *UserDataSourceM
 		tflog.Debug(ctx, "Looking up user by SAM account name", map[string]any{
 			"sam_account_name": samAccountName,
 		})
-		return d.userReader.GetUserBySAM(samAccountName)
+		return d.userManager.GetUserBySAM(samAccountName)
 	}
 
 	// SID lookup
@@ -502,7 +501,7 @@ func (d *UserDataSource) retrieveUser(ctx context.Context, data *UserDataSourceM
 		tflog.Debug(ctx, "Looking up user by SID", map[string]any{
 			"sid": sid,
 		})
-		return d.userReader.GetUserBySID(sid)
+		return d.userManager.GetUserBySID(sid)
 	}
 
 	return nil, fmt.Errorf("no valid lookup method provided")
@@ -575,60 +574,14 @@ func (d *UserDataSource) mapUserToModel(ctx context.Context, user *ldapclient.Us
 
 	// Group memberships
 	data.PrimaryGroup = types.StringValue(user.PrimaryGroup)
+	data.MemberOf = helpers.DNListOrNull(ctx, user.MemberOf, diags)
 
-	// Convert member DNs to a List, normalizing DN case
-	if len(user.MemberOf) > 0 {
-		memberElements := make([]attr.Value, len(user.MemberOf))
-		for i, memberDN := range user.MemberOf {
-			// Normalize member DN case
-			normalizedMemberDN, err := ldapclient.NormalizeDNCase(memberDN)
-			if err != nil {
-				// Log error but use original DN as fallback
-				tflog.Warn(ctx, "Failed to normalize member DN case", map[string]any{
-					"original_member_dn": memberDN,
-					"error":              err.Error(),
-				})
-				normalizedMemberDN = memberDN
-			}
-			memberElements[i] = types.StringValue(normalizedMemberDN)
-		}
-
-		memberList, memberDiags := types.ListValue(types.StringType, memberElements)
-		diags.Append(memberDiags...)
-		if !memberDiags.HasError() {
-			data.MemberOf = memberList
-		}
-	} else {
-		// Empty list for no memberships
-		emptyList, memberDiags := types.ListValue(types.StringType, []attr.Value{})
-		diags.Append(memberDiags...)
-		if !memberDiags.HasError() {
-			data.MemberOf = emptyList
-		}
-	}
-
-	// Timestamps - convert to RFC3339 format
-	data.WhenCreated = types.StringValue(user.WhenCreated.Format(time.RFC3339))
-	data.WhenChanged = types.StringValue(user.WhenChanged.Format(time.RFC3339))
-
-	// Handle nullable timestamps
-	if user.LastLogon != nil {
-		data.LastLogon = types.StringValue(user.LastLogon.Format(time.RFC3339))
-	} else {
-		data.LastLogon = types.StringNull()
-	}
-
-	if user.PasswordLastSet != nil {
-		data.PasswordLastSet = types.StringValue(user.PasswordLastSet.Format(time.RFC3339))
-	} else {
-		data.PasswordLastSet = types.StringNull()
-	}
-
-	if user.AccountExpires != nil {
-		data.AccountExpires = types.StringValue(user.AccountExpires.Format(time.RFC3339))
-	} else {
-		data.AccountExpires = types.StringNull()
-	}
+	// Timestamps - convert to RFC3339 format using shared helpers
+	data.WhenCreated = helpers.Timestamp(user.WhenCreated)
+	data.WhenChanged = helpers.Timestamp(user.WhenChanged)
+	data.LastLogon = helpers.TimestampOrNull(user.LastLogon)
+	data.PasswordLastSet = helpers.TimestampOrNull(user.PasswordLastSet)
+	data.AccountExpires = helpers.TimestampOrNull(user.AccountExpires)
 
 	tflog.Trace(ctx, "Mapped user data to model", map[string]any{
 		"user_guid":    user.ObjectGUID,

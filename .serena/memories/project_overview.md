@@ -18,7 +18,7 @@ A modern Terraform provider for managing Active Directory resources via LDAP/LDA
 - Cache warming for large environments
 
 ## Resources Implemented
-- **Resources**: `ad_group`, `ad_ou`, `ad_group_membership`
+- **Resources**: `ad_group`, `ad_ou`, `ad_user`, `ad_group_membership`
 - **Data Sources**: `ad_group`, `ad_groups`, `ad_ou`, `ad_user`, `ad_users`, `ad_whoami`
 - **Provider Functions**: `provider::ad::build_hierarchy`, `provider::ad::normalize_roles`
 

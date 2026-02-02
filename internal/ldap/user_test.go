@@ -2,6 +2,7 @@ package ldap
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"testing"
@@ -13,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// MockUserClient implements the Client interface for testing UserReader.
+// MockUserClient implements the Client interface for testing UserManager.
 type MockUserClient struct {
 	mock.Mock
 }
@@ -116,12 +117,15 @@ func (m *MockUserClient) WhoAmI(ctx context.Context) (*WhoAmIResult, error) {
 	return result, args.Error(1)
 }
 
+// Standard 16-byte binary GUID for testing.
+var testBinaryGUID = []byte{0x78, 0x56, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x34, 0x56}
+
 // createMockUserEntry creates a mock LDAP entry for testing user operations.
 func createMockUserEntry() *ldap.Entry {
 	entry := &ldap.Entry{
 		DN: "CN=John Doe,OU=Users,DC=example,DC=com",
 		Attributes: []*ldap.EntryAttribute{
-			{Name: "objectGUID", Values: []string{}, ByteValues: [][]byte{{0x78, 0x56, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x34, 0x56}}},
+			{Name: "objectGUID", Values: []string{}, ByteValues: [][]byte{testBinaryGUID}},
 			{Name: "distinguishedName", Values: []string{"CN=John Doe,OU=Users,DC=example,DC=com"}},
 			{Name: "objectSid", Values: []string{"S-1-5-21-123456789-123456789-123456789-1001"}},
 			{Name: "sAMAccountName", Values: []string{"john.doe"}},
@@ -197,33 +201,76 @@ func createDisabledUserEntry() *ldap.Entry {
 	return entry
 }
 
-func TestNewUserReader(t *testing.T) {
+// makeUserEntry creates a mock LDAP entry representing a user for write operation tests.
+// The guid parameter is kept for API consistency but the entry uses testBinaryGUID.
+func makeUserEntry(dn, guid, sid, cn, upn, sam string) *ldap.Entry {
+	_ = guid // kept for API consistency with other mock entry creators
+	return &ldap.Entry{
+		DN: dn,
+		Attributes: []*ldap.EntryAttribute{
+			// Use proper binary GUID format (16 bytes)
+			{Name: "objectGUID", ByteValues: [][]byte{testBinaryGUID}},
+			// SID can be a string for our test purposes
+			{Name: "objectSid", Values: []string{sid}},
+			{Name: "distinguishedName", Values: []string{dn}},
+			{Name: "cn", Values: []string{cn}},
+			{Name: "userPrincipalName", Values: []string{upn}},
+			{Name: "sAMAccountName", Values: []string{sam}},
+			{Name: "userAccountControl", Values: []string{"512"}}, // NORMAL_ACCOUNT
+			{Name: "whenCreated", Values: []string{"20240101120000.0Z"}},
+			{Name: "whenChanged", Values: []string{"20240101120000.0Z"}},
+		},
+	}
+}
+
+// makeUserSearchResult creates a mock search result with a single user for write operation tests.
+func makeUserSearchResult(dn, guid, sid, cn, upn, sam string) *SearchResult {
+	return &SearchResult{
+		Entries: []*ldap.Entry{makeUserEntry(dn, guid, sid, cn, upn, sam)},
+		Total:   1,
+	}
+}
+
+// Helper function to create bool pointer.
+func boolPtr(b bool) *bool {
+	return &b
+}
+
+// -----------------------------------------------------------------------------
+// UserManager Constructor and Basic Tests
+// -----------------------------------------------------------------------------
+
+func TestNewUserManager(t *testing.T) {
 	client := &MockUserClient{}
 	baseDN := "DC=example,DC=com"
 
-	reader := NewUserReader(t.Context(), client, baseDN, nil)
+	manager := NewUserManager(t.Context(), client, baseDN, nil)
 
-	assert.NotNil(t, reader)
-	assert.Equal(t, client, reader.client)
-	assert.Equal(t, baseDN, reader.baseDN)
-	assert.Equal(t, 30*time.Second, reader.timeout)
-	assert.NotNil(t, reader.guidHandler)
-	assert.NotNil(t, reader.normalizer)
+	assert.NotNil(t, manager)
+	assert.Equal(t, client, manager.client)
+	assert.Equal(t, baseDN, manager.baseDN)
+	assert.Equal(t, 30*time.Second, manager.timeout)
+	assert.NotNil(t, manager.guidHandler)
+	assert.NotNil(t, manager.normalizer)
 }
 
-func TestUserReader_SetTimeout(t *testing.T) {
+func TestUserManager_SetTimeout(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	timeout := 45 * time.Second
-	reader.SetTimeout(timeout)
+	manager.SetTimeout(timeout)
 
-	assert.Equal(t, timeout, reader.timeout)
+	assert.Equal(t, timeout, manager.timeout)
 }
 
-func TestUserReader_GetUserByDN_Success(t *testing.T) {
+// -----------------------------------------------------------------------------
+// Read Operation Tests
+// -----------------------------------------------------------------------------
+
+func TestUserManager_GetUserByDN_Success(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 	dn := "CN=John Doe,OU=Users,DC=example,DC=com"
@@ -238,7 +285,7 @@ func TestUserReader_GetUserByDN_Success(t *testing.T) {
 		Total:   1,
 	}, nil)
 
-	user, err := reader.GetUserByDN(dn)
+	user, err := manager.GetUserByDN(dn)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, user)
@@ -256,9 +303,9 @@ func TestUserReader_GetUserByDN_Success(t *testing.T) {
 	client.AssertExpectations(t)
 }
 
-func TestUserReader_GetUserByDN_NotFound(t *testing.T) {
+func TestUserManager_GetUserByDN_NotFound(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	dn := "CN=NonExistent,OU=Users,DC=example,DC=com"
 
@@ -267,7 +314,7 @@ func TestUserReader_GetUserByDN_NotFound(t *testing.T) {
 		Total:   0,
 	}, nil)
 
-	user, err := reader.GetUserByDN(dn)
+	user, err := manager.GetUserByDN(dn)
 
 	assert.Error(t, err)
 	assert.Nil(t, user)
@@ -276,9 +323,9 @@ func TestUserReader_GetUserByDN_NotFound(t *testing.T) {
 	client.AssertExpectations(t)
 }
 
-func TestUserReader_GetUserByGUID_Success(t *testing.T) {
+func TestUserManager_GetUserByGUID_Success(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 	guid := "12345678-1234-1234-1234-567890123456"
@@ -293,7 +340,7 @@ func TestUserReader_GetUserByGUID_Success(t *testing.T) {
 		Total:   1,
 	}, nil)
 
-	user, err := reader.GetUserByGUID(guid)
+	user, err := manager.GetUserByGUID(guid)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, user)
@@ -302,11 +349,11 @@ func TestUserReader_GetUserByGUID_Success(t *testing.T) {
 	client.AssertExpectations(t)
 }
 
-func TestUserReader_GetUserByGUID_InvalidFormat(t *testing.T) {
+func TestUserManager_GetUserByGUID_InvalidFormat(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
-	user, err := reader.GetUserByGUID("invalid-guid")
+	user, err := manager.GetUserByGUID("invalid-guid")
 
 	assert.Error(t, err)
 	assert.Nil(t, user)
@@ -315,9 +362,9 @@ func TestUserReader_GetUserByGUID_InvalidFormat(t *testing.T) {
 	client.AssertNotCalled(t, "Search")
 }
 
-func TestUserReader_GetUserBySID_Success(t *testing.T) {
+func TestUserManager_GetUserBySID_Success(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 	sid := "S-1-5-21-123456789-123456789-123456789-1001"
@@ -332,7 +379,7 @@ func TestUserReader_GetUserBySID_Success(t *testing.T) {
 		Total:   1,
 	}, nil)
 
-	user, err := reader.GetUserBySID(sid)
+	user, err := manager.GetUserBySID(sid)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, user)
@@ -341,9 +388,9 @@ func TestUserReader_GetUserBySID_Success(t *testing.T) {
 	client.AssertExpectations(t)
 }
 
-func TestUserReader_GetUserByUPN_Success(t *testing.T) {
+func TestUserManager_GetUserByUPN_Success(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 	upn := "john.doe@example.com"
@@ -358,7 +405,7 @@ func TestUserReader_GetUserByUPN_Success(t *testing.T) {
 		Total:   1,
 	}, nil)
 
-	user, err := reader.GetUserByUPN(upn)
+	user, err := manager.GetUserByUPN(upn)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, user)
@@ -367,9 +414,9 @@ func TestUserReader_GetUserByUPN_Success(t *testing.T) {
 	client.AssertExpectations(t)
 }
 
-func TestUserReader_GetUserBySAM_Success(t *testing.T) {
+func TestUserManager_GetUserBySAM_Success(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 	sam := "john.doe"
@@ -384,7 +431,7 @@ func TestUserReader_GetUserBySAM_Success(t *testing.T) {
 		Total:   1,
 	}, nil)
 
-	user, err := reader.GetUserBySAM(sam)
+	user, err := manager.GetUserBySAM(sam)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, user)
@@ -393,9 +440,9 @@ func TestUserReader_GetUserBySAM_Success(t *testing.T) {
 	client.AssertExpectations(t)
 }
 
-func TestUserReader_GetUserBySAM_DomainFormat(t *testing.T) {
+func TestUserManager_GetUserBySAM_DomainFormat(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 	domainSam := "EXAMPLE\\john.doe"
@@ -408,7 +455,7 @@ func TestUserReader_GetUserBySAM_DomainFormat(t *testing.T) {
 		Total:   1,
 	}, nil)
 
-	user, err := reader.GetUserBySAM(domainSam)
+	user, err := manager.GetUserBySAM(domainSam)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, user)
@@ -417,9 +464,9 @@ func TestUserReader_GetUserBySAM_DomainFormat(t *testing.T) {
 	client.AssertExpectations(t)
 }
 
-func TestUserReader_GetUser_AutoDetectIdentifier(t *testing.T) {
+func TestUserManager_GetUser_AutoDetectIdentifier(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 
@@ -469,7 +516,7 @@ func TestUserReader_GetUser_AutoDetectIdentifier(t *testing.T) {
 				Total:   1,
 			}, nil)
 
-			user, err := reader.GetUser(tc.identifier)
+			user, err := manager.GetUser(tc.identifier)
 
 			assert.NoError(t, err)
 			assert.NotNil(t, user)
@@ -480,9 +527,9 @@ func TestUserReader_GetUser_AutoDetectIdentifier(t *testing.T) {
 	}
 }
 
-func TestUserReader_SearchUsers_Success(t *testing.T) {
+func TestUserManager_SearchUsers_Success(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry1 := createMockUserEntry()
 	mockEntry2 := createDisabledUserEntry()
@@ -496,7 +543,7 @@ func TestUserReader_SearchUsers_Success(t *testing.T) {
 		Total:   2,
 	}, nil)
 
-	users, err := reader.SearchUsers("", nil)
+	users, err := manager.SearchUsers("", nil)
 
 	assert.NoError(t, err)
 	assert.Len(t, users, 2)
@@ -508,9 +555,9 @@ func TestUserReader_SearchUsers_Success(t *testing.T) {
 	client.AssertExpectations(t)
 }
 
-func TestUserReader_SearchUsersWithFilter_NameFilters(t *testing.T) {
+func TestUserManager_SearchUsersWithFilter_NameFilters(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 
@@ -547,7 +594,7 @@ func TestUserReader_SearchUsersWithFilter_NameFilters(t *testing.T) {
 				Total:   1,
 			}, nil)
 
-			users, err := reader.SearchUsersWithFilter(tc.filter)
+			users, err := manager.SearchUsersWithFilter(tc.filter)
 
 			assert.NoError(t, err)
 			assert.Len(t, users, 1)
@@ -557,9 +604,9 @@ func TestUserReader_SearchUsersWithFilter_NameFilters(t *testing.T) {
 	}
 }
 
-func TestUserReader_SearchUsersWithFilter_OrganizationalFilters(t *testing.T) {
+func TestUserManager_SearchUsersWithFilter_OrganizationalFilters(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 
@@ -591,7 +638,7 @@ func TestUserReader_SearchUsersWithFilter_OrganizationalFilters(t *testing.T) {
 				Total:   1,
 			}, nil)
 
-			users, err := reader.SearchUsersWithFilter(tc.filter)
+			users, err := manager.SearchUsersWithFilter(tc.filter)
 
 			assert.NoError(t, err)
 			assert.Len(t, users, 1)
@@ -601,9 +648,9 @@ func TestUserReader_SearchUsersWithFilter_OrganizationalFilters(t *testing.T) {
 	}
 }
 
-func TestUserReader_SearchUsersWithFilter_StatusFilters(t *testing.T) {
+func TestUserManager_SearchUsersWithFilter_StatusFilters(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 
@@ -637,7 +684,7 @@ func TestUserReader_SearchUsersWithFilter_StatusFilters(t *testing.T) {
 				Total:   1,
 			}, nil)
 
-			users, err := reader.SearchUsersWithFilter(filter)
+			users, err := manager.SearchUsersWithFilter(filter)
 
 			assert.NoError(t, err)
 			assert.Len(t, users, 1)
@@ -647,9 +694,9 @@ func TestUserReader_SearchUsersWithFilter_StatusFilters(t *testing.T) {
 	}
 }
 
-func TestUserReader_SearchUsersWithFilter_EmailFilters(t *testing.T) {
+func TestUserManager_SearchUsersWithFilter_EmailFilters(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 
@@ -686,7 +733,7 @@ func TestUserReader_SearchUsersWithFilter_EmailFilters(t *testing.T) {
 				Total:   1,
 			}, nil)
 
-			users, err := reader.SearchUsersWithFilter(tc.filter)
+			users, err := manager.SearchUsersWithFilter(tc.filter)
 
 			assert.NoError(t, err)
 			assert.Len(t, users, 1)
@@ -696,9 +743,9 @@ func TestUserReader_SearchUsersWithFilter_EmailFilters(t *testing.T) {
 	}
 }
 
-func TestUserReader_SearchUsersWithFilter_Container(t *testing.T) {
+func TestUserManager_SearchUsersWithFilter_Container(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
 	containerDN := "OU=Engineering,DC=example,DC=com"
@@ -712,7 +759,7 @@ func TestUserReader_SearchUsersWithFilter_Container(t *testing.T) {
 		Total:   1,
 	}, nil)
 
-	users, err := reader.SearchUsersWithFilter(filter)
+	users, err := manager.SearchUsersWithFilter(filter)
 
 	assert.NoError(t, err)
 	assert.Len(t, users, 1)
@@ -720,13 +767,13 @@ func TestUserReader_SearchUsersWithFilter_Container(t *testing.T) {
 	client.AssertExpectations(t)
 }
 
-func TestUserReader_SearchUsersWithFilter_InvalidContainer(t *testing.T) {
+func TestUserManager_SearchUsersWithFilter_InvalidContainer(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	filter := &UserSearchFilter{Container: "invalid-dn"}
 
-	users, err := reader.SearchUsersWithFilter(filter)
+	users, err := manager.SearchUsersWithFilter(filter)
 
 	assert.Error(t, err)
 	assert.Nil(t, users)
@@ -735,8 +782,8 @@ func TestUserReader_SearchUsersWithFilter_InvalidContainer(t *testing.T) {
 	client.AssertNotCalled(t, "SearchWithPaging")
 }
 
-func TestUserReader_parseUserAccountControl(t *testing.T) {
-	reader := NewUserReader(t.Context(), &MockUserClient{}, "DC=example,DC=com", nil)
+func TestUserManager_parseUserAccountControl(t *testing.T) {
+	manager := NewUserManager(t.Context(), &MockUserClient{}, "DC=example,DC=com", nil)
 
 	testCases := []struct {
 		name     string
@@ -800,7 +847,7 @@ func TestUserReader_parseUserAccountControl(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			user := &User{}
-			reader.parseUserAccountControl(user, tc.uac)
+			manager.parseUserAccountControl(user, tc.uac)
 
 			assert.Equal(t, tc.expected.AccountEnabled, user.AccountEnabled)
 			assert.Equal(t, tc.expected.PasswordNeverExpires, user.PasswordNeverExpires)
@@ -813,8 +860,8 @@ func TestUserReader_parseUserAccountControl(t *testing.T) {
 	}
 }
 
-func TestUserReader_parseADTimestamp(t *testing.T) {
-	reader := NewUserReader(t.Context(), &MockUserClient{}, "DC=example,DC=com", nil)
+func TestUserManager_parseADTimestamp(t *testing.T) {
+	manager := NewUserManager(t.Context(), &MockUserClient{}, "DC=example,DC=com", nil)
 
 	testCases := []struct {
 		name      string
@@ -851,7 +898,7 @@ func TestUserReader_parseADTimestamp(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := reader.parseADTimestamp(tc.timestamp)
+			result, err := manager.parseADTimestamp(tc.timestamp)
 
 			if tc.shouldErr {
 				assert.Error(t, err)
@@ -865,11 +912,11 @@ func TestUserReader_parseADTimestamp(t *testing.T) {
 	}
 }
 
-func TestUserReader_entryToUser_ComprehensiveMapping(t *testing.T) {
-	reader := NewUserReader(t.Context(), &MockUserClient{}, "DC=example,DC=com", nil)
+func TestUserManager_entryToUser_ComprehensiveMapping(t *testing.T) {
+	manager := NewUserManager(t.Context(), &MockUserClient{}, "DC=example,DC=com", nil)
 	entry := createMockUserEntry()
 
-	user, err := reader.entryToUser(entry)
+	user, err := manager.entryToUser(entry)
 
 	require.NoError(t, err)
 	require.NotNil(t, user)
@@ -941,9 +988,9 @@ func TestUserReader_entryToUser_ComprehensiveMapping(t *testing.T) {
 	assert.NotNil(t, user.AccountExpires)
 }
 
-func TestUserReader_GetUserStats(t *testing.T) {
+func TestUserManager_GetUserStats(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	enabledEntry := createMockUserEntry()
 	disabledEntry := createDisabledUserEntry()
@@ -953,7 +1000,7 @@ func TestUserReader_GetUserStats(t *testing.T) {
 		Total:   2,
 	}, nil)
 
-	stats, err := reader.GetUserStats()
+	stats, err := manager.GetUserStats()
 
 	assert.NoError(t, err)
 	assert.Equal(t, 2, stats["total"])
@@ -963,20 +1010,20 @@ func TestUserReader_GetUserStats(t *testing.T) {
 	client.AssertExpectations(t)
 }
 
-func TestUserReader_EmptyIdentifier(t *testing.T) {
+func TestUserManager_EmptyIdentifier(t *testing.T) {
 	client := &MockUserClient{}
-	reader := NewUserReader(t.Context(), client, "DC=example,DC=com", nil)
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	testCases := []struct {
 		name string
 		fn   func() (*User, error)
 	}{
-		{"GetUser", func() (*User, error) { return reader.GetUser("") }},
-		{"GetUserByDN", func() (*User, error) { return reader.GetUserByDN("") }},
-		{"GetUserByGUID", func() (*User, error) { return reader.GetUserByGUID("") }},
-		{"GetUserBySID", func() (*User, error) { return reader.GetUserBySID("") }},
-		{"GetUserByUPN", func() (*User, error) { return reader.GetUserByUPN("") }},
-		{"GetUserBySAM", func() (*User, error) { return reader.GetUserBySAM("") }},
+		{"GetUser", func() (*User, error) { return manager.GetUser("") }},
+		{"GetUserByDN", func() (*User, error) { return manager.GetUserByDN("") }},
+		{"GetUserByGUID", func() (*User, error) { return manager.GetUserByGUID("") }},
+		{"GetUserBySID", func() (*User, error) { return manager.GetUserBySID("") }},
+		{"GetUserByUPN", func() (*User, error) { return manager.GetUserByUPN("") }},
+		{"GetUserBySAM", func() (*User, error) { return manager.GetUserBySAM("") }},
 	}
 
 	for _, tc := range testCases {
@@ -990,4 +1037,1125 @@ func TestUserReader_EmptyIdentifier(t *testing.T) {
 
 	client.AssertNotCalled(t, "Search")
 	client.AssertNotCalled(t, "SearchWithPaging")
+}
+
+// -----------------------------------------------------------------------------
+// Write Operation Tests
+// -----------------------------------------------------------------------------
+
+func TestEncodeADPassword(t *testing.T) {
+	tests := []struct {
+		name     string
+		password string
+	}{
+		{
+			name:     "simple password",
+			password: "Pass123!",
+		},
+		{
+			name:     "empty password",
+			password: "",
+		},
+		{
+			name:     "unicode password",
+			password: "Pässwörd",
+		},
+		{
+			name:     "complex password",
+			password: "P@$$w0rd!123",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := EncodeADPassword(tt.password)
+			gotHex := hex.EncodeToString(got)
+
+			// UTF-16 encoding - each character in the quoted password becomes 2 bytes
+			// For UTF-16, the length is: (number of UTF-16 code units in quoted password) * 2 bytes
+			// The quoted password is "password" so we need to count UTF-16 code units
+			quotedPassword := "\"" + tt.password + "\""
+			// Count UTF-16 code units (most characters are 1 code unit, some might be 2)
+			expectedCodeUnits := len([]rune(quotedPassword))
+			expectedLen := expectedCodeUnits * 2 // 2 bytes per UTF-16 code unit
+
+			if len(got) != expectedLen {
+				t.Errorf("EncodeADPassword() length = %d, want %d", len(got), expectedLen)
+			}
+
+			// Verify first two bytes are opening quote (0x22 0x00 in little endian)
+			if got[0] != 0x22 || got[1] != 0x00 {
+				t.Errorf("EncodeADPassword() should start with UTF-16LE quote, got %02x%02x", got[0], got[1])
+			}
+
+			// Verify last two bytes are closing quote
+			if got[len(got)-2] != 0x22 || got[len(got)-1] != 0x00 {
+				t.Errorf("EncodeADPassword() should end with UTF-16LE quote, got %02x%02x", got[len(got)-2], got[len(got)-1])
+			}
+
+			t.Logf("Password %q encoded to: %s", tt.password, gotHex)
+		})
+	}
+}
+
+func TestCalculateUserAccountControlFromFlags(t *testing.T) {
+	tests := []struct {
+		name                 string
+		enabled              bool
+		cannotChangePassword bool
+		passwordNeverExpires bool
+		smartCardRequired    bool
+		trustedForDelegation bool
+		expectedUAC          int32
+	}{
+		{
+			name:        "normal enabled account",
+			enabled:     true,
+			expectedUAC: UACNormalAccount,
+		},
+		{
+			name:        "disabled account",
+			enabled:     false,
+			expectedUAC: UACNormalAccount | UACAccountDisabled,
+		},
+		{
+			name:                 "cannot change password",
+			enabled:              true,
+			cannotChangePassword: true,
+			expectedUAC:          UACNormalAccount | UACPasswordCantChange,
+		},
+		{
+			name:                 "password never expires",
+			enabled:              true,
+			passwordNeverExpires: true,
+			expectedUAC:          UACNormalAccount | UACPasswordNeverExpires,
+		},
+		{
+			name:              "smart card required",
+			enabled:           true,
+			smartCardRequired: true,
+			expectedUAC:       UACNormalAccount | UACSmartCardRequired,
+		},
+		{
+			name:                 "trusted for delegation",
+			enabled:              true,
+			trustedForDelegation: true,
+			expectedUAC:          UACNormalAccount | UACTrustedForDelegation,
+		},
+		{
+			name:                 "all flags disabled account",
+			enabled:              false,
+			cannotChangePassword: true,
+			passwordNeverExpires: true,
+			smartCardRequired:    true,
+			trustedForDelegation: true,
+			expectedUAC:          UACNormalAccount | UACAccountDisabled | UACPasswordCantChange | UACPasswordNeverExpires | UACSmartCardRequired | UACTrustedForDelegation,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CalculateUserAccountControlFromFlags(
+				tt.enabled,
+				tt.cannotChangePassword,
+				tt.passwordNeverExpires,
+				tt.smartCardRequired,
+				tt.trustedForDelegation,
+			)
+
+			if got != tt.expectedUAC {
+				t.Errorf("CalculateUserAccountControlFromFlags() = %d (0x%08X), want %d (0x%08X)",
+					got, got, tt.expectedUAC, tt.expectedUAC)
+			}
+		})
+	}
+}
+
+func TestValidateCreateUserRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *CreateUserRequest
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "nil request",
+			req:     nil,
+			wantErr: true,
+			errMsg:  "cannot be nil",
+		},
+		{
+			name:    "empty name",
+			req:     &CreateUserRequest{},
+			wantErr: true,
+			errMsg:  "name (cn) is required",
+		},
+		{
+			name: "empty UPN",
+			req: &CreateUserRequest{
+				Name: "testuser",
+			},
+			wantErr: true,
+			errMsg:  "user principal name (UPN) is required",
+		},
+		{
+			name: "empty SAM account name",
+			req: &CreateUserRequest{
+				Name:              "testuser",
+				UserPrincipalName: "testuser@example.com",
+			},
+			wantErr: true,
+			errMsg:  "SAM account name is required",
+		},
+		{
+			name: "SAM account name too long",
+			req: &CreateUserRequest{
+				Name:              "testuser",
+				UserPrincipalName: "testuser@example.com",
+				SAMAccountName:    "thissamaccountnameiswaytoolongforAD",
+				Container:         "OU=Users,DC=example,DC=com",
+			},
+			wantErr: true,
+			errMsg:  "cannot exceed 20 characters",
+		},
+		{
+			name: "empty container",
+			req: &CreateUserRequest{
+				Name:              "testuser",
+				UserPrincipalName: "testuser@example.com",
+				SAMAccountName:    "testuser",
+			},
+			wantErr: true,
+			errMsg:  "container DN is required",
+		},
+		{
+			name: "invalid UPN format",
+			req: &CreateUserRequest{
+				Name:              "testuser",
+				UserPrincipalName: "testuser", // missing @domain
+				SAMAccountName:    "testuser",
+				Container:         "OU=Users,DC=example,DC=com",
+			},
+			wantErr: true,
+			errMsg:  "UPN format",
+		},
+		{
+			name: "invalid SAM account name characters",
+			req: &CreateUserRequest{
+				Name:              "testuser",
+				UserPrincipalName: "testuser@example.com",
+				SAMAccountName:    "test user", // space not allowed
+				Container:         "OU=Users,DC=example,DC=com",
+			},
+			wantErr: true,
+			errMsg:  "invalid characters",
+		},
+		{
+			name: "valid request minimal",
+			req: &CreateUserRequest{
+				Name:              "testuser",
+				UserPrincipalName: "testuser@example.com",
+				SAMAccountName:    "testuser",
+				Container:         "OU=Users,DC=example,DC=com",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid request with manager DN",
+			req: &CreateUserRequest{
+				Name:              "testuser",
+				UserPrincipalName: "testuser@example.com",
+				SAMAccountName:    "testuser",
+				Container:         "OU=Users,DC=example,DC=com",
+				Manager:           "CN=Manager,OU=Users,DC=example,DC=com",
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid manager DN",
+			req: &CreateUserRequest{
+				Name:              "testuser",
+				UserPrincipalName: "testuser@example.com",
+				SAMAccountName:    "testuser",
+				Container:         "OU=Users,DC=example,DC=com",
+				Manager:           "invalid-dn",
+			},
+			wantErr: true,
+			errMsg:  "invalid manager DN",
+		},
+	}
+
+	um := NewUserManager(context.Background(), &MockUserClient{}, "DC=example,DC=com", nil)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := um.ValidateCreateUserRequest(tt.req)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ValidateCreateUserRequest() expected error containing %q, got nil", tt.errMsg)
+				} else if tt.errMsg != "" && !contains(err.Error(), tt.errMsg) {
+					t.Errorf("ValidateCreateUserRequest() error = %q, should contain %q", err.Error(), tt.errMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ValidateCreateUserRequest() unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractContainer(t *testing.T) {
+	um := NewUserManager(context.Background(), &MockUserClient{}, "DC=example,DC=com", nil)
+
+	tests := []struct {
+		name     string
+		dn       string
+		expected string
+	}{
+		{
+			name:     "standard user DN",
+			dn:       "CN=John Doe,OU=Users,DC=example,DC=com",
+			expected: "ou=Users,dc=example,dc=com", // ldap library normalizes to lowercase
+		},
+		{
+			name:     "nested OU",
+			dn:       "CN=Jane Smith,OU=Admins,OU=IT,DC=example,DC=com",
+			expected: "ou=Admins,ou=IT,dc=example,dc=com",
+		},
+		{
+			name:     "users container",
+			dn:       "CN=Test User,CN=Users,DC=example,DC=com",
+			expected: "cn=Users,dc=example,dc=com",
+		},
+		{
+			name:     "single RDN",
+			dn:       "CN=Test",
+			expected: "",
+		},
+		{
+			name:     "empty DN",
+			dn:       "",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := um.extractContainer(tt.dn)
+			if got != tt.expected {
+				t.Errorf("extractContainer(%q) = %q, want %q", tt.dn, got, tt.expected)
+			}
+		})
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+func TestUserManager_CreateUser_Success(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	req := &CreateUserRequest{
+		Name:              "Test User",
+		UserPrincipalName: "testuser@example.com",
+		SAMAccountName:    "testuser",
+		Container:         "OU=Users,DC=example,DC=com",
+	}
+
+	expectedDN := "CN=Test User,OU=Users,DC=example,DC=com"
+	// This is the GUID that results from decoding testBinaryGUID
+	expectedGUID := "12345678-1234-1234-1234-567890123456"
+	expectedSID := "S-1-5-21-123456789-123456789-123456789-1001"
+
+	// Mock Add (create user)
+	mockClient.On("Add", mock.Anything, mock.MatchedBy(func(r *AddRequest) bool {
+		return r.DN == expectedDN
+	})).Return(nil).Once()
+
+	// Mock Modify (apply UAC flags)
+	mockClient.On("Modify", mock.Anything, mock.MatchedBy(func(r *ModifyRequest) bool {
+		return r.DN == expectedDN
+	})).Return(nil).Once()
+
+	// Mock Search (retrieve created user)
+	mockClient.On("Search", mock.Anything, mock.MatchedBy(func(r *SearchRequest) bool {
+		return r.BaseDN == expectedDN
+	})).Return(makeUserSearchResult(expectedDN, expectedGUID, expectedSID, "Test User", "testuser@example.com", "testuser"), nil).Once()
+
+	user, err := um.CreateUser(req)
+
+	require.NoError(t, err)
+	assert.NotNil(t, user)
+	assert.Equal(t, expectedGUID, user.ObjectGUID)
+	assert.Equal(t, expectedDN, user.DistinguishedName)
+	mockClient.AssertExpectations(t)
+}
+
+func TestUserManager_CreateUser_WithAllOptionalAttributes(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	enabled := true
+	req := &CreateUserRequest{
+		Name:              "Test User",
+		UserPrincipalName: "testuser@example.com",
+		SAMAccountName:    "testuser",
+		Container:         "OU=Users,DC=example,DC=com",
+		DisplayName:       "Test Display Name",
+		Description:       "Test description",
+		GivenName:         "Test",
+		Surname:           "User",
+		EmailAddress:      "testuser@company.com",
+		Title:             "Engineer",
+		Department:        "Engineering",
+		Company:           "Test Corp",
+		OfficePhone:       "+1-555-0100",
+		Enabled:           &enabled,
+	}
+
+	expectedDN := "CN=Test User,OU=Users,DC=example,DC=com"
+
+	// Mock Add with attribute verification
+	mockClient.On("Add", mock.Anything, mock.MatchedBy(func(r *AddRequest) bool {
+		if r.DN != expectedDN {
+			return false
+		}
+		// Verify optional attributes are included
+		return r.Attributes["displayName"] != nil &&
+			r.Attributes["description"] != nil &&
+			r.Attributes["givenName"] != nil
+	})).Return(nil).Once()
+
+	// Mock Modify
+	mockClient.On("Modify", mock.Anything, mock.Anything).Return(nil).Once()
+
+	// Mock Search
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(
+		makeUserSearchResult(expectedDN, "guid", "sid", "Test User", "testuser@example.com", "testuser"),
+		nil,
+	).Once()
+
+	user, err := um.CreateUser(req)
+
+	require.NoError(t, err)
+	assert.NotNil(t, user)
+	mockClient.AssertExpectations(t)
+}
+
+func TestUserManager_CreateUser_WithSecurityFlags(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	enabled := false
+	passwordNeverExpires := true
+	cannotChangePassword := true
+
+	req := &CreateUserRequest{
+		Name:                 "Service Account",
+		UserPrincipalName:    "svc@example.com",
+		SAMAccountName:       "svc",
+		Container:            "OU=Services,DC=example,DC=com",
+		Enabled:              &enabled,
+		PasswordNeverExpires: &passwordNeverExpires,
+		CannotChangePassword: &cannotChangePassword,
+	}
+
+	expectedDN := "CN=Service Account,OU=Services,DC=example,DC=com"
+
+	// Mock Add
+	mockClient.On("Add", mock.Anything, mock.Anything).Return(nil).Once()
+
+	// Mock Modify - verify UAC flags
+	mockClient.On("Modify", mock.Anything, mock.MatchedBy(func(r *ModifyRequest) bool {
+		if r.DN != expectedDN {
+			return false
+		}
+		// Should have UAC with disabled flag + password flags
+		return r.ReplaceAttributes["userAccountControl"] != nil
+	})).Return(nil).Once()
+
+	// Mock Search
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(
+		makeUserSearchResult(expectedDN, "guid", "sid", "Service Account", "svc@example.com", "svc"),
+		nil,
+	).Once()
+
+	user, err := um.CreateUser(req)
+
+	require.NoError(t, err)
+	assert.NotNil(t, user)
+	mockClient.AssertExpectations(t)
+}
+
+func TestUserManager_CreateUser_AddFails(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	req := &CreateUserRequest{
+		Name:              "Test User",
+		UserPrincipalName: "testuser@example.com",
+		SAMAccountName:    "testuser",
+		Container:         "OU=Users,DC=example,DC=com",
+	}
+
+	// Mock Add failure
+	mockClient.On("Add", mock.Anything, mock.Anything).Return(fmt.Errorf("LDAP error: entry already exists")).Once()
+
+	user, err := um.CreateUser(req)
+
+	assert.Error(t, err)
+	assert.Nil(t, user)
+	assert.Contains(t, err.Error(), "create_user")
+	mockClient.AssertExpectations(t)
+}
+
+func TestUserManager_CreateUser_WithPassword(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	req := &CreateUserRequest{
+		Name:              "Test User",
+		UserPrincipalName: "testuser@example.com",
+		SAMAccountName:    "testuser",
+		Container:         "OU=Users,DC=example,DC=com",
+		InitialPassword:   "P@ssw0rd123!",
+	}
+
+	expectedDN := "CN=Test User,OU=Users,DC=example,DC=com"
+
+	// Mock Add
+	mockClient.On("Add", mock.Anything, mock.Anything).Return(nil).Once()
+
+	// Mock Modify for password (first modify call)
+	mockClient.On("Modify", mock.Anything, mock.MatchedBy(func(r *ModifyRequest) bool {
+		return r.DN == expectedDN && r.ReplaceAttributes["unicodePwd"] != nil
+	})).Return(nil).Once()
+
+	// Mock Modify for UAC flags (second modify call)
+	mockClient.On("Modify", mock.Anything, mock.MatchedBy(func(r *ModifyRequest) bool {
+		return r.DN == expectedDN && r.ReplaceAttributes["userAccountControl"] != nil
+	})).Return(nil).Once()
+
+	// Mock Search
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(
+		makeUserSearchResult(expectedDN, "guid", "sid", "Test User", "testuser@example.com", "testuser"),
+		nil,
+	).Once()
+
+	user, err := um.CreateUser(req)
+
+	require.NoError(t, err)
+	assert.NotNil(t, user)
+	mockClient.AssertExpectations(t)
+}
+
+func TestUserManager_CreateUser_PasswordFails_Cleanup(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	req := &CreateUserRequest{
+		Name:              "Test User",
+		UserPrincipalName: "testuser@example.com",
+		SAMAccountName:    "testuser",
+		Container:         "OU=Users,DC=example,DC=com",
+		InitialPassword:   "weakpwd", // Will fail complexity requirements
+	}
+
+	expectedDN := "CN=Test User,OU=Users,DC=example,DC=com"
+
+	// Mock Add (succeeds)
+	mockClient.On("Add", mock.Anything, mock.Anything).Return(nil).Once()
+
+	// Mock Modify for password (fails)
+	mockClient.On("Modify", mock.Anything, mock.MatchedBy(func(r *ModifyRequest) bool {
+		return r.ReplaceAttributes["unicodePwd"] != nil
+	})).Return(fmt.Errorf("password does not meet complexity requirements")).Once()
+
+	// Mock Delete (cleanup)
+	mockClient.On("Delete", mock.Anything, expectedDN).Return(nil).Once()
+
+	user, err := um.CreateUser(req)
+
+	assert.Error(t, err)
+	assert.Nil(t, user)
+	// The error is wrapped as "set_password" in the code, not "set_initial_password"
+	assert.Contains(t, err.Error(), "set_password")
+	mockClient.AssertExpectations(t)
+}
+
+func TestUserManager_UpdateUser_AttributeChanges(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	userGUID := "12345678-1234-1234-1234-123456789012"
+	userDN := "CN=Test User,OU=Users,DC=example,DC=com"
+
+	// Mock Search to get current user
+	mockClient.On("Search", mock.Anything, mock.MatchedBy(func(r *SearchRequest) bool {
+		return r.Filter != "" && (r.SizeLimit == 1 || r.Scope == ScopeBaseObject)
+	})).Return(makeUserSearchResult(userDN, userGUID, "sid", "Test User", "testuser@example.com", "testuser"), nil)
+
+	newDescription := "Updated description"
+	newTitle := "Senior Engineer"
+	updateReq := &UpdateUserRequest{
+		Description: &newDescription,
+		Title:       &newTitle,
+	}
+
+	// Mock Modify
+	mockClient.On("Modify", mock.Anything, mock.MatchedBy(func(r *ModifyRequest) bool {
+		return r.DN == userDN &&
+			r.ReplaceAttributes["description"] != nil &&
+			r.ReplaceAttributes["title"] != nil
+	})).Return(nil).Once()
+
+	user, err := um.UpdateUser(userGUID, updateReq)
+
+	require.NoError(t, err)
+	assert.NotNil(t, user)
+	mockClient.AssertExpectations(t)
+}
+
+func TestUserManager_UpdateUser_ContainerMove(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	userGUID := "12345678-1234-1234-1234-123456789012"
+	currentDN := "CN=Test User,OU=Users,DC=example,DC=com"
+	newContainer := "OU=Admins,DC=example,DC=com"
+	newDN := "CN=Test User,OU=Admins,DC=example,DC=com"
+
+	// First search - get current user
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(
+		makeUserSearchResult(currentDN, userGUID, "sid", "Test User", "testuser@example.com", "testuser"),
+		nil,
+	).Once()
+
+	// Mock ModifyDN for move
+	mockClient.On("ModifyDN", mock.Anything, mock.MatchedBy(func(r *ModifyDNRequest) bool {
+		return r.DN == currentDN && r.NewSuperior == newContainer
+	})).Return(nil).Once()
+
+	// Second search - get user after move
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(
+		makeUserSearchResult(newDN, userGUID, "sid", "Test User", "testuser@example.com", "testuser"),
+		nil,
+	).Once()
+
+	// Third search - final user state
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(
+		makeUserSearchResult(newDN, userGUID, "sid", "Test User", "testuser@example.com", "testuser"),
+		nil,
+	).Once()
+
+	updateReq := &UpdateUserRequest{
+		Container: &newContainer,
+	}
+
+	user, err := um.UpdateUser(userGUID, updateReq)
+
+	require.NoError(t, err)
+	assert.NotNil(t, user)
+	mockClient.AssertExpectations(t)
+}
+
+func TestUserManager_UpdateUser_SecurityFlagChanges(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	userGUID := "12345678-1234-1234-1234-123456789012"
+	userDN := "CN=Test User,OU=Users,DC=example,DC=com"
+
+	// Mock Search to get current user (enabled account)
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(
+		makeUserSearchResult(userDN, userGUID, "sid", "Test User", "testuser@example.com", "testuser"),
+		nil,
+	)
+
+	// Disable the account
+	enabled := false
+	passwordNeverExpires := true
+	updateReq := &UpdateUserRequest{
+		Enabled:              &enabled,
+		PasswordNeverExpires: &passwordNeverExpires,
+	}
+
+	// Mock Modify with UAC change
+	mockClient.On("Modify", mock.Anything, mock.MatchedBy(func(r *ModifyRequest) bool {
+		return r.DN == userDN && r.ReplaceAttributes["userAccountControl"] != nil
+	})).Return(nil).Once()
+
+	user, err := um.UpdateUser(userGUID, updateReq)
+
+	require.NoError(t, err)
+	assert.NotNil(t, user)
+	mockClient.AssertExpectations(t)
+}
+
+func TestUserManager_UpdateUser_ClearAttribute(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	userGUID := "12345678-1234-1234-1234-123456789012"
+	userDN := "CN=Test User,OU=Users,DC=example,DC=com"
+
+	// Create user entry with description
+	entry := makeUserEntry(userDN, userGUID, "sid", "Test User", "testuser@example.com", "testuser")
+	entry.Attributes = append(entry.Attributes, &ldap.EntryAttribute{
+		Name:   "description",
+		Values: []string{"Original description"},
+	})
+	searchResult := &SearchResult{Entries: []*ldap.Entry{entry}, Total: 1}
+
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(searchResult, nil)
+
+	// Clear description (empty string)
+	emptyDesc := ""
+	updateReq := &UpdateUserRequest{
+		Description: &emptyDesc,
+	}
+
+	// Mock Modify with delete attribute
+	mockClient.On("Modify", mock.Anything, mock.MatchedBy(func(r *ModifyRequest) bool {
+		return r.DN == userDN
+	})).Return(nil).Once()
+
+	user, err := um.UpdateUser(userGUID, updateReq)
+
+	require.NoError(t, err)
+	assert.NotNil(t, user)
+	mockClient.AssertExpectations(t)
+}
+
+func TestUserManager_UpdateUser_NoChanges(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	userGUID := "12345678-1234-1234-1234-123456789012"
+	userDN := "CN=Test User,OU=Users,DC=example,DC=com"
+
+	// Mock Search
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(
+		makeUserSearchResult(userDN, userGUID, "sid", "Test User", "testuser@example.com", "testuser"),
+		nil,
+	)
+
+	// Empty update request - no changes
+	updateReq := &UpdateUserRequest{}
+
+	// No Modify call should be made
+	user, err := um.UpdateUser(userGUID, updateReq)
+
+	require.NoError(t, err)
+	assert.NotNil(t, user)
+	// Modify should not have been called
+	mockClient.AssertNotCalled(t, "Modify", mock.Anything, mock.Anything)
+}
+
+func TestUserManager_UpdateUser_UserNotFound(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	// Use a valid GUID format that will trigger a search
+	userGUID := "12345678-1234-1234-1234-000000000000"
+
+	// Mock Search with no results (user not found)
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(
+		&SearchResult{Entries: []*ldap.Entry{}, Total: 0},
+		nil,
+	).Once()
+
+	updateReq := &UpdateUserRequest{}
+
+	user, err := um.UpdateUser(userGUID, updateReq)
+
+	assert.Error(t, err)
+	assert.Nil(t, user)
+	mockClient.AssertExpectations(t)
+}
+
+func TestUserManager_DeleteUser_Success(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	userGUID := "12345678-1234-1234-1234-123456789012"
+	userDN := "CN=Test User,OU=Users,DC=example,DC=com"
+
+	// Mock Search to get user DN
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(
+		makeUserSearchResult(userDN, userGUID, "sid", "Test User", "testuser@example.com", "testuser"),
+		nil,
+	).Once()
+
+	// Mock Delete
+	mockClient.On("Delete", mock.Anything, userDN).Return(nil).Once()
+
+	err := um.DeleteUser(userGUID)
+
+	require.NoError(t, err)
+	mockClient.AssertExpectations(t)
+}
+
+func TestUserManager_DeleteUser_NotFound(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	// Use a valid GUID format
+	userGUID := "12345678-1234-1234-1234-000000000000"
+
+	// Mock Search with "not found" error
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(
+		(*SearchResult)(nil),
+		&LDAPError{Operation: "test", Message: "object not found"},
+	).Once()
+
+	err := um.DeleteUser(userGUID)
+
+	// Should not error - user already doesn't exist
+	require.NoError(t, err)
+	mockClient.AssertExpectations(t)
+}
+
+func TestUserManager_SetPassword_Success(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	userGUID := "12345678-1234-1234-1234-123456789012"
+	userDN := "CN=Test User,OU=Users,DC=example,DC=com"
+	newPassword := "NewP@ssw0rd123!"
+
+	// Mock Search to get user DN
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(
+		makeUserSearchResult(userDN, userGUID, "sid", "Test User", "testuser@example.com", "testuser"),
+		nil,
+	).Once()
+
+	// Mock Modify for password
+	mockClient.On("Modify", mock.Anything, mock.MatchedBy(func(r *ModifyRequest) bool {
+		return r.DN == userDN && r.ReplaceAttributes["unicodePwd"] != nil
+	})).Return(nil).Once()
+
+	err := um.SetPassword(userGUID, newPassword)
+
+	require.NoError(t, err)
+	mockClient.AssertExpectations(t)
+}
+
+func TestUserManager_MoveUser_Success(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	userGUID := "12345678-1234-1234-1234-123456789012"
+	currentDN := "CN=Test User,OU=Users,DC=example,DC=com"
+	newContainer := "OU=Admins,DC=example,DC=com"
+	newDN := "CN=Test User,OU=Admins,DC=example,DC=com"
+
+	// First search - get current user
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(
+		makeUserSearchResult(currentDN, userGUID, "sid", "Test User", "testuser@example.com", "testuser"),
+		nil,
+	).Once()
+
+	// Mock ModifyDN
+	mockClient.On("ModifyDN", mock.Anything, mock.MatchedBy(func(r *ModifyDNRequest) bool {
+		return r.DN == currentDN && r.NewSuperior == newContainer
+	})).Return(nil).Once()
+
+	// Second search - get user after move
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(
+		makeUserSearchResult(newDN, userGUID, "sid", "Test User", "testuser@example.com", "testuser"),
+		nil,
+	).Once()
+
+	user, err := um.MoveUser(userGUID, newContainer)
+
+	require.NoError(t, err)
+	assert.NotNil(t, user)
+	mockClient.AssertExpectations(t)
+}
+
+func TestUserManager_MoveUser_AlreadyInContainer(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	userGUID := "12345678-1234-1234-1234-123456789012"
+	userDN := "CN=Test User,OU=Users,DC=example,DC=com"
+	sameContainer := "OU=Users,DC=example,DC=com"
+
+	// Mock Search
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(
+		makeUserSearchResult(userDN, userGUID, "sid", "Test User", "testuser@example.com", "testuser"),
+		nil,
+	).Once()
+
+	// ModifyDN should NOT be called since user is already in target container
+
+	user, err := um.MoveUser(userGUID, sameContainer)
+
+	require.NoError(t, err)
+	assert.NotNil(t, user)
+	mockClient.AssertNotCalled(t, "ModifyDN", mock.Anything, mock.Anything)
+}
+
+// Test UAC calculation helper function
+
+func TestUserManager_CalculateUACChanges(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+
+	um := NewUserManager(ctx, mockClient, "DC=example,DC=com", cacheManager)
+
+	tests := []struct {
+		name           string
+		currentUser    *User
+		updateReq      *UpdateUserRequest
+		expectChange   bool
+		expectedNewUAC int32
+	}{
+		{
+			name: "no changes",
+			currentUser: &User{
+				AccountEnabled:       true,
+				PasswordNeverExpires: false,
+				UserAccountControl:   UACNormalAccount,
+			},
+			updateReq:    &UpdateUserRequest{},
+			expectChange: false,
+		},
+		{
+			name: "disable account",
+			currentUser: &User{
+				AccountEnabled:     true,
+				UserAccountControl: UACNormalAccount,
+			},
+			updateReq:      &UpdateUserRequest{Enabled: boolPtr(false)},
+			expectChange:   true,
+			expectedNewUAC: UACNormalAccount | UACAccountDisabled,
+		},
+		{
+			name: "enable password never expires",
+			currentUser: &User{
+				AccountEnabled:       true,
+				PasswordNeverExpires: false,
+				UserAccountControl:   UACNormalAccount,
+			},
+			updateReq:      &UpdateUserRequest{PasswordNeverExpires: boolPtr(true)},
+			expectChange:   true,
+			expectedNewUAC: UACNormalAccount | UACPasswordNeverExpires,
+		},
+		{
+			name: "multiple flag changes",
+			currentUser: &User{
+				AccountEnabled:       true,
+				PasswordNeverExpires: false,
+				CannotChangePassword: false,
+				UserAccountControl:   UACNormalAccount,
+			},
+			updateReq: &UpdateUserRequest{
+				Enabled:              boolPtr(false),
+				PasswordNeverExpires: boolPtr(true),
+				CannotChangePassword: boolPtr(true),
+			},
+			expectChange:   true,
+			expectedNewUAC: UACNormalAccount | UACAccountDisabled | UACPasswordNeverExpires | UACPasswordCantChange,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			changed, newUAC := um.calculateUACChanges(tt.updateReq, tt.currentUser)
+			assert.Equal(t, tt.expectChange, changed)
+			if tt.expectChange {
+				assert.Equal(t, tt.expectedNewUAC, newUAC)
+			}
+		})
+	}
+}
+
+// Test validation edge cases
+
+func TestUserManager_CreateUser_ValidationEdgeCases(t *testing.T) {
+	um := NewUserManager(context.Background(), &MockUserClient{}, "DC=example,DC=com", nil)
+
+	tests := []struct {
+		name    string
+		req     *CreateUserRequest
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "SAM with exactly 20 characters",
+			req: &CreateUserRequest{
+				Name:              "Test User",
+				UserPrincipalName: "test@example.com",
+				SAMAccountName:    "12345678901234567890", // exactly 20 chars
+				Container:         "OU=Users,DC=example,DC=com",
+			},
+			wantErr: false,
+		},
+		{
+			name: "SAM with 21 characters",
+			req: &CreateUserRequest{
+				Name:              "Test User",
+				UserPrincipalName: "test@example.com",
+				SAMAccountName:    "123456789012345678901", // 21 chars
+				Container:         "OU=Users,DC=example,DC=com",
+			},
+			wantErr: true,
+			errMsg:  "cannot exceed 20 characters",
+		},
+		{
+			name: "UPN without domain",
+			req: &CreateUserRequest{
+				Name:              "Test User",
+				UserPrincipalName: "testuser",
+				SAMAccountName:    "testuser",
+				Container:         "OU=Users,DC=example,DC=com",
+			},
+			wantErr: true,
+			errMsg:  "UPN format",
+		},
+		{
+			name: "SAM with special characters",
+			req: &CreateUserRequest{
+				Name:              "Test User",
+				UserPrincipalName: "test@example.com",
+				SAMAccountName:    "test@user", // @ not allowed
+				Container:         "OU=Users,DC=example,DC=com",
+			},
+			wantErr: true,
+			errMsg:  "invalid characters",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := um.ValidateCreateUserRequest(tt.req)
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// Benchmark tests
+
+func BenchmarkUserManager_CalculateUACChanges(b *testing.B) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	um := NewUserManager(ctx, mockClient, "DC=example,DC=com", nil)
+
+	currentUser := &User{
+		AccountEnabled:       true,
+		PasswordNeverExpires: false,
+		CannotChangePassword: false,
+		UserAccountControl:   UACNormalAccount,
+	}
+
+	updateReq := &UpdateUserRequest{
+		Enabled:              boolPtr(false),
+		PasswordNeverExpires: boolPtr(true),
+	}
+
+	for b.Loop() {
+		um.calculateUACChanges(updateReq, currentUser)
+	}
+}
+
+// TestUserManager_TimeHandling tests time parsing for user attributes.
+func TestUserManager_TimeHandling(t *testing.T) {
+	// Test that whenCreated/whenChanged parsing works correctly
+	timeStr := "20240115120000.0Z"
+	expectedTime, err := time.Parse("20060102150405.0Z", timeStr)
+	require.NoError(t, err)
+	assert.Equal(t, 2024, expectedTime.Year())
+	assert.Equal(t, time.January, expectedTime.Month())
+	assert.Equal(t, 15, expectedTime.Day())
 }

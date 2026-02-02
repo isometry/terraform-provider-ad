@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	"github.com/isometry/terraform-provider-ad/internal/provider/helpers"
 	"github.com/isometry/terraform-provider-ad/internal/provider/planmodifiers"
 	customtypes "github.com/isometry/terraform-provider-ad/internal/provider/types"
 	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
@@ -223,7 +224,7 @@ func (r *OUResource) Create(ctx context.Context, req resource.CreateRequest, res
 	})
 
 	// Update the model with the created OU data
-	r.updateModelFromOU(&data, ou)
+	r.updateModelFromOU(ctx, &data, ou)
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -275,7 +276,7 @@ func (r *OUResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 	}
 
 	// Update the model with the current OU data
-	r.updateModelFromOU(&data, ou)
+	r.updateModelFromOU(ctx, &data, ou)
 
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -378,7 +379,7 @@ func (r *OUResource) Update(ctx context.Context, req resource.UpdateRequest, res
 	})
 
 	// Update the model with the updated OU data
-	r.updateModelFromOU(&data, ou)
+	r.updateModelFromOU(ctx, &data, ou)
 
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -480,7 +481,7 @@ func (r *OUResource) ImportState(ctx context.Context, req resource.ImportStateRe
 
 	// Create model from the imported OU
 	var data OUResourceModel
-	r.updateModelFromOU(&data, ou)
+	r.updateModelFromOU(ctx, &data, ou)
 
 	tflog.Debug(ctx, "Imported AD OU", map[string]any{
 		"guid": ou.ObjectGUID,
@@ -495,49 +496,19 @@ func (r *OUResource) ImportState(ctx context.Context, req resource.ImportStateRe
 }
 
 // updateModelFromOU updates the Terraform model with data from an LDAP OU.
-func (r *OUResource) updateModelFromOU(model *OUResourceModel, ou *ldapclient.OU) {
+func (r *OUResource) updateModelFromOU(ctx context.Context, model *OUResourceModel, ou *ldapclient.OU) {
 	model.ID = types.StringValue(ou.ObjectGUID)
 	model.Name = types.StringValue(ou.Name)
 	model.GUID = types.StringValue(ou.ObjectGUID) // Same as ID
 	model.Protected = types.BoolValue(ou.Protected)
 
-	// Normalize DN case to ensure uppercase attribute types
-	normalizedDN, err := ldapclient.NormalizeDNCase(ou.DistinguishedName)
-	if err != nil {
-		// Log error but use original DN as fallback
-		tflog.Warn(context.Background(), "Failed to normalize OU DN case", map[string]any{
-			"original_dn": ou.DistinguishedName,
-			"error":       err.Error(),
-		})
-		normalizedDN = ou.DistinguishedName
-	}
-	model.DN = customtypes.DNString(normalizedDN)
+	// Normalize DN and path
+	model.DN = customtypes.DNString(helpers.NormalizeDN(ctx, ou.DistinguishedName))
+	model.Path = customtypes.DNString(helpers.NormalizeDN(ctx, ou.Parent))
 
-	// Normalize parent path DN case
-	normalizedParent, err := ldapclient.NormalizeDNCase(ou.Parent)
-	if err != nil {
-		// Log error but use original parent as fallback
-		tflog.Warn(context.Background(), "Failed to normalize parent DN case", map[string]any{
-			"original_parent": ou.Parent,
-			"error":           err.Error(),
-		})
-		normalizedParent = ou.Parent
-	}
-	model.Path = customtypes.DNString(normalizedParent)
-
-	// Handle optional description
-	if ou.Description != "" {
-		model.Description = types.StringValue(ou.Description)
-	} else {
-		model.Description = types.StringNull()
-	}
-
-	// Handle optional managedBy
-	if ou.ManagedBy != "" {
-		model.ManagedBy = types.StringValue(ou.ManagedBy)
-	} else {
-		model.ManagedBy = types.StringNull()
-	}
+	// Handle optional description and managedBy
+	model.Description = helpers.StringOrNull(ou.Description)
+	model.ManagedBy = helpers.StringOrNull(ou.ManagedBy)
 }
 
 // getOUManager creates an OUManager instance with base DN lookup.

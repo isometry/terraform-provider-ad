@@ -139,14 +139,14 @@ func BenchmarkUserSearch(b *testing.B) {
 	defer helper.Close()
 
 	ctx := b.Context()
-	userReader := ldapclient.NewUserReader(ctx, helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
+	userManager := ldapclient.NewUserManager(ctx, helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
 
 	b.ResetTimer()
 
 	b.Run("SearchByFilter", func(b *testing.B) {
 		filter := "(objectClass=user)"
 		for b.Loop() {
-			_, err := userReader.SearchUsers(filter, []string{"objectGUID", "userPrincipalName"})
+			_, err := userManager.SearchUsers(filter, []string{"objectGUID", "userPrincipalName"})
 			if err != nil {
 				b.Fatalf("Search failed: %v", err)
 			}
@@ -156,7 +156,7 @@ func BenchmarkUserSearch(b *testing.B) {
 	b.Run("GetByUPN", func(b *testing.B) {
 		upn := "Administrator@" + helper.config.Domain
 		for b.Loop() {
-			_, err := userReader.GetUserByUPN(upn)
+			_, err := userManager.GetUserByUPN(upn)
 			if err != nil && !ldapclient.IsNotFoundError(err) {
 				b.Fatalf("GetByUPN failed: %v", err)
 			}

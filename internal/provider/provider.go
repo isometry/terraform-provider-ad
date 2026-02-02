@@ -580,6 +580,7 @@ func (p *ActiveDirectoryProvider) Resources(ctx context.Context) []func() resour
 		NewGroupResource,
 		NewGroupMembershipResource,
 		NewOUResource,
+		NewUserResource,
 	}
 }
 

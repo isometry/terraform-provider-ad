@@ -6,9 +6,14 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
+
+	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
 )
 
 // TerraformValueToGo converts various Terraform attr.Value types to Go interface{} values.
@@ -224,4 +229,198 @@ func GoValueToTerraform(ctx context.Context, value any) (attr.Value, error) {
 	default:
 		return nil, fmt.Errorf("unsupported Go type for conversion: %T", value)
 	}
+}
+
+// =============================================================================
+// Terraform Type Value Extraction (Terraform → Go)
+// =============================================================================
+
+// GetString returns the string value from a Terraform types.String.
+// Returns empty string if the value is null or unknown.
+func GetString(v types.String) string {
+	if v.IsNull() || v.IsUnknown() {
+		return ""
+	}
+	return v.ValueString()
+}
+
+// =============================================================================
+// Pointer Helpers (for LDAP requests where nil = don't modify)
+// =============================================================================
+
+// StringPtr returns a pointer to the string value, or nil if null/unknown.
+// Use this for LDAP update requests where nil means "don't modify this field".
+func StringPtr(v types.String) *string {
+	if v.IsNull() || v.IsUnknown() {
+		return nil
+	}
+	val := v.ValueString()
+	return &val
+}
+
+// BoolPtr returns a pointer to the bool value, or nil if null/unknown.
+// Use this for LDAP update requests where nil means "don't modify this field".
+func BoolPtr(v types.Bool) *bool {
+	if v.IsNull() || v.IsUnknown() {
+		return nil
+	}
+	val := v.ValueBool()
+	return &val
+}
+
+// Int64Ptr returns a pointer to the int64 value, or nil if null/unknown.
+// Use this for LDAP update requests where nil means "don't modify this field".
+func Int64Ptr(v types.Int64) *int64 {
+	if v.IsNull() || v.IsUnknown() {
+		return nil
+	}
+	val := v.ValueInt64()
+	return &val
+}
+
+// =============================================================================
+// Construction Helpers (Go → Terraform)
+// =============================================================================
+
+// StringOrNull returns types.StringValue if the string is non-empty,
+// otherwise returns types.StringNull().
+// Use this for optional string attributes where empty means "not set in AD".
+func StringOrNull(s string) types.String {
+	if s == "" {
+		return types.StringNull()
+	}
+	return types.StringValue(s)
+}
+
+// Timestamp formats a time.Time as an RFC3339 string for Terraform state.
+func Timestamp(t time.Time) types.String {
+	return types.StringValue(t.Format(time.RFC3339))
+}
+
+// TimestampOrNull formats an optional time.Time as an RFC3339 string,
+// or returns types.StringNull() if the pointer is nil.
+func TimestampOrNull(t *time.Time) types.String {
+	if t == nil {
+		return types.StringNull()
+	}
+	return types.StringValue(t.Format(time.RFC3339))
+}
+
+// =============================================================================
+// Change Detection Helpers (for update operations)
+// =============================================================================
+
+// StringChanged checks if a string attribute changed between plan and state.
+// If changed, sets *target to the new value (empty string for clearing).
+// Returns true if the attribute changed.
+func StringChanged(plan, state types.String, target **string) bool {
+	if plan.Equal(state) {
+		return false
+	}
+
+	// Handle clearing (plan is null but state had a value)
+	if plan.IsNull() && !state.IsNull() {
+		empty := ""
+		*target = &empty
+		return true
+	}
+
+	// Handle setting (plan has a value)
+	if !plan.IsNull() {
+		val := plan.ValueString()
+		*target = &val
+		return true
+	}
+
+	return false
+}
+
+// BoolChanged checks if a bool attribute changed between plan and state.
+// If changed, sets *target to the new value.
+// Returns true if the attribute changed.
+func BoolChanged(plan, state types.Bool, target **bool) bool {
+	if plan.Equal(state) {
+		return false
+	}
+
+	if !plan.IsNull() && !plan.IsUnknown() {
+		val := plan.ValueBool()
+		*target = &val
+		return true
+	}
+
+	return false
+}
+
+// =============================================================================
+// DN Normalization Helpers
+// =============================================================================
+
+// NormalizeDN normalizes a Distinguished Name to have consistent case.
+// If normalization fails, logs a warning and returns the original DN.
+// This provides a logged fallback pattern used throughout the provider.
+func NormalizeDN(ctx context.Context, dn string) string {
+	normalized, err := ldapclient.NormalizeDNCase(dn)
+	if err != nil {
+		tflog.Warn(ctx, "Failed to normalize DN case", map[string]any{
+			"original_dn": dn,
+			"error":       err.Error(),
+		})
+		return dn
+	}
+	return normalized
+}
+
+// DNListOrNull converts a slice of DNs to a Terraform List with normalization.
+// Returns an empty list (not null) if the slice is empty.
+// Each DN is normalized using NormalizeDN with logged fallback.
+func DNListOrNull(ctx context.Context, dns []string, diags *diag.Diagnostics) types.List {
+	if len(dns) == 0 {
+		emptyList, memberDiags := types.ListValue(types.StringType, []attr.Value{})
+		diags.Append(memberDiags...)
+		if memberDiags.HasError() {
+			return types.ListNull(types.StringType)
+		}
+		return emptyList
+	}
+
+	elements := make([]attr.Value, len(dns))
+	for i, dn := range dns {
+		normalizedDN := NormalizeDN(ctx, dn)
+		elements[i] = types.StringValue(normalizedDN)
+	}
+
+	dnList, listDiags := types.ListValue(types.StringType, elements)
+	diags.Append(listDiags...)
+	if listDiags.HasError() {
+		return types.ListNull(types.StringType)
+	}
+	return dnList
+}
+
+// DNSetOrNull converts a slice of DNs to a Terraform Set with normalization.
+// Returns an empty set (not null) if the slice is empty.
+// Each DN is normalized using NormalizeDN with logged fallback.
+func DNSetOrNull(ctx context.Context, dns []string, diags *diag.Diagnostics) types.Set {
+	if len(dns) == 0 {
+		emptySet, setDiags := types.SetValue(types.StringType, []attr.Value{})
+		diags.Append(setDiags...)
+		if setDiags.HasError() {
+			return types.SetNull(types.StringType)
+		}
+		return emptySet
+	}
+
+	elements := make([]attr.Value, len(dns))
+	for i, dn := range dns {
+		normalizedDN := NormalizeDN(ctx, dn)
+		elements[i] = types.StringValue(normalizedDN)
+	}
+
+	dnSet, setDiags := types.SetValue(types.StringType, elements)
+	diags.Append(setDiags...)
+	if setDiags.HasError() {
+		return types.SetNull(types.StringType)
+	}
+	return dnSet
 }

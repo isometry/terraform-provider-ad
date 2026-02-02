@@ -57,7 +57,7 @@ This is a **Terraform Plugin Framework** provider (not SDK v2) with these key ch
 
 ```
 internal/
-├── ldap/                   # LDAP client and Active Directory logic (33 files)
+├── ldap/                   # LDAP client and Active Directory logic (36 files)
 │   ├── client.go           # Main LDAP client with connection pooling
 │   ├── pool.go             # Connection pool implementation
 │   ├── discovery.go        # SRV record domain controller discovery
@@ -67,10 +67,12 @@ internal/
 │   ├── sid.go              # SID handling and conversion
 │   ├── normalizer.go       # Member identifier normalization
 │   ├── dn_normalizer.go    # DN normalization utilities
+│   ├── dn_escape.go        # DN escaping utilities
 │   ├── group.go            # Group operations
 │   ├── user.go             # User operations
 │   ├── ou.go               # Organizational Unit operations
 │   ├── membership.go       # Group membership management
+│   ├── password.go         # Password generation and encoding
 │   ├── cache_manager.go    # Cache warming and management
 │   ├── provider_data.go    # Provider data wrapper
 │   ├── types.go            # LDAP type definitions
@@ -78,10 +80,11 @@ internal/
 │   ├── doc.go              # Package documentation
 │   └── *_test.go           # Comprehensive unit tests (15 test files)
 │
-├── provider/               # Terraform provider implementation (27 files)
+├── provider/               # Terraform provider implementation (29 files)
 │   ├── provider.go         # Provider schema and Configure()
 │   ├── resource_group.go   # ad_group resource
 │   ├── resource_ou.go      # ad_ou resource
+│   ├── resource_user.go    # ad_user resource
 │   ├── resource_group_membership.go  # ad_group_membership resource
 │   ├── data_source_group.go          # ad_group data source
 │   ├── data_source_groups.go         # ad_groups data source
@@ -148,6 +151,7 @@ Each resource follows these patterns:
 **Resources**:
 - `ad_group` - Security/distribution groups with scope (global/domainlocal/universal) and category
 - `ad_ou` - Organizational Units with protection and nesting support
+- `ad_user` - User accounts with password management and account controls
 - `ad_group_membership` - Group membership management with flexible member identification
 
 **Data Sources**:
