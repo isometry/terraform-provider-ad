@@ -61,6 +61,56 @@ func IsValidDN() validator.String {
 	return dnValidator{}
 }
 
+// Ensure the implementation satisfies the expected interface.
+var _ validator.String = dnOrEmptyValidator{}
+
+// dnOrEmptyValidator validates that a string is either empty (for explicit clearing)
+// or a properly formatted Distinguished Name (DN).
+type dnOrEmptyValidator struct{}
+
+// Description describes the validation in plain text.
+func (v dnOrEmptyValidator) Description(_ context.Context) string {
+	return "value must be a valid Distinguished Name (DN) or an empty string to clear"
+}
+
+// MarkdownDescription describes the validation in Markdown.
+func (v dnOrEmptyValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+// ValidateString performs the validation.
+func (v dnOrEmptyValidator) ValidateString(ctx context.Context, request validator.StringRequest, response *validator.StringResponse) {
+	// Skip validation for unknown or null values
+	if request.ConfigValue.IsNull() || request.ConfigValue.IsUnknown() {
+		return
+	}
+
+	value := request.ConfigValue.ValueString()
+
+	// Allow empty string for explicit clearing
+	if value == "" {
+		return
+	}
+
+	// Validate DN syntax using go-ldap library
+	if _, err := ldap.ParseDN(value); err != nil {
+		response.Diagnostics.AddAttributeError(
+			request.Path,
+			"Invalid Distinguished Name",
+			fmt.Sprintf("The value %q is not a valid Distinguished Name format: %s", value, err.Error()),
+		)
+	}
+}
+
+// IsValidDNOrEmpty returns a validator which ensures that any configured
+// attribute value is either a valid Distinguished Name (DN) or an empty
+// string (used to explicitly clear the attribute).
+//
+// Unknown values and null values are skipped from validation.
+func IsValidDNOrEmpty() validator.String {
+	return dnOrEmptyValidator{}
+}
+
 // dnWithNegationValidator validates that a string is either a properly formatted DN
 // or a DN prefixed with "!" for negation.
 type dnWithNegationValidator struct{}

@@ -308,31 +308,6 @@ func TestAccOUResource_managedByUpdate(t *testing.T) {
 	})
 }
 
-func TestAccOUResource_managedByClear(t *testing.T) {
-	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { testAccPreCheck(t) },
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			// Create OU with managed_by set
-			{
-				Config: testAccOUResourceConfig_withManagedBy("tf-test-ou-mgr-clear"),
-				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ad_ou.test", "name", "tf-test-ou-mgr-clear"),
-					resource.TestCheckResourceAttrPair("ad_ou.test", "managed_by", "ad_group.manager", "dn"),
-				),
-			},
-			// Remove managed_by from config (clear it)
-			{
-				Config: testAccOUResourceConfig_basic("tf-test-ou-mgr-clear"),
-				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ad_ou.test", "name", "tf-test-ou-mgr-clear"),
-					resource.TestCheckResourceAttr("ad_ou.test", "managed_by", ""),
-				),
-			},
-		},
-	})
-}
-
 func TestAccOUResource_managedByWithOtherChanges(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },

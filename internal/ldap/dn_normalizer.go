@@ -50,8 +50,8 @@ func reconstructDNWithUppercaseTypes(parsedDN *ldap.DN) string {
 			// Convert attribute type to uppercase, keep value as-is
 			attrType := strings.ToUpper(attr.Type)
 
-			// The go-ldap library handles proper DN value escaping in ParseDN/String()
-			attrString := fmt.Sprintf("%s=%s", attrType, attr.Value)
+			// Re-escape the value since ParseDN unescapes RFC 4514 sequences
+			attrString := fmt.Sprintf("%s=%s", attrType, ldap.EscapeDN(attr.Value))
 			attrStrings = append(attrStrings, attrString)
 		}
 

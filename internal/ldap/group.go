@@ -312,7 +312,7 @@ func (gm *GroupManager) CreateGroup(req *CreateGroupRequest) (*Group, error) {
 	}
 
 	// Build the group DN
-	groupDN := fmt.Sprintf("CN=%s,%s", ldap.EscapeFilter(req.Name), req.Container)
+	groupDN := fmt.Sprintf("CN=%s,%s", ldap.EscapeDN(req.Name), req.Container)
 
 	// Calculate group type
 	groupType := CalculateGroupType(req.Scope, req.Category)
@@ -632,7 +632,7 @@ func (gm *GroupManager) renameAndMoveGroup(currentGroup *Group, newName, newCont
 		newRDN = parsedDN.RDNs[0].String()
 	} else {
 		// Name changed, create new RDN with escaped name
-		newRDN = fmt.Sprintf("cn=%s", ldap.EscapeFilter(newName))
+		newRDN = fmt.Sprintf("CN=%s", ldap.EscapeDN(newName))
 	}
 
 	// Determine if we need to specify a new superior (container)

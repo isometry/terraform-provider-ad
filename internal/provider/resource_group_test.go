@@ -654,31 +654,6 @@ func TestAccGroupResource_managedByUpdate(t *testing.T) {
 	})
 }
 
-func TestAccGroupResource_managedByClear(t *testing.T) {
-	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { testAccPreCheck(t) },
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			// Create group with managed_by set
-			{
-				Config: testAccGroupResourceConfig_withManagedBy("tf-test-group-mgr-clear", "TFTestGroupMgrClr"),
-				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-group-mgr-clear"),
-					resource.TestCheckResourceAttrPair("ad_group.test", "managed_by", "ad_group.manager", "dn"),
-				),
-			},
-			// Remove managed_by from config (clear it)
-			{
-				Config: testAccGroupResourceConfig_basic("tf-test-group-mgr-clear", "TFTestGroupMgrClr"),
-				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-group-mgr-clear"),
-					resource.TestCheckResourceAttr("ad_group.test", "managed_by", ""),
-				),
-			},
-		},
-	})
-}
-
 func TestAccGroupResource_managedByWithOtherChanges(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },

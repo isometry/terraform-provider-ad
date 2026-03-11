@@ -138,11 +138,11 @@ func (r *GroupResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 					"Must be a valid DN format (e.g., `CN=User,OU=Users,DC=example,DC=com`).",
 				Optional: true,
 				Computed: true,
-				Validators: []validator.String{
-					validators.IsValidDN(),
-				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
+				},
+				Validators: []validator.String{
+					validators.IsValidDNOrEmpty(),
 				},
 			},
 			"dn": schema.StringAttribute{
@@ -150,7 +150,7 @@ func (r *GroupResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				Computed:            true,
 				CustomType:          customtypes.DNStringType{},
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
+					planmodifiers.ComputeDN("CN", "container"),
 				},
 			},
 			"sid": schema.StringAttribute{
@@ -443,17 +443,12 @@ func (r *GroupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		hasChanges = true
 	}
 
-	// Check for managedBy changes
-	if !data.ManagedBy.Equal(currentData.ManagedBy) {
-		if data.ManagedBy.IsNull() {
-			// Clear the managedBy attribute
-			emptyString := ""
-			updateReq.ManagedBy = &emptyString
-		} else {
-			// Set new managedBy value
-			managedByValue := data.ManagedBy.ValueString()
-			updateReq.ManagedBy = &managedByValue
-		}
+	// Check for managedBy changes — only concrete values trigger updates.
+	// Null/unknown are no-ops (UseStateForUnknown preserves state); "" clears; a DN sets.
+	if !data.ManagedBy.Equal(currentData.ManagedBy) &&
+		!data.ManagedBy.IsNull() && !data.ManagedBy.IsUnknown() {
+		managedByValue := data.ManagedBy.ValueString()
+		updateReq.ManagedBy = &managedByValue
 		hasChanges = true
 	}
 

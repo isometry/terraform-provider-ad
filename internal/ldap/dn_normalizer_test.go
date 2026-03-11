@@ -76,9 +76,27 @@ func TestNormalizeDNCase(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name:     "DN with special characters in value",
+			name:     "DN with escaped comma in value",
 			input:    "cn=john\\, doe,ou=users,dc=example,dc=com",
-			expected: "CN=john, doe,OU=users,DC=example,DC=com",
+			expected: "CN=john\\, doe,OU=users,DC=example,DC=com",
+			wantErr:  false,
+		},
+		{
+			name:     "DN with escaped plus in value",
+			input:    "cn=john\\+doe,ou=users,dc=example,dc=com",
+			expected: "CN=john\\+doe,OU=users,DC=example,DC=com",
+			wantErr:  false,
+		},
+		{
+			name:     "DN with leading hash in value",
+			input:    "cn=\\#admin,ou=users,dc=example,dc=com",
+			expected: "CN=\\#admin,OU=users,DC=example,DC=com",
+			wantErr:  false,
+		},
+		{
+			name:     "DN with trailing space in value",
+			input:    "cn=john\\ ,ou=users,dc=example,dc=com",
+			expected: "CN=john\\ ,OU=users,DC=example,DC=com",
 			wantErr:  false,
 		},
 		{

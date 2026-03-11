@@ -971,7 +971,7 @@ func TestSetBaseDN(t *testing.T) {
 func BenchmarkValidateLargeSet(b *testing.B) {
 	client := NewMockGroupMembershipClient()
 	baseDN := "DC=example,DC=com"
-	gmm := NewGroupMembershipManager(context.Background(), client, baseDN, nil)
+	gmm := NewGroupMembershipManager(b.Context(), client, baseDN, nil)
 
 	// Setup test data - all DNs
 	testMembers := make([]string, 100)
@@ -991,7 +991,7 @@ func BenchmarkValidateLargeSet(b *testing.B) {
 func BenchmarkCalculateMembershipDelta(b *testing.B) {
 	client := NewMockGroupMembershipClient()
 	baseDN := "DC=example,DC=com"
-	gmm := NewGroupMembershipManager(context.Background(), client, baseDN, nil)
+	gmm := NewGroupMembershipManager(b.Context(), client, baseDN, nil)
 
 	// Setup test data
 	groupGUID := "12345678-1234-1234-1234-123456789012"

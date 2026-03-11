@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	ldap "github.com/go-ldap/ldap/v3"
 	"github.com/hashicorp/terraform-plugin-framework-validators/datasourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -318,7 +319,7 @@ func (d *GroupDataSource) retrieveGroup(ctx context.Context, data *GroupDataSour
 
 		// Escape the name value for DN construction per RFC 4514
 		// This handles special characters like commas, quotes, angle brackets, etc.
-		escapedName := ldapclient.EscapeDNValue(name)
+		escapedName := ldap.EscapeDN(name)
 
 		// Construct the full DN from name and container
 		groupDN := fmt.Sprintf("CN=%s,%s", escapedName, container)

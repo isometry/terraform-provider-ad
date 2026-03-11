@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	"github.com/isometry/terraform-provider-ad/internal/provider/planmodifiers"
 	customtypes "github.com/isometry/terraform-provider-ad/internal/provider/types"
 	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
 	"github.com/isometry/terraform-provider-ad/internal/utils"
@@ -77,9 +78,6 @@ func (r *OUResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 						"OU name cannot contain double quotes, backslashes, hash, plus, comma, semicolon, angle brackets, carriage return, newline, or forward slash",
 					),
 				},
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
 			},
 			"path": schema.StringAttribute{
 				MarkdownDescription: "The distinguished name of the parent container where the OU will be created (e.g., `dc=example,dc=com` or `ou=Parent,dc=example,dc=com`).",
@@ -107,11 +105,11 @@ func (r *OUResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 					"Must be a valid DN format (e.g., `CN=User,OU=Users,DC=example,DC=com`).",
 				Optional: true,
 				Computed: true,
-				Validators: []validator.String{
-					validators.IsValidDN(),
-				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
+				},
+				Validators: []validator.String{
+					validators.IsValidDNOrEmpty(),
 				},
 			},
 			"dn": schema.StringAttribute{
@@ -119,7 +117,7 @@ func (r *OUResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				Computed:            true,
 				CustomType:          customtypes.DNStringType{},
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
+					planmodifiers.ComputeDN("OU", "path"),
 				},
 			},
 			"guid": schema.StringAttribute{
@@ -319,6 +317,13 @@ func (r *OUResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		return
 	}
 
+	// Check for name changes (triggers OU rename)
+	if !data.Name.Equal(currentData.Name) {
+		name := data.Name.ValueString()
+		updateReq.Name = &name
+		hasChanges = true
+	}
+
 	// Check for description changes
 	if !data.Description.Equal(currentData.Description) {
 		description := data.Description.ValueString()
@@ -333,17 +338,19 @@ func (r *OUResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		hasChanges = true
 	}
 
-	// Check for managedBy changes
-	if !data.ManagedBy.Equal(currentData.ManagedBy) {
-		if data.ManagedBy.IsNull() {
-			// Clear the managedBy attribute
-			emptyString := ""
-			updateReq.ManagedBy = &emptyString
-		} else {
-			// Set new managedBy value
-			managedByValue := data.ManagedBy.ValueString()
-			updateReq.ManagedBy = &managedByValue
-		}
+	// Check for path changes (triggers OU move)
+	if !data.Path.Equal(currentData.Path) {
+		pathValue := data.Path.ValueString()
+		updateReq.Path = &pathValue
+		hasChanges = true
+	}
+
+	// Check for managedBy changes — only concrete values trigger updates.
+	// Null/unknown are no-ops (UseStateForUnknown preserves state); "" clears; a DN sets.
+	if !data.ManagedBy.Equal(currentData.ManagedBy) &&
+		!data.ManagedBy.IsNull() && !data.ManagedBy.IsUnknown() {
+		managedByValue := data.ManagedBy.ValueString()
+		updateReq.ManagedBy = &managedByValue
 		hasChanges = true
 	}
 
@@ -447,7 +454,7 @@ func (r *OUResource) ImportState(ctx context.Context, req resource.ImportStateRe
 	var ou *ldapclient.OU
 
 	// Check if the import ID looks like a GUID
-	if r.isGUID(importID) {
+	if ldapclient.NewGUIDHandler().IsValidGUID(importID) {
 		// Import by GUID
 		ou, err = ouManager.GetOU(importID)
 		if err != nil {
@@ -541,11 +548,4 @@ func (r *OUResource) getOUManager(ctx context.Context) (*ldapclient.OUManager, e
 
 	// Create OUManager
 	return ldapclient.NewOUManager(ctx, r.client, baseDN), nil
-}
-
-// isGUID checks if a string looks like a GUID.
-func (r *OUResource) isGUID(s string) bool {
-	// GUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-	guidRegex := regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
-	return guidRegex.MatchString(s)
 }

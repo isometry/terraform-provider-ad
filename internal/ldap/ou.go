@@ -76,6 +76,7 @@ type UpdateOURequest struct {
 	Description *string `json:"description,omitempty"` // Optional: New description
 	Protected   *bool   `json:"protected,omitempty"`   // Optional: Change protection status
 	ManagedBy   *string `json:"managedBy,omitempty"`   // Optional: DN of manager (nil = no change, empty string = clear)
+	Path        *string `json:"path,omitempty"`        // Optional: New parent DN (triggers OU move)
 }
 
 // OUEntry represents a simplified OU entry for the interface.
@@ -128,7 +129,7 @@ func (om *OUManager) getAllOUAttributes() []string {
 // BuildOUDN constructs a proper Distinguished Name for an OU.
 func (om *OUManager) BuildOUDN(name, parentDN string) string {
 	// Escape special characters in the OU name for LDAP
-	escapedName := ldap.EscapeFilter(name)
+	escapedName := ldap.EscapeDN(name)
 	return fmt.Sprintf("OU=%s,%s", escapedName, parentDN)
 }
 
@@ -350,12 +351,25 @@ func (om *OUManager) UpdateOU(guid string, req *UpdateOURequest) (*OU, error) {
 
 	hasChanges := false
 
-	// Handle name change (affects ou attribute, but not DN in this implementation)
-	if req.Name != nil && *req.Name != currentOU.Name {
-		// Note: Changing the OU name typically requires a rename operation (ModifyDN)
-		// For simplicity, we'll just update the ou attribute, but in practice
-		// you might want to implement DN modification
-		modReq.ReplaceAttributes["ou"] = []string{*req.Name}
+	// Handle name or path change (requires ModifyDN operation)
+	needsMove := req.Path != nil && !strings.EqualFold(*req.Path, currentOU.Parent)
+	needsRename := req.Name != nil && *req.Name != currentOU.Name
+
+	if needsMove || needsRename {
+		newName := currentOU.Name
+		if needsRename {
+			newName = *req.Name
+		}
+		newParent := currentOU.Parent
+		if needsMove {
+			newParent = *req.Path
+		}
+		renamedOU, err := om.renameAndMoveOU(currentOU, newName, newParent)
+		if err != nil {
+			return nil, err
+		}
+		currentOU = renamedOU
+		modReq.DN = currentOU.DistinguishedName
 		hasChanges = true
 	}
 
@@ -405,6 +419,59 @@ func (om *OUManager) UpdateOU(guid string, req *UpdateOURequest) (*OU, error) {
 	updatedOU, err := om.GetOU(guid)
 	if err != nil {
 		return nil, WrapError("retrieve_updated_ou", err)
+	}
+
+	return updatedOU, nil
+}
+
+// renameAndMoveOU performs a ModifyDN operation to rename and/or move an OU.
+func (om *OUManager) renameAndMoveOU(currentOU *OU, newName, newParent string) (*OU, error) {
+	// Check if any actual change is needed
+	if newName == currentOU.Name && strings.EqualFold(newParent, currentOU.Parent) {
+		return currentOU, nil
+	}
+
+	// Parse the current DN to understand its structure
+	parsedDN, err := ldap.ParseDN(currentOU.DistinguishedName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse current DN: %w", err)
+	}
+
+	if len(parsedDN.RDNs) == 0 {
+		return nil, fmt.Errorf("invalid DN structure")
+	}
+
+	// Create the new RDN
+	var newRDN string
+	if newName == currentOU.Name {
+		newRDN = parsedDN.RDNs[0].String()
+	} else {
+		newRDN = fmt.Sprintf("OU=%s", ldap.EscapeDN(newName))
+	}
+
+	// Determine if we need to specify a new superior (parent)
+	var newSuperior string
+	if !strings.EqualFold(newParent, currentOU.Parent) {
+		newSuperior = newParent
+	}
+
+	// Create the ModifyDN request
+	modifyDNReq := &ModifyDNRequest{
+		DN:           currentOU.DistinguishedName,
+		NewRDN:       newRDN,
+		DeleteOldRDN: true,
+		NewSuperior:  newSuperior,
+	}
+
+	// Execute the ModifyDN operation
+	if err := om.client.ModifyDN(om.ctx, modifyDNReq); err != nil {
+		return nil, WrapError("modify_dn", err)
+	}
+
+	// Retrieve and return the updated OU
+	updatedOU, err := om.GetOU(currentOU.ObjectGUID)
+	if err != nil {
+		return nil, WrapError("retrieve_renamed_moved_ou", err)
 	}
 
 	return updatedOU, nil

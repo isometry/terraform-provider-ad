@@ -1,13 +1,6 @@
 {
   "permissions": {
     "allow": [
-      "mcp__gopls__go_search",
-      "mcp__gopls__go_workspace",
-      "mcp__gopls__go_package_api",
-      "mcp__gopls__go_diagnostics",
-      "mcp__gopls__go_file_context",
-      "mcp__context7__resolve-library-id",
-      "mcp__context7__get-library-docs",
       "Bash(go get:*)",
       "Bash(go test:*)",
       "Bash(go build:*)",
@@ -15,6 +8,7 @@
       "Bash(go vet:*)",
       "Bash(go list:*)",
       "Bash(go fmt:*)",
+      "Bash(gofmt:*)",
       "Bash(golangci-lint run:*)",
       "Bash(grep:*)",
       "Bash(make:*)",
@@ -23,24 +17,25 @@
       "WebFetch(domain:developer.hashicorp.com)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:pkg.go.dev)",
-      "mcp__serena__get_current_config",
-      "mcp__serena__check_onboarding_performed",
-      "mcp__serena__onboarding",
-      "mcp__serena__list_dir",
-      "mcp__serena__write_memory",
-      "mcp__serena__activate_project",
-      "mcp__serena__read_memory",
-      "mcp__serena__get_symbols_overview",
-      "mcp__serena__find_symbol",
-      "mcp__serena__search_for_pattern",
-      "mcp__serena__find_file",
-      "mcp__serena__insert_after_symbol",
-      "mcp__serena__think_about_collected_information"
+      "mcp__plugin_context7_context7__resolve-library-id",
+      "mcp__plugin_context7_context7__get-library-docs",
+      "mcp__plugin_serena_serena__get_current_config",
+      "mcp__plugin_serena_serena__check_onboarding_performed",
+      "mcp__plugin_serena_serena__onboarding",
+      "mcp__plugin_serena_serena__list_dir",
+      "mcp__plugin_serena_serena__write_memory",
+      "mcp__plugin_serena_serena__activate_project",
+      "mcp__plugin_serena_serena__read_memory",
+      "mcp__plugin_serena_serena__get_symbols_overview",
+      "mcp__plugin_serena_serena__find_symbol",
+      "mcp__plugin_serena_serena__search_for_pattern",
+      "mcp__plugin_serena_serena__find_file",
+      "mcp__plugin_serena_serena__insert_after_symbol",
+      "mcp__plugin_serena_serena__think_about_collected_information",
+      "mcp__plugin_serena_serena__read_file",
+      "mcp__plugin_serena_serena__replace_content"
     ],
     "deny": [],
     "ask": []
-  },
-  "enabledMcpjsonServers": [
-    "serena"
-  ]
+  }
 }

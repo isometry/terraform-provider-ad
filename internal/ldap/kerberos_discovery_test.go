@@ -1,7 +1,6 @@
 package ldap
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -10,7 +9,7 @@ import (
 )
 
 func TestGenerateRuntimeKrb5Conf(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("valid configuration", func(t *testing.T) {
 		cfg := &ConnectionConfig{
@@ -124,7 +123,7 @@ func TestExtractRealmFromDomain(t *testing.T) {
 }
 
 func TestValidateKerberosAutoDiscoveryConfig(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("valid config with explicit realm", func(t *testing.T) {
 		cfg := &ConnectionConfig{
@@ -185,7 +184,7 @@ func TestBoolToString(t *testing.T) {
 }
 
 func TestGeneratedConfigStructure(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	cfg := &ConnectionConfig{
 		Domain:                 "example.com",
 		KerberosRealm:          "EXAMPLE.COM",

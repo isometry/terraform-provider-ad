@@ -35,7 +35,7 @@ func TestWhoAmIDataSource_Schema(t *testing.T) {
 	req := datasource.SchemaRequest{}
 	resp := &datasource.SchemaResponse{}
 
-	dataSource.Schema(context.Background(), req, resp)
+	dataSource.Schema(t.Context(), req, resp)
 
 	assert.False(t, resp.Diagnostics.HasError())
 	assert.NotNil(t, resp.Schema)
@@ -61,7 +61,7 @@ func TestWhoAmIDataSource_Configure(t *testing.T) {
 	}
 	resp := &datasource.ConfigureResponse{}
 
-	dataSource.Configure(context.Background(), req, resp)
+	dataSource.Configure(t.Context(), req, resp)
 
 	assert.False(t, resp.Diagnostics.HasError())
 	assert.Equal(t, mockClient, dataSource.Client)
@@ -75,7 +75,7 @@ func TestWhoAmIDataSource_Configure_WrongType(t *testing.T) {
 	}
 	resp := &datasource.ConfigureResponse{}
 
-	dataSource.Configure(context.Background(), req, resp)
+	dataSource.Configure(t.Context(), req, resp)
 
 	assert.True(t, resp.Diagnostics.HasError())
 	assert.Contains(t, resp.Diagnostics.Errors()[0].Summary(), "Unexpected Data Source Configure Type")
@@ -97,16 +97,16 @@ func TestWhoAmIDataSource_Read(t *testing.T) {
 
 	// Initialize the response with proper State
 	schemaResp := &datasource.SchemaResponse{}
-	dataSource.Schema(context.Background(), datasource.SchemaRequest{}, schemaResp)
+	dataSource.Schema(t.Context(), datasource.SchemaRequest{}, schemaResp)
 
 	resp := &datasource.ReadResponse{
 		State: tfsdk.State{
 			Schema: schemaResp.Schema,
-			Raw:    tftypes.NewValue(schemaResp.Schema.Type().TerraformType(context.Background()), nil),
+			Raw:    tftypes.NewValue(schemaResp.Schema.Type().TerraformType(t.Context()), nil),
 		},
 	}
 
-	dataSource.Read(context.Background(), req, resp)
+	dataSource.Read(t.Context(), req, resp)
 
 	if resp.Diagnostics.HasError() {
 		for _, diag := range resp.Diagnostics.Errors() {
@@ -117,7 +117,7 @@ func TestWhoAmIDataSource_Read(t *testing.T) {
 
 	// Verify the result was set correctly
 	var data provider.WhoAmIDataSourceModel
-	resp.State.Get(context.Background(), &data)
+	resp.State.Get(t.Context(), &data)
 
 	assert.Equal(t, "u:CN=John Doe,CN=Users,DC=example,DC=com", data.ID.ValueString())
 	assert.Equal(t, "u:CN=John Doe,CN=Users,DC=example,DC=com", data.ID.ValueString())
@@ -135,16 +135,16 @@ func TestWhoAmIDataSource_Read_WhoAmI_Error(t *testing.T) {
 
 	// Initialize the response with proper State
 	schemaResp := &datasource.SchemaResponse{}
-	dataSource.Schema(context.Background(), datasource.SchemaRequest{}, schemaResp)
+	dataSource.Schema(t.Context(), datasource.SchemaRequest{}, schemaResp)
 
 	resp := &datasource.ReadResponse{
 		State: tfsdk.State{
 			Schema: schemaResp.Schema,
-			Raw:    tftypes.NewValue(schemaResp.Schema.Type().TerraformType(context.Background()), nil),
+			Raw:    tftypes.NewValue(schemaResp.Schema.Type().TerraformType(t.Context()), nil),
 		},
 	}
 
-	dataSource.Read(context.Background(), req, resp)
+	dataSource.Read(t.Context(), req, resp)
 
 	assert.True(t, resp.Diagnostics.HasError())
 	assert.Contains(t, resp.Diagnostics.Errors()[0].Summary(), "Error Performing WhoAmI Operation")
@@ -162,16 +162,16 @@ func TestWhoAmIDataSource_Read_Nil_Result(t *testing.T) {
 
 	// Initialize the response with proper State
 	schemaResp := &datasource.SchemaResponse{}
-	dataSource.Schema(context.Background(), datasource.SchemaRequest{}, schemaResp)
+	dataSource.Schema(t.Context(), datasource.SchemaRequest{}, schemaResp)
 
 	resp := &datasource.ReadResponse{
 		State: tfsdk.State{
 			Schema: schemaResp.Schema,
-			Raw:    tftypes.NewValue(schemaResp.Schema.Type().TerraformType(context.Background()), nil),
+			Raw:    tftypes.NewValue(schemaResp.Schema.Type().TerraformType(t.Context()), nil),
 		},
 	}
 
-	dataSource.Read(context.Background(), req, resp)
+	dataSource.Read(t.Context(), req, resp)
 
 	assert.True(t, resp.Diagnostics.HasError())
 	assert.Contains(t, resp.Diagnostics.Errors()[0].Summary(), "WhoAmI Operation Returned Nil")

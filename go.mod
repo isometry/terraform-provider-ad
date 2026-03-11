@@ -1,6 +1,6 @@
 module github.com/isometry/terraform-provider-ad
 
-go 1.25.4
+go 1.26.1
 
 require (
 	github.com/bwmarrin/go-objectsid v0.0.0-20191126144531-5fee401a2f37
