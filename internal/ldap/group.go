@@ -468,7 +468,7 @@ func (gm *GroupManager) UpdateGroup(guid string, req *UpdateGroupRequest) (*Grou
 
 	// Handle name and/or container changes (both require ModifyDN)
 	needsRename := req.Name != nil && *req.Name != currentGroup.Name
-	needsMove := req.Container != nil && !strings.EqualFold(*req.Container, currentGroup.Container)
+	needsMove := req.Container != nil && !DNEqual(*req.Container, currentGroup.Container)
 
 	var renamedOrMovedGroup *Group
 	if needsRename || needsMove {
@@ -610,7 +610,7 @@ func (gm *GroupManager) UpdateGroup(guid string, req *UpdateGroupRequest) (*Grou
 // renameAndMoveGroup handles renaming and/or moving a group using ModifyDN operation.
 func (gm *GroupManager) renameAndMoveGroup(currentGroup *Group, newName, newContainer string) (*Group, error) {
 	// Check if any actual change is needed
-	if newName == currentGroup.Name && strings.EqualFold(newContainer, currentGroup.Container) {
+	if newName == currentGroup.Name && DNEqual(newContainer, currentGroup.Container) {
 		// No change needed
 		return currentGroup, nil
 	}
@@ -637,7 +637,7 @@ func (gm *GroupManager) renameAndMoveGroup(currentGroup *Group, newName, newCont
 
 	// Determine if we need to specify a new superior (container)
 	var newSuperior string
-	if !strings.EqualFold(newContainer, currentGroup.Container) {
+	if !DNEqual(newContainer, currentGroup.Container) {
 		newSuperior = newContainer
 	}
 
@@ -680,7 +680,7 @@ func (gm *GroupManager) MoveGroup(groupGUID string, newContainerDN string) (*Gro
 	}
 
 	// Check if already in the target container
-	if strings.EqualFold(group.Container, newContainerDN) {
+	if DNEqual(group.Container, newContainerDN) {
 		// Already in the target location, no move needed
 		return group, nil
 	}

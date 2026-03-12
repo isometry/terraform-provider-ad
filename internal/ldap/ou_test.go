@@ -496,7 +496,7 @@ func TestOUManager_UpdateOU(t *testing.T) {
 
 	// 2. Mock ModifyDN operation (rename)
 	client.On("ModifyDN", mock.Anything, mock.MatchedBy(func(req *ModifyDNRequest) bool {
-		return req.DN == "OU=TestOU,dc=example,dc=com" && req.NewRDN == "OU=UpdatedOU"
+		return req.DN == "OU=TestOU,dc=example,dc=com" && RDNEqual(req.NewRDN, "OU=UpdatedOU")
 	})).Return(nil).Once()
 
 	// 3. Mock re-fetch after ModifyDN (inside renameAndMoveOU — result reused by UpdateOU)
@@ -606,8 +606,8 @@ func TestOUManager_UpdateOU_Move(t *testing.T) {
 	require.NotNil(t, result)
 	assert.NotEmpty(t, result.ObjectGUID)
 	assert.Equal(t, "TestOU", result.Name)
-	assert.True(t, strings.EqualFold("OU=NewParent,dc=example,dc=com", result.Parent),
-		"expected parent DN to match case-insensitively, got %q", result.Parent)
+	assert.True(t, DNEqual("OU=NewParent,DC=example,DC=com", result.Parent),
+		"expected parent DN to match semantically, got %q", result.Parent)
 
 	client.AssertExpectations(t)
 }
@@ -783,7 +783,7 @@ func TestOUManager_GetOUChildren(t *testing.T) {
 	require.Len(t, children, 1)
 	assert.Equal(t, "ChildOU", children[0].Name)
 	assert.Equal(t, "OU=ChildOU,OU=ParentOU,dc=example,dc=com", children[0].DistinguishedName)
-	assert.Equal(t, "ou=ParentOU,dc=example,dc=com", children[0].Parent) // DN parsing results in lowercase
+	assert.True(t, DNEqual("OU=ParentOU,DC=example,DC=com", children[0].Parent), "expected parent DN to match semantically, got %q", children[0].Parent)
 
 	client.AssertExpectations(t)
 }
@@ -870,8 +870,8 @@ func TestOUManager_EntryToOU(t *testing.T) {
 	assert.Equal(t, "TestOU", result.Name)
 	assert.Equal(t, "Test Description", result.Description)
 	assert.Equal(t, "OU=TestOU,OU=ParentOU,dc=example,dc=com", result.DistinguishedName)
-	assert.Equal(t, "ou=ParentOU,dc=example,dc=com", result.Parent) // DN parsing results in lowercase
-	assert.False(t, result.Protected)                               // No security descriptor means not protected
+	assert.True(t, DNEqual("OU=ParentOU,DC=example,DC=com", result.Parent), "expected parent DN to match semantically, got %q", result.Parent)
+	assert.False(t, result.Protected) // No security descriptor means not protected
 	// Use UTC for timestamp comparison to avoid timezone issues
 	assert.Equal(t, testTime.Truncate(time.Second), result.WhenCreated.Truncate(time.Second))
 	assert.Equal(t, testTime.Truncate(time.Second), result.WhenChanged.Truncate(time.Second))

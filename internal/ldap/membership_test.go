@@ -172,7 +172,7 @@ func (m *MockGroupMembershipClient) Modify(ctx context.Context, req *ModifyReque
 		for _, memberDN := range addMembers {
 			// Check if member already exists (simulate AD conflict)
 			for _, existing := range group.Members {
-				if strings.EqualFold(existing, memberDN) {
+				if DNEqual(existing, memberDN) {
 					return ldap.NewError(ldap.LDAPResultEntryAlreadyExists, fmt.Errorf("member already exists: %s", memberDN))
 				}
 			}

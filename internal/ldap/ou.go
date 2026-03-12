@@ -150,16 +150,9 @@ func (om *OUManager) ValidateOUHierarchy(ouDN, parentDN string) error {
 		return fmt.Errorf("invalid parent DN syntax: %w", err)
 	}
 
-	// Check that the parent DN is actually a parent of the OU DN
-	if len(parsedOU.RDNs) <= len(parsedParent.RDNs) {
-		return fmt.Errorf("parent DN must be an ancestor of the OU DN")
-	}
-
 	// Verify that the parent portion of the OU DN matches the parent DN
-	ouParentRDNs := parsedOU.RDNs[1:]
-	expectedParentDN := &ldap.DN{RDNs: ouParentRDNs}
-
-	if !strings.EqualFold(expectedParentDN.String(), parentDN) {
+	ouParentDN := &ldap.DN{RDNs: parsedOU.RDNs[1:]}
+	if len(parsedOU.RDNs) <= len(parsedParent.RDNs) || !ouParentDN.EqualFold(parsedParent) {
 		return fmt.Errorf("OU DN does not belong to the specified parent")
 	}
 
@@ -352,7 +345,7 @@ func (om *OUManager) UpdateOU(guid string, req *UpdateOURequest) (*OU, error) {
 	hasChanges := false
 
 	// Handle name or path change (requires ModifyDN operation)
-	needsMove := req.Path != nil && !strings.EqualFold(*req.Path, currentOU.Parent)
+	needsMove := req.Path != nil && !DNEqual(*req.Path, currentOU.Parent)
 	needsRename := req.Name != nil && *req.Name != currentOU.Name
 
 	if needsMove || needsRename {
@@ -427,7 +420,7 @@ func (om *OUManager) UpdateOU(guid string, req *UpdateOURequest) (*OU, error) {
 // renameAndMoveOU performs a ModifyDN operation to rename and/or move an OU.
 func (om *OUManager) renameAndMoveOU(currentOU *OU, newName, newParent string) (*OU, error) {
 	// Check if any actual change is needed
-	if newName == currentOU.Name && strings.EqualFold(newParent, currentOU.Parent) {
+	if newName == currentOU.Name && DNEqual(newParent, currentOU.Parent) {
 		return currentOU, nil
 	}
 
@@ -451,7 +444,7 @@ func (om *OUManager) renameAndMoveOU(currentOU *OU, newName, newParent string) (
 
 	// Determine if we need to specify a new superior (parent)
 	var newSuperior string
-	if !strings.EqualFold(newParent, currentOU.Parent) {
+	if !DNEqual(newParent, currentOU.Parent) {
 		newSuperior = newParent
 	}
 
