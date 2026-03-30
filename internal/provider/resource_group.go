@@ -135,11 +135,13 @@ func (r *GroupResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			},
 			"managed_by": schema.StringAttribute{
 				MarkdownDescription: "Distinguished Name (DN) of the user or computer that manages this group. " +
-					"Must be a valid DN format (e.g., `CN=User,OU=Users,DC=example,DC=com`).",
+					"Must be a valid DN format (e.g., `CN=User,OU=Users,DC=example,DC=com`). " +
+					"Set to an empty string (`\"\"`) to clear.",
 				Optional: true,
 				Computed: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
+					planmodifiers.NullForEmptyString(),
 				},
 				Validators: []validator.String{
 					validators.IsValidDNOrEmpty(),
