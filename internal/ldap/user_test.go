@@ -614,12 +614,12 @@ func TestUserReader_SearchUsersWithFilter_StatusFilters(t *testing.T) {
 	}{
 		{
 			name:           "Enabled users",
-			enabled:        boolPtr(true),
+			enabled:        new(true),
 			expectedFilter: "(!(userAccountControl:1.2.840.113556.1.4.803:=2))",
 		},
 		{
 			name:           "Disabled users",
-			enabled:        boolPtr(false),
+			enabled:        new(false),
 			expectedFilter: "(userAccountControl:1.2.840.113556.1.4.803:=2)",
 		},
 	}
@@ -660,12 +660,12 @@ func TestUserReader_SearchUsersWithFilter_EmailFilters(t *testing.T) {
 	}{
 		{
 			name:           "Has email",
-			filter:         &UserSearchFilter{HasEmail: boolPtr(true)},
+			filter:         &UserSearchFilter{HasEmail: new(true)},
 			expectedFilter: "(mail=*)",
 		},
 		{
 			name:           "No email",
-			filter:         &UserSearchFilter{HasEmail: boolPtr(false)},
+			filter:         &UserSearchFilter{HasEmail: new(false)},
 			expectedFilter: "(!(mail=*))",
 		},
 		{
@@ -736,7 +736,7 @@ func TestUserReader_SearchUsersWithFilter_InvalidContainer(t *testing.T) {
 }
 
 func TestUserReader_parseUserAccountControl(t *testing.T) {
-	reader := NewUserReader(context.Background(), &MockUserClient{}, "DC=example,DC=com", nil)
+	reader := NewUserReader(t.Context(), &MockUserClient{}, "DC=example,DC=com", nil)
 
 	testCases := []struct {
 		name     string
@@ -814,7 +814,7 @@ func TestUserReader_parseUserAccountControl(t *testing.T) {
 }
 
 func TestUserReader_parseADTimestamp(t *testing.T) {
-	reader := NewUserReader(context.Background(), &MockUserClient{}, "DC=example,DC=com", nil)
+	reader := NewUserReader(t.Context(), &MockUserClient{}, "DC=example,DC=com", nil)
 
 	testCases := []struct {
 		name      string
@@ -866,7 +866,7 @@ func TestUserReader_parseADTimestamp(t *testing.T) {
 }
 
 func TestUserReader_entryToUser_ComprehensiveMapping(t *testing.T) {
-	reader := NewUserReader(context.Background(), &MockUserClient{}, "DC=example,DC=com", nil)
+	reader := NewUserReader(t.Context(), &MockUserClient{}, "DC=example,DC=com", nil)
 	entry := createMockUserEntry()
 
 	user, err := reader.entryToUser(entry)
@@ -990,9 +990,4 @@ func TestUserReader_EmptyIdentifier(t *testing.T) {
 
 	client.AssertNotCalled(t, "Search")
 	client.AssertNotCalled(t, "SearchWithPaging")
-}
-
-// Helper function to create bool pointer.
-func boolPtr(b bool) *bool {
-	return &b
 }

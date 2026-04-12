@@ -447,12 +447,12 @@ func TestOUManager_UpdateOU(t *testing.T) {
 		},
 	}
 
-	// Updated OU entry
+	// Updated OU entry (final state after rename + description update)
 	updatedEntry := &ldap.Entry{
-		DN: "OU=TestOU,dc=example,dc=com",
+		DN: "OU=UpdatedOU,dc=example,dc=com",
 		Attributes: []*ldap.EntryAttribute{
 			{Name: "objectGUID", Values: []string{string(testGUIDBytes)}, ByteValues: [][]byte{testGUIDBytes}},
-			{Name: "distinguishedName", Values: []string{"OU=TestOU,dc=example,dc=com"}},
+			{Name: "distinguishedName", Values: []string{"OU=UpdatedOU,dc=example,dc=com"}},
 			{Name: "ou", Values: []string{"UpdatedOU"}},
 			{Name: "description", Values: []string{"New Description"}},
 			{Name: "whenCreated", Values: []string{testTime.Format("20060102150405.0Z")}},
@@ -472,23 +472,42 @@ func TestOUManager_UpdateOU(t *testing.T) {
 		HasMore: false,
 	}
 
-	// Mock getting current OU
-	client.On("Search", mock.Anything, mock.AnythingOfType("*ldap.SearchRequest")).Return(searchResult, nil).Once()
-
-	// Mock modify operation
-	expectedModReq := &ModifyRequest{
-		DN: "OU=TestOU,dc=example,dc=com",
-		ReplaceAttributes: map[string][]string{
-			"ou":          {"UpdatedOU"},
-			"description": {"New Description"},
+	// Renamed OU entry (after ModifyDN, before attribute modify)
+	renamedEntry := &ldap.Entry{
+		DN: "OU=UpdatedOU,dc=example,dc=com",
+		Attributes: []*ldap.EntryAttribute{
+			{Name: "objectGUID", Values: []string{string(testGUIDBytes)}, ByteValues: [][]byte{testGUIDBytes}},
+			{Name: "distinguishedName", Values: []string{"OU=UpdatedOU,dc=example,dc=com"}},
+			{Name: "ou", Values: []string{"UpdatedOU"}},
+			{Name: "description", Values: []string{"Old Description"}},
+			{Name: "whenCreated", Values: []string{testTime.Format("20060102150405.0Z")}},
+			{Name: "whenChanged", Values: []string{testTime.Format("20060102150405.0Z")}},
 		},
 	}
 
+	renamedSearchResult := &SearchResult{
+		Entries: []*ldap.Entry{renamedEntry},
+		Total:   1,
+		HasMore: false,
+	}
+
+	// 1. Mock getting current OU (for UpdateOU)
+	client.On("Search", mock.Anything, mock.AnythingOfType("*ldap.SearchRequest")).Return(searchResult, nil).Once()
+
+	// 2. Mock ModifyDN operation (rename)
+	client.On("ModifyDN", mock.Anything, mock.MatchedBy(func(req *ModifyDNRequest) bool {
+		return req.DN == "OU=TestOU,dc=example,dc=com" && RDNEqual(req.NewRDN, "OU=UpdatedOU")
+	})).Return(nil).Once()
+
+	// 3. Mock re-fetch after ModifyDN (inside renameAndMoveOU — result reused by UpdateOU)
+	client.On("Search", mock.Anything, mock.AnythingOfType("*ldap.SearchRequest")).Return(renamedSearchResult, nil).Once()
+
+	// 4. Mock modify operation (description only — ou attribute handled by ModifyDN)
 	client.On("Modify", mock.Anything, mock.MatchedBy(func(modReq *ModifyRequest) bool {
-		return modReq.DN == expectedModReq.DN
+		return modReq.DN == "OU=UpdatedOU,dc=example,dc=com"
 	})).Return(nil)
 
-	// Mock getting updated OU
+	// 5. Mock getting final updated OU
 	client.On("Search", mock.Anything, mock.AnythingOfType("*ldap.SearchRequest")).Return(updatedSearchResult, nil).Once()
 
 	// Update request
@@ -509,6 +528,86 @@ func TestOUManager_UpdateOU(t *testing.T) {
 	assert.NotEmpty(t, result.ObjectGUID)
 	assert.Equal(t, "UpdatedOU", result.Name)
 	assert.Equal(t, "New Description", result.Description)
+
+	client.AssertExpectations(t)
+}
+
+func TestOUManager_UpdateOU_Move(t *testing.T) {
+	client := &MockOUClient{}
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
+
+	testGUID := "12345678-1234-1234-1234-123456789012"
+	testGUIDBytes := []byte{0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12}
+	testTime := time.Now()
+
+	// Current OU entry
+	currentEntry := &ldap.Entry{
+		DN: "OU=TestOU,OU=OldParent,dc=example,dc=com",
+		Attributes: []*ldap.EntryAttribute{
+			{Name: "objectGUID", Values: []string{string(testGUIDBytes)}, ByteValues: [][]byte{testGUIDBytes}},
+			{Name: "distinguishedName", Values: []string{"OU=TestOU,OU=OldParent,dc=example,dc=com"}},
+			{Name: "ou", Values: []string{"TestOU"}},
+			{Name: "description", Values: []string{"Test Description"}},
+			{Name: "whenCreated", Values: []string{testTime.Format("20060102150405.0Z")}},
+			{Name: "whenChanged", Values: []string{testTime.Format("20060102150405.0Z")}},
+		},
+	}
+
+	// Moved OU entry
+	movedEntry := &ldap.Entry{
+		DN: "OU=TestOU,OU=NewParent,dc=example,dc=com",
+		Attributes: []*ldap.EntryAttribute{
+			{Name: "objectGUID", Values: []string{string(testGUIDBytes)}, ByteValues: [][]byte{testGUIDBytes}},
+			{Name: "distinguishedName", Values: []string{"OU=TestOU,OU=NewParent,dc=example,dc=com"}},
+			{Name: "ou", Values: []string{"TestOU"}},
+			{Name: "description", Values: []string{"Test Description"}},
+			{Name: "whenCreated", Values: []string{testTime.Format("20060102150405.0Z")}},
+			{Name: "whenChanged", Values: []string{testTime.Format("20060102150405.0Z")}},
+		},
+	}
+
+	currentSearchResult := &SearchResult{
+		Entries: []*ldap.Entry{currentEntry},
+		Total:   1,
+		HasMore: false,
+	}
+
+	movedSearchResult := &SearchResult{
+		Entries: []*ldap.Entry{movedEntry},
+		Total:   1,
+		HasMore: false,
+	}
+
+	// 1. Mock getting current OU
+	client.On("Search", mock.Anything, mock.AnythingOfType("*ldap.SearchRequest")).Return(currentSearchResult, nil).Once()
+
+	// 2. Mock ModifyDN operation (move)
+	client.On("ModifyDN", mock.Anything, mock.MatchedBy(func(req *ModifyDNRequest) bool {
+		return req.DN == "OU=TestOU,OU=OldParent,dc=example,dc=com" &&
+			req.NewSuperior == "OU=NewParent,dc=example,dc=com" &&
+			req.DeleteOldRDN
+	})).Return(nil).Once()
+
+	// 3. Mock re-fetch after ModifyDN (inside renameAndMoveOU — result reused by UpdateOU)
+	client.On("Search", mock.Anything, mock.AnythingOfType("*ldap.SearchRequest")).Return(movedSearchResult, nil).Once()
+
+	// 4. Mock final re-fetch
+	client.On("Search", mock.Anything, mock.AnythingOfType("*ldap.SearchRequest")).Return(movedSearchResult, nil).Once()
+
+	// Update request - path change only
+	newPath := "OU=NewParent,dc=example,dc=com"
+	updateReq := &UpdateOURequest{
+		Path: &newPath,
+	}
+
+	result, err := manager.UpdateOU(testGUID, updateReq)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.NotEmpty(t, result.ObjectGUID)
+	assert.Equal(t, "TestOU", result.Name)
+	assert.True(t, DNEqual("OU=NewParent,DC=example,DC=com", result.Parent),
+		"expected parent DN to match semantically, got %q", result.Parent)
 
 	client.AssertExpectations(t)
 }
@@ -677,14 +776,14 @@ func TestOUManager_GetOUChildren(t *testing.T) {
 	})).Return(searchResult, nil)
 
 	// Execute test
-	children, err := manager.GetOUChildren(context.Background(), parentOUDN)
+	children, err := manager.GetOUChildren(t.Context(), parentOUDN)
 
 	// Assertions
 	require.NoError(t, err)
 	require.Len(t, children, 1)
 	assert.Equal(t, "ChildOU", children[0].Name)
 	assert.Equal(t, "OU=ChildOU,OU=ParentOU,dc=example,dc=com", children[0].DistinguishedName)
-	assert.Equal(t, "ou=ParentOU,dc=example,dc=com", children[0].Parent) // DN parsing results in lowercase
+	assert.True(t, DNEqual("OU=ParentOU,DC=example,DC=com", children[0].Parent), "expected parent DN to match semantically, got %q", children[0].Parent)
 
 	client.AssertExpectations(t)
 }
@@ -728,7 +827,7 @@ func TestOUManager_GetOUStats(t *testing.T) {
 	})).Return(searchResult, nil)
 
 	// Execute test
-	stats, err := manager.GetOUStats(context.Background())
+	stats, err := manager.GetOUStats(t.Context())
 
 	// Assertions
 	require.NoError(t, err)
@@ -771,8 +870,8 @@ func TestOUManager_EntryToOU(t *testing.T) {
 	assert.Equal(t, "TestOU", result.Name)
 	assert.Equal(t, "Test Description", result.Description)
 	assert.Equal(t, "OU=TestOU,OU=ParentOU,dc=example,dc=com", result.DistinguishedName)
-	assert.Equal(t, "ou=ParentOU,dc=example,dc=com", result.Parent) // DN parsing results in lowercase
-	assert.False(t, result.Protected)                               // No security descriptor means not protected
+	assert.True(t, DNEqual("OU=ParentOU,DC=example,DC=com", result.Parent), "expected parent DN to match semantically, got %q", result.Parent)
+	assert.False(t, result.Protected) // No security descriptor means not protected
 	// Use UTC for timestamp comparison to avoid timezone issues
 	assert.Equal(t, testTime.Truncate(time.Second), result.WhenCreated.Truncate(time.Second))
 	assert.Equal(t, testTime.Truncate(time.Second), result.WhenChanged.Truncate(time.Second))
@@ -805,19 +904,20 @@ func TestOUManager_PerformanceNestedOUs(t *testing.T) {
 
 	// Mock search for deep hierarchy (up to 10 levels)
 	for i := range 10 {
-		ouDN := fmt.Sprintf("OU=Level%d", i)
+		var ouDN strings.Builder
+		fmt.Fprintf(&ouDN, "OU=Level%d", i)
 		for j := i - 1; j >= 0; j-- {
-			ouDN += fmt.Sprintf(",OU=Level%d", j)
+			fmt.Fprintf(&ouDN, ",OU=Level%d", j)
 		}
-		ouDN += ",dc=example,dc=com"
+		ouDN.WriteString(",dc=example,dc=com")
 
 		testGUIDBytes := []byte{0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x12, 0x34, byte(i), 0x34, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12}
 
 		entry := &ldap.Entry{
-			DN: ouDN,
+			DN: ouDN.String(),
 			Attributes: []*ldap.EntryAttribute{
 				{Name: "objectGUID", Values: []string{string(testGUIDBytes)}, ByteValues: [][]byte{testGUIDBytes}},
-				{Name: "distinguishedName", Values: []string{ouDN}},
+				{Name: "distinguishedName", Values: []string{ouDN.String()}},
 				{Name: "ou", Values: []string{fmt.Sprintf("Level%d", i)}},
 			},
 		}

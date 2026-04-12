@@ -76,9 +76,27 @@ func TestNormalizeDNCase(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name:     "DN with special characters in value",
+			name:     "DN with escaped comma in value",
 			input:    "cn=john\\, doe,ou=users,dc=example,dc=com",
-			expected: "CN=john, doe,OU=users,DC=example,DC=com",
+			expected: "CN=john\\, doe,OU=users,DC=example,DC=com",
+			wantErr:  false,
+		},
+		{
+			name:     "DN with escaped plus in value",
+			input:    "cn=john\\+doe,ou=users,dc=example,dc=com",
+			expected: "CN=john\\+doe,OU=users,DC=example,DC=com",
+			wantErr:  false,
+		},
+		{
+			name:     "DN with leading hash in value",
+			input:    "cn=\\#admin,ou=users,dc=example,dc=com",
+			expected: "CN=\\#admin,OU=users,DC=example,DC=com",
+			wantErr:  false,
+		},
+		{
+			name:     "DN with trailing space in value",
+			input:    "cn=john\\ ,ou=users,dc=example,dc=com",
+			expected: "CN=john\\ ,OU=users,DC=example,DC=com",
 			wantErr:  false,
 		},
 		{
@@ -505,6 +523,60 @@ func TestReconstructDNWithUppercaseTypes(t *testing.T) {
 
 			result := reconstructDNWithUppercaseTypes(parsedDN)
 			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestDNEqual(t *testing.T) {
+	tests := []struct {
+		name     string
+		a, b     string
+		expected bool
+	}{
+		{name: "identical DNs", a: "CN=john,OU=users,DC=example,DC=com", b: "CN=john,OU=users,DC=example,DC=com", expected: true},
+		{name: "different attr type case", a: "cn=john,ou=users,dc=example,dc=com", b: "CN=john,OU=users,DC=example,DC=com", expected: true},
+		{name: "different value case", a: "CN=John,OU=Users,DC=Example,DC=Com", b: "CN=john,OU=users,DC=example,DC=com", expected: true},
+		{name: "different DNs", a: "CN=john,OU=users,DC=example,DC=com", b: "CN=jane,OU=users,DC=example,DC=com", expected: false},
+		{name: "different depth", a: "CN=john,OU=users,DC=example,DC=com", b: "OU=users,DC=example,DC=com", expected: false},
+		{name: "empty first arg", a: "", b: "CN=john,DC=com", expected: false},
+		{name: "empty second arg", a: "CN=john,DC=com", b: "", expected: false},
+		{name: "both empty", a: "", b: "", expected: true},
+		{name: "invalid first arg", a: "not-a-dn", b: "CN=john,DC=com", expected: false},
+		{name: "invalid second arg", a: "CN=john,DC=com", b: "not-a-dn", expected: false},
+		{name: "multi-valued RDN same", a: "CN=john+SN=doe,DC=com", b: "cn=john+sn=doe,dc=com", expected: true},
+		{name: "escaped characters", a: "CN=john\\, doe,DC=com", b: "cn=john\\, doe,dc=com", expected: true},
+		{name: "spaces around equals", a: "CN = john, DC = com", b: "CN=john,DC=com", expected: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, DNEqual(tt.a, tt.b))
+		})
+	}
+}
+
+func TestRDNEqual(t *testing.T) {
+	tests := []struct {
+		name     string
+		a, b     string
+		expected bool
+	}{
+		{name: "same RDN same case", a: "CN=john", b: "CN=john", expected: true},
+		{name: "same RDN different case", a: "cn=john", b: "CN=JOHN", expected: true},
+		{name: "different RDN values", a: "CN=john", b: "CN=jane", expected: false},
+		{name: "multi-component DN first RDN matches", a: "CN=john,OU=users,DC=com", b: "CN=john,OU=admins,DC=com", expected: true},
+		{name: "multi-component DN first RDN differs", a: "CN=john,OU=users,DC=com", b: "CN=jane,OU=users,DC=com", expected: false},
+		{name: "different attr types", a: "CN=john", b: "OU=john", expected: false},
+		{name: "empty first arg", a: "", b: "CN=john", expected: false},
+		{name: "empty second arg", a: "CN=john", b: "", expected: false},
+		{name: "invalid first arg", a: "not-a-dn", b: "CN=john", expected: false},
+		{name: "invalid second arg", a: "CN=john", b: "not-a-dn", expected: false},
+		{name: "multi-valued RDN", a: "CN=john+SN=doe,DC=com", b: "cn=john+sn=doe,dc=com", expected: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, RDNEqual(tt.a, tt.b))
 		})
 	}
 }

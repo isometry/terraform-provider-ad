@@ -1,7 +1,6 @@
 package ldap
 
 import (
-	"context"
 	"crypto/tls"
 	"os"
 	"strings"
@@ -151,7 +150,7 @@ func TestConnectionPool_CreateWithInvalidConfig(t *testing.T) {
 	config.Domain = ""
 	config.LDAPURLs = nil
 
-	_, err := NewConnectionPool(context.Background(), config)
+	_, err := NewConnectionPool(t.Context(), config)
 	if err == nil {
 		t.Error("Expected error when creating pool without domain or URLs")
 	}
@@ -162,7 +161,7 @@ func TestConnectionPool_CreateWithURLs(t *testing.T) {
 	config.LDAPURLs = []string{"ldaps://dc1.example.com:636", "ldap://dc2.example.com:389"}
 	config.Domain = "" // Should use URLs instead of domain
 
-	pool, err := NewConnectionPool(context.Background(), config)
+	pool, err := NewConnectionPool(t.Context(), config)
 	if err != nil {
 		t.Fatalf("Failed to create pool with URLs: %v", err)
 	}
@@ -180,7 +179,7 @@ func TestConnectionPool_CreateWithInvalidURL(t *testing.T) {
 	config.LDAPURLs = []string{"invalid://dc1.example.com"}
 	config.Domain = ""
 
-	_, err := NewConnectionPool(context.Background(), config)
+	_, err := NewConnectionPool(t.Context(), config)
 	if err == nil {
 		t.Error("Expected error when creating pool with invalid URL")
 	}
@@ -191,7 +190,7 @@ func TestConnectionPool_Stats(t *testing.T) {
 	config.LDAPURLs = []string{"ldaps://dc1.example.com:636"}
 	config.Domain = ""
 
-	pool, err := NewConnectionPool(context.Background(), config)
+	pool, err := NewConnectionPool(t.Context(), config)
 	if err != nil {
 		t.Fatalf("Failed to create pool: %v", err)
 	}
@@ -218,7 +217,7 @@ func TestConnectionPool_CloseBeforeUse(t *testing.T) {
 	config.LDAPURLs = []string{"ldaps://dc1.example.com:636"}
 	config.Domain = ""
 
-	pool, err := NewConnectionPool(context.Background(), config)
+	pool, err := NewConnectionPool(t.Context(), config)
 	if err != nil {
 		t.Fatalf("Failed to create pool: %v", err)
 	}
@@ -230,7 +229,7 @@ func TestConnectionPool_CloseBeforeUse(t *testing.T) {
 	}
 
 	// Try to get connection from closed pool
-	ctx := context.Background()
+	ctx := t.Context()
 	_, err = pool.Get(ctx)
 	if err == nil {
 		t.Error("Expected error when getting connection from closed pool")
@@ -242,7 +241,7 @@ func TestConnectionPool_DoubleClose(t *testing.T) {
 	config.LDAPURLs = []string{"ldaps://dc1.example.com:636"}
 	config.Domain = ""
 
-	pool, err := NewConnectionPool(context.Background(), config)
+	pool, err := NewConnectionPool(t.Context(), config)
 	if err != nil {
 		t.Fatalf("Failed to create pool: %v", err)
 	}
@@ -320,7 +319,7 @@ func BenchmarkConnectionPool_Creation(b *testing.B) {
 	config.Domain = ""
 
 	for b.Loop() {
-		pool, err := NewConnectionPool(context.Background(), config)
+		pool, err := NewConnectionPool(b.Context(), config)
 		if err != nil {
 			b.Fatalf("Failed to create pool: %v", err)
 		}
@@ -579,7 +578,7 @@ func TestNewConnectionPool_CertPoolSet(t *testing.T) {
 	config.LDAPURLs = []string{"ldaps://dc1.example.com:636"}
 	config.Domain = ""
 
-	pool, err := NewConnectionPool(context.Background(), config)
+	pool, err := NewConnectionPool(t.Context(), config)
 	if err != nil {
 		t.Fatalf("Failed to create pool: %v", err)
 	}

@@ -1,7 +1,7 @@
 ---
 name: active-directory-ldap-expert
 description: Use this agent when working with Active Directory LDAP operations, including managing Organizational Units, Groups, and Users through LDAP protocols. This agent specializes in the github.com/go-ldap/ldap/v3 Go client library and Active Directory's specific LDAP implementation nuances. Expertise includes DN manipulation, LDAP filters, AD-specific attributes, group management, user account operations, and efficient LDAP client patterns for enterprise environments.
-tools: Bash, Glob, Grep, Read, Edit, Write, NotebookEdit, WebFetch, TodoWrite, WebSearch, BashOutput, mcp__context7__resolve-library-id, mcp__context7__get-library-docs, ListMcpResourcesTool, ReadMcpResourceTool, mcp__serena__list_dir, mcp__serena__find_file, mcp__serena__search_for_pattern, mcp__serena__get_symbols_overview, mcp__serena__find_symbol, mcp__serena__find_referencing_symbols, mcp__serena__replace_symbol_body, mcp__serena__insert_after_symbol, mcp__serena__insert_before_symbol, mcp__serena__write_memory, mcp__serena__read_memory, mcp__serena__list_memories, mcp__serena__delete_memory, mcp__serena__activate_project, mcp__serena__get_current_config, mcp__serena__check_onboarding_performed, mcp__serena__onboarding, mcp__serena__think_about_collected_information, mcp__serena__think_about_task_adherence, mcp__serena__think_about_whether_you_are_done
+tools: Bash, Glob, Grep, Read, Edit, Write, NotebookEdit, WebFetch, TodoWrite, WebSearch, BashOutput, mcp__plugin_context7_context7__resolve-library-id, mcp__plugin_context7_context7__get-library-docs, ListMcpResourcesTool, ReadMcpResourceTool, mcp__plugin_serena_serena__list_dir, mcp__plugin_serena_serena__find_file, mcp__plugin_serena_serena__search_for_pattern, mcp__plugin_serena_serena__get_symbols_overview, mcp__plugin_serena_serena__find_symbol, mcp__plugin_serena_serena__find_referencing_symbols, mcp__plugin_serena_serena__replace_symbol_body, mcp__plugin_serena_serena__insert_after_symbol, mcp__plugin_serena_serena__insert_before_symbol, mcp__plugin_serena_serena__write_memory, mcp__plugin_serena_serena__read_memory, mcp__plugin_serena_serena__list_memories, mcp__plugin_serena_serena__delete_memory, mcp__plugin_serena_serena__activate_project, mcp__plugin_serena_serena__get_current_config, mcp__plugin_serena_serena__check_onboarding_performed, mcp__plugin_serena_serena__onboarding, mcp__plugin_serena_serena__think_about_collected_information, mcp__plugin_serena_serena__think_about_task_adherence, mcp__plugin_serena_serena__think_about_whether_you_are_done
 model: inherit
 color: green
 ---
@@ -18,8 +18,8 @@ You are an Active Directory LDAP operations expert specializing in the github.co
 - Users ask about integrating with other directory systems (OpenLDAP, etc.)
 
 **Workflow:**
-1. Use `mcp__context7__resolve-library-id` to find the library
-2. Use `mcp__context7__get-library-docs` with specific topics like "authentication", "search", "modify"
+1. Use `mcp__plugin_context7_context7__resolve-library-id` to find the library
+2. Use `mcp__plugin_context7_context7__get-library-docs` with specific topics like "authentication", "search", "modify"
 3. Provide implementation guidance based on current documentation
 
 This ensures you provide the most accurate, up-to-date implementation guidance for LDAP operations.

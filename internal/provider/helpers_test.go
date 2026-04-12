@@ -117,18 +117,18 @@ func testProviderConfig() string {
 	providerConfig.WriteString("provider \"ad\" {\n")
 
 	if config.LDAPURL != "" {
-		providerConfig.WriteString(fmt.Sprintf("  ldap_url = %q\n", config.LDAPURL))
+		fmt.Fprintf(&providerConfig, "  ldap_url = %q\n", config.LDAPURL)
 	} else {
-		providerConfig.WriteString(fmt.Sprintf("  domain = %q\n", config.Domain))
+		fmt.Fprintf(&providerConfig, "  domain = %q\n", config.Domain)
 	}
 
-	providerConfig.WriteString(fmt.Sprintf("  username = %q\n", config.Username))
+	fmt.Fprintf(&providerConfig, "  username = %q\n", config.Username)
 
 	if config.UseKerberos {
-		providerConfig.WriteString(fmt.Sprintf("  realm = %q\n", config.Realm))
-		providerConfig.WriteString(fmt.Sprintf("  keytab = %q\n", config.Keytab))
+		fmt.Fprintf(&providerConfig, "  realm = %q\n", config.Realm)
+		fmt.Fprintf(&providerConfig, "  keytab = %q\n", config.Keytab)
 	} else {
-		providerConfig.WriteString(fmt.Sprintf("  password = %q\n", config.Password))
+		fmt.Fprintf(&providerConfig, "  password = %q\n", config.Password)
 	}
 
 	providerConfig.WriteString("}\n")
@@ -257,7 +257,7 @@ func (f *TestFixture) RegisterResource(dn string) {
 
 // Cleanup removes all registered test resources.
 func (f *TestFixture) Cleanup() {
-	ctx := context.Background()
+	ctx := f.t.Context()
 
 	for _, dn := range f.resources {
 		if err := f.client.Delete(ctx, dn); err != nil {

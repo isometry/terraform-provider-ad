@@ -2010,7 +2010,7 @@ func TestMoveGroup(t *testing.T) {
 	// Mock ModifyDN operation
 	mockClient.On("ModifyDN", mock.Anything, mock.MatchedBy(func(modifyDNReq *ModifyDNRequest) bool {
 		return modifyDNReq.DN == currentDN &&
-			modifyDNReq.NewRDN == "cn=TestGroup" && // DN parsing normalizes to lowercase
+			RDNEqual(modifyDNReq.NewRDN, "CN=TestGroup") &&
 			modifyDNReq.DeleteOldRDN == true &&
 			modifyDNReq.NewSuperior == newContainerDN
 	})).Return(nil)
@@ -2185,7 +2185,7 @@ func TestMoveGroupPreservesMembers(t *testing.T) {
 	// Mock ModifyDN operation
 	mockClient.On("ModifyDN", mock.Anything, mock.MatchedBy(func(modifyDNReq *ModifyDNRequest) bool {
 		return modifyDNReq.DN == currentDN &&
-			modifyDNReq.NewRDN == "cn=TestGroup" && // DN parsing normalizes to lowercase
+			RDNEqual(modifyDNReq.NewRDN, "CN=TestGroup") &&
 			modifyDNReq.DeleteOldRDN == true &&
 			modifyDNReq.NewSuperior == newContainerDN
 	})).Return(nil)
@@ -2454,7 +2454,7 @@ func TestUpdateGroupNameRename(t *testing.T) {
 
 	mockClient.On("ModifyDN", mock.Anything, mock.MatchedBy(func(modifyDNReq *ModifyDNRequest) bool {
 		return modifyDNReq.DN == oldDN &&
-			modifyDNReq.NewRDN == "cn=NewGroupName" &&
+			RDNEqual(modifyDNReq.NewRDN, "CN=NewGroupName") &&
 			modifyDNReq.DeleteOldRDN == true &&
 			modifyDNReq.NewSuperior == "" // No container change
 	})).Return(nil)
@@ -2514,7 +2514,7 @@ func TestUpdateGroupRenameAndMove(t *testing.T) {
 
 	mockClient.On("ModifyDN", mock.Anything, mock.MatchedBy(func(modifyDNReq *ModifyDNRequest) bool {
 		return modifyDNReq.DN == oldDN &&
-			modifyDNReq.NewRDN == "cn=NewGroupName" &&
+			RDNEqual(modifyDNReq.NewRDN, "CN=NewGroupName") &&
 			modifyDNReq.DeleteOldRDN == true &&
 			modifyDNReq.NewSuperior == newContainerDN
 	})).Return(nil)

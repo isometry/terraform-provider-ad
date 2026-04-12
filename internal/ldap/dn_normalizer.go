@@ -50,8 +50,8 @@ func reconstructDNWithUppercaseTypes(parsedDN *ldap.DN) string {
 			// Convert attribute type to uppercase, keep value as-is
 			attrType := strings.ToUpper(attr.Type)
 
-			// The go-ldap library handles proper DN value escaping in ParseDN/String()
-			attrString := fmt.Sprintf("%s=%s", attrType, attr.Value)
+			// Re-escape the value since ParseDN unescapes RFC 4514 sequences
+			attrString := fmt.Sprintf("%s=%s", attrType, ldap.EscapeDN(attr.Value))
 			attrStrings = append(attrStrings, attrString)
 		}
 
@@ -147,6 +147,36 @@ func GetDNParent(dn string) (string, error) {
 	return reconstructDNWithUppercaseTypes(parentDN), nil
 }
 
+// DNEqual reports whether two DN strings are semantically equal
+// (case-insensitive attribute types and values, per RFC 4517).
+// Returns false if either string cannot be parsed.
+func DNEqual(a, b string) bool {
+	pa, err := ldap.ParseDN(a)
+	if err != nil {
+		return false
+	}
+	pb, err := ldap.ParseDN(b)
+	if err != nil {
+		return false
+	}
+	return pa.EqualFold(pb)
+}
+
+// RDNEqual reports whether two RDN strings are semantically equal.
+// Each argument is parsed as a DN; only the first RDN component is compared.
+// Returns false if either string cannot be parsed or has no RDN components.
+func RDNEqual(a, b string) bool {
+	pa, err := ldap.ParseDN(a)
+	if err != nil || len(pa.RDNs) == 0 {
+		return false
+	}
+	pb, err := ldap.ParseDN(b)
+	if err != nil || len(pb.RDNs) == 0 {
+		return false
+	}
+	return pa.RDNs[0].EqualFold(pb.RDNs[0])
+}
+
 // IsDNChild checks if childDN is a direct or indirect child of parentDN.
 func IsDNChild(childDN, parentDN string) (bool, error) {
 	if childDN == "" || parentDN == "" {
@@ -163,18 +193,5 @@ func IsDNChild(childDN, parentDN string) (bool, error) {
 		return false, fmt.Errorf("invalid parent DN syntax: %w", err)
 	}
 
-	// Child must have more RDN components than parent
-	if len(parsedChild.RDNs) <= len(parsedParent.RDNs) {
-		return false, nil
-	}
-
-	// Extract the parent portion of the child DN
-	childParentRDNs := parsedChild.RDNs[len(parsedChild.RDNs)-len(parsedParent.RDNs):]
-	childParentDN := &ldap.DN{RDNs: childParentRDNs}
-
-	// Compare normalized DN strings (case-insensitive)
-	childParentNormalized := strings.ToLower(reconstructDNWithUppercaseTypes(childParentDN))
-	parentNormalized := strings.ToLower(reconstructDNWithUppercaseTypes(parsedParent))
-
-	return childParentNormalized == parentNormalized, nil
+	return parsedParent.AncestorOfFold(parsedChild), nil
 }
