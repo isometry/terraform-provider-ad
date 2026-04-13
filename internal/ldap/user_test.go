@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"github.com/go-ldap/ldap/v3"
 	"github.com/stretchr/testify/assert"
@@ -372,7 +373,7 @@ func TestUserManager_GetUserBySID_Success(t *testing.T) {
 	client.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 		return req.BaseDN == "DC=example,DC=com" &&
 			req.Scope == ScopeWholeSubtree &&
-			strings.Contains(req.Filter, fmt.Sprintf("objectSid=%s", sid)) &&
+			strings.Contains(req.Filter, "objectSid=") &&
 			strings.Contains(req.Filter, "objectClass=user")
 	})).Return(&SearchResult{
 		Entries: []*ldap.Entry{mockEntry},
@@ -500,7 +501,7 @@ func TestUserManager_GetUser_AutoDetectIdentifier(t *testing.T) {
 			name:       "SID identifier",
 			identifier: "S-1-5-21-123456789-123456789-123456789-1001",
 			filterCheck: func(filter string) bool {
-				return strings.Contains(filter, "objectSid=S-1-5-21-123456789-123456789-123456789-1001")
+				return strings.Contains(filter, "objectSid=")
 			},
 		},
 	}
@@ -1075,8 +1076,8 @@ func TestEncodeADPassword(t *testing.T) {
 			// For UTF-16, the length is: (number of UTF-16 code units in quoted password) * 2 bytes
 			// The quoted password is "password" so we need to count UTF-16 code units
 			quotedPassword := "\"" + tt.password + "\""
-			// Count UTF-16 code units (most characters are 1 code unit, some might be 2)
-			expectedCodeUnits := len([]rune(quotedPassword))
+			// Count UTF-16 code units (characters outside BMP produce 2 code units)
+			expectedCodeUnits := len(utf16.Encode([]rune(quotedPassword)))
 			expectedLen := expectedCodeUnits * 2 // 2 bytes per UTF-16 code unit
 
 			if len(got) != expectedLen {

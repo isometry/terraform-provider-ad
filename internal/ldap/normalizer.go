@@ -59,6 +59,7 @@ var (
 type MemberNormalizer struct {
 	client       Client
 	guidHandler  *GUIDHandler
+	sidHandler   *SIDHandler
 	baseDN       string
 	cacheManager *CacheManager // Reference to shared cache
 	timeout      time.Duration
@@ -69,6 +70,7 @@ func NewMemberNormalizer(client Client, baseDN string, cacheManager *CacheManage
 	return &MemberNormalizer{
 		client:       client,
 		guidHandler:  NewGUIDHandler(),
+		sidHandler:   NewSIDHandler(),
 		baseDN:       baseDN,
 		cacheManager: cacheManager, // Use shared cache
 		timeout:      30 * time.Second,
@@ -327,11 +329,16 @@ func (m *MemberNormalizer) resolveSIDToDN(sid string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
 	defer cancel()
 
-	// Search by objectSid
+	// Search by objectSid using binary encoding
+	sidFilter, err := m.sidHandler.SIDToSearchFilter(sid)
+	if err != nil {
+		return "", fmt.Errorf("failed to create SID search filter: %w", err)
+	}
+
 	searchReq := &SearchRequest{
 		BaseDN:     m.baseDN,
 		Scope:      ScopeWholeSubtree,
-		Filter:     fmt.Sprintf("(objectSid=%s)", ldap.EscapeFilter(sid)),
+		Filter:     sidFilter,
 		Attributes: []string{"distinguishedName"},
 		SizeLimit:  1,
 		TimeLimit:  m.timeout,

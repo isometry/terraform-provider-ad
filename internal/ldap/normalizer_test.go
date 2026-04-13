@@ -345,10 +345,12 @@ func TestMemberNormalizer_NormalizeToDN_SID(t *testing.T) {
 	sid := "S-1-5-21-123456789-123456789-123456789-1001"
 	expectedDN := "CN=User,OU=Users,DC=example,DC=com"
 
-	// Mock the SID search
+	// Mock the SID search - filter now uses binary-encoded SID
+	sidHandler := NewSIDHandler()
+	expectedFilter, _ := sidHandler.SIDToSearchFilter(sid)
 	mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 		return req.BaseDN == "dc=example,dc=com" &&
-			req.Filter == fmt.Sprintf("(objectSid=%s)", sid)
+			req.Filter == expectedFilter
 	})).Return(&SearchResult{
 		Entries: []*ldap.Entry{
 			{

@@ -3,7 +3,6 @@ module github.com/isometry/terraform-provider-ad
 go 1.26.1
 
 require (
-	github.com/bwmarrin/go-objectsid v0.0.0-20191126144531-5fee401a2f37
 	github.com/creasty/defaults v1.8.0
 	github.com/go-ldap/ldap/v3 v3.4.13
 	github.com/google/uuid v1.6.0

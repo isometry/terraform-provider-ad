@@ -6,11 +6,10 @@ import (
 )
 
 // EncodeADPassword encodes a password for Active Directory's unicodePwd attribute.
-// Active Directory requires passwords to be:
+// Per MS-ADTS, Active Directory requires passwords to be:
 // 1. Enclosed in double quotes
 // 2. Encoded as UTF-16LE (Little Endian)
-//
-// This function handles the encoding automatically.
+// Ref: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/6e803168-f140-4d23-b2d3-c3a8ab5917d2
 func EncodeADPassword(password string) []byte {
 	// Wrap password in double quotes as required by AD
 	quotedPassword := "\"" + password + "\""

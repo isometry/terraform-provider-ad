@@ -403,10 +403,15 @@ func (um *UserManager) SearchUsers(filter string, attributes []string) ([]*User,
 	}
 
 	users := make([]*User, 0, len(result.Entries))
-	for _, entry := range result.Entries {
+	for i, entry := range result.Entries {
 		user, err := um.entryToUser(entry)
 		if err != nil {
-			// Log error but continue with other entries
+			tflog.SubsystemWarn(um.ctx, "ldap", "Failed to convert LDAP entry to user, skipping", map[string]any{
+				"operation":   "entry_to_user",
+				"entry_index": i,
+				"entry_dn":    entry.DN,
+				"error":       err.Error(),
+			})
 			continue
 		}
 		users = append(users, user)
@@ -506,8 +511,9 @@ func (um *UserManager) ValidateCreateUserRequest(req *CreateUserRequest) error {
 		return fmt.Errorf("user principal name must be in UPN format (user@domain): %s", req.UserPrincipalName)
 	}
 
-	// Validate SAM account name format (no spaces, certain special characters)
-	if strings.ContainsAny(req.SAMAccountName, " \t\n\r@\"#$%&'()*+,/:;<=>?[\\]^`{|}~") {
+	// Validate SAM account name format per Microsoft documentation.
+	// Prohibited: " / \ [ ] : ; | = , + * ? < > @, plus whitespace.
+	if strings.ContainsAny(req.SAMAccountName, " \t\n\r\"@/\\[]:;|=,+*?<>") {
 		return fmt.Errorf("SAM account name contains invalid characters: %s", req.SAMAccountName)
 	}
 
@@ -528,7 +534,7 @@ func (um *UserManager) CreateUser(req *CreateUserRequest) (*User, error) {
 	}
 
 	// Build the user DN
-	userDN := fmt.Sprintf("CN=%s,%s", ldap.EscapeFilter(req.Name), req.Container)
+	userDN := fmt.Sprintf("CN=%s,%s", ldap.EscapeDN(req.Name), req.Container)
 
 	tflog.SubsystemDebug(um.ctx, "ldap", "Creating user", map[string]any{
 		"user_dn":   userDN,
@@ -943,10 +949,15 @@ func (um *UserManager) getUserByGUID(guid string) (*User, error) {
 
 // getUserBySID is the internal implementation for SID-based user retrieval.
 func (um *UserManager) getUserBySID(sid string) (*User, error) {
+	sidFilter, err := um.sidHandler.SIDToSearchFilter(sid)
+	if err != nil {
+		return nil, WrapError("sid_to_search_filter", err)
+	}
+
 	searchReq := &SearchRequest{
 		BaseDN:     um.baseDN,
 		Scope:      ScopeWholeSubtree,
-		Filter:     fmt.Sprintf("(&(objectClass=user)(!(objectClass=computer))(objectSid=%s))", ldap.EscapeFilter(sid)),
+		Filter:     fmt.Sprintf("(&(objectClass=user)(!(objectClass=computer))%s)", sidFilter),
 		Attributes: um.getAllUserAttributes(),
 		SizeLimit:  1,
 		TimeLimit:  um.timeout,
@@ -1060,10 +1071,15 @@ func (um *UserManager) searchUsersInContainer(baseDN, filter string, attributes 
 	}
 
 	users := make([]*User, 0, len(result.Entries))
-	for _, entry := range result.Entries {
+	for i, entry := range result.Entries {
 		user, err := um.entryToUser(entry)
 		if err != nil {
-			// Log error but continue with other entries
+			tflog.SubsystemWarn(um.ctx, "ldap", "Failed to convert LDAP entry to user, skipping", map[string]any{
+				"operation":   "entry_to_user",
+				"entry_index": i,
+				"entry_dn":    entry.DN,
+				"error":       err.Error(),
+			})
 			continue
 		}
 		users = append(users, user)
@@ -1182,6 +1198,8 @@ func (um *UserManager) entryToUser(entry *ldap.Entry) (*User, error) {
 	}
 
 	if pwdLastSet := entry.GetAttributeValue("pwdLastSet"); pwdLastSet != "" {
+		// ChangePasswordAtLogon is determined by pwdLastSet == 0, not a UAC bit.
+		user.ChangePasswordAtLogon = pwdLastSet == "0"
 		if t, err := um.parseADTimestamp(pwdLastSet); err == nil {
 			user.PasswordLastSet = &t
 		}
@@ -1201,7 +1219,6 @@ func (um *UserManager) parseUserAccountControl(user *User, uac int32) {
 	user.AccountEnabled = (uac & UACAccountDisabled) == 0
 	user.PasswordNeverExpires = (uac & UACPasswordNeverExpires) != 0
 	user.PasswordNotRequired = (uac & UACPasswordNotRequired) != 0
-	user.ChangePasswordAtLogon = (uac & UACPasswordExpired) != 0
 	user.CannotChangePassword = (uac & UACPasswordCantChange) != 0
 	user.SmartCardLogonRequired = (uac & UACSmartCardRequired) != 0
 	user.TrustedForDelegation = (uac & UACTrustedForDelegation) != 0
@@ -1546,7 +1563,7 @@ func (um *UserManager) renameAndMoveUser(currentUser *User, newName, newContaine
 	if newName == currentUser.CommonName {
 		newRDN = parsedDN.RDNs[0].String()
 	} else {
-		newRDN = fmt.Sprintf("cn=%s", ldap.EscapeFilter(newName))
+		newRDN = fmt.Sprintf("CN=%s", ldap.EscapeDN(newName))
 	}
 
 	// Determine if we need to specify a new superior (container)

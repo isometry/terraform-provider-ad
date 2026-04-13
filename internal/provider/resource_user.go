@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	ldaplib "github.com/go-ldap/ldap/v3"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -147,7 +148,7 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Computed:            true,
 				CustomType:          customtypes.DNStringType{},
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
+					planmodifiers.ComputeDN("CN", "container"),
 				},
 			},
 			"sid": schema.StringAttribute{
@@ -1131,12 +1132,12 @@ func (r *UserResource) userToModel(ctx context.Context, user *ldapclient.User, m
 	model.AccountExpires = helpers.TimestampOrNull(user.AccountExpires)
 }
 
-// extractContainer extracts the container DN from a full DN.
+// extractContainer extracts the parent container DN from a full DN.
 func (r *UserResource) extractContainer(dn string) string {
-	// Find the first comma and return everything after it
-	idx := strings.Index(dn, ",")
-	if idx >= 0 && idx < len(dn)-1 {
-		return dn[idx+1:]
+	if parsedDN, err := ldaplib.ParseDN(dn); err == nil && len(parsedDN.RDNs) > 1 {
+		containerRDNs := parsedDN.RDNs[1:]
+		containerDN := &ldaplib.DN{RDNs: containerRDNs}
+		return containerDN.String()
 	}
 	return ""
 }
