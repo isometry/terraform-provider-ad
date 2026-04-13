@@ -146,7 +146,7 @@ func (m *MemberNormalizer) NormalizeToDN(identifier string) (string, error) {
 	case IdentifierTypeGUID:
 		dn, err = m.resolveGUIDToDN(identifier)
 	case IdentifierTypeSID:
-		dn, err = m.resolveSIDToDN(identifier)
+		dn, err = m.ResolveSIDToDN(identifier)
 	case IdentifierTypeUPN:
 		dn, err = m.resolveUPNToDN(identifier)
 	case IdentifierTypeSAM:
@@ -324,8 +324,8 @@ func (m *MemberNormalizer) resolveGUIDToDN(guid string) (string, error) {
 	return normalizedDN, nil
 }
 
-// resolveSIDToDN resolves a Security Identifier to its Distinguished Name.
-func (m *MemberNormalizer) resolveSIDToDN(sid string) (string, error) {
+// ResolveSIDToDN resolves a Security Identifier to its Distinguished Name.
+func (m *MemberNormalizer) ResolveSIDToDN(sid string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
 	defer cancel()
 

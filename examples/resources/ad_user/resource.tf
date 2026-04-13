@@ -62,7 +62,4 @@ resource "ad_user" "service_account" {
   # Typical service account settings
   enabled                = true
   password_never_expires = true
-
-  # Service accounts typically cannot change their own password
-  cannot_change_password = true
 }

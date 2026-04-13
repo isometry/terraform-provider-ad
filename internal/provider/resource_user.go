@@ -32,6 +32,8 @@ import (
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &UserResource{}
 var _ resource.ResourceWithImportState = &UserResource{}
+var _ resource.ResourceWithValidateConfig = &UserResource{}
+var _ resource.ResourceWithModifyPlan = &UserResource{}
 
 // NewUserResource creates a new instance of the user resource.
 func NewUserResource() resource.Resource {
@@ -63,7 +65,6 @@ type UserResourceModel struct {
 
 	// Security flags (Optional+Computed+Default)
 	Enabled                types.Bool `tfsdk:"enabled"`                   // default: true
-	CannotChangePassword   types.Bool `tfsdk:"cannot_change_password"`    // default: false
 	PasswordNeverExpires   types.Bool `tfsdk:"password_never_expires"`    // default: false
 	SmartCardLogonRequired types.Bool `tfsdk:"smart_card_logon_required"` // default: false
 	TrustedForDelegation   types.Bool `tfsdk:"trusted_for_delegation"`    // default: false
@@ -238,12 +239,6 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Optional:            true,
 				Computed:            true,
 				Default:             booldefault.StaticBool(true),
-			},
-			"cannot_change_password": schema.BoolAttribute{
-				MarkdownDescription: "Whether the user cannot change their own password. Defaults to `false`.",
-				Optional:            true,
-				Computed:            true,
-				Default:             booldefault.StaticBool(false),
 			},
 			"password_never_expires": schema.BoolAttribute{
 				MarkdownDescription: "Whether the user's password never expires. Defaults to `false`.",
@@ -537,6 +532,54 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Computed:            true,
 			},
 		},
+	}
+}
+
+func (r *UserResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var data UserResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Warn if enabled is true (or default) but no password is set.
+	// Active Directory requires a password before an account can be enabled.
+	if (data.Enabled.IsNull() || data.Enabled.ValueBool()) && (data.Password.IsNull() || data.Password.ValueString() == "") {
+		resp.Diagnostics.AddWarning(
+			"Account will be created disabled",
+			"Active Directory requires a password before enabling an account. "+
+				"The account will be created disabled because no password is provided. "+
+				"Set 'password' to enable the account on creation.",
+		)
+	}
+}
+
+func (r *UserResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// Only process if we have a plan (not during destroy)
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+
+	var config UserResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Active Directory requires a password before an account can be enabled.
+	// If no password is configured and enabled would be true, force it to false
+	// in the plan so the plan reflects what AD will actually store.
+	if config.Password.IsNull() || config.Password.ValueString() == "" {
+		var plan UserResourceModel
+		resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		if !plan.Enabled.IsNull() && plan.Enabled.ValueBool() {
+			plan.Enabled = types.BoolValue(false)
+			resp.Diagnostics.Append(resp.Plan.Set(ctx, plan)...)
+		}
 	}
 }
 
@@ -915,10 +958,6 @@ func (r *UserResource) modelToCreateRequest(model *UserResourceModel) *ldapclien
 		enabled := model.Enabled.ValueBool()
 		req.Enabled = &enabled
 	}
-	if !model.CannotChangePassword.IsNull() {
-		val := model.CannotChangePassword.ValueBool()
-		req.CannotChangePassword = &val
-	}
 	if !model.PasswordNeverExpires.IsNull() {
 		val := model.PasswordNeverExpires.ValueBool()
 		req.PasswordNeverExpires = &val
@@ -1007,7 +1046,6 @@ func (r *UserResource) buildUpdateRequest(plan, state *UserResourceModel) *ldapc
 
 	// Check security flag changes
 	hasChanges = helpers.BoolChanged(plan.Enabled, state.Enabled, &updateReq.Enabled) || hasChanges
-	hasChanges = helpers.BoolChanged(plan.CannotChangePassword, state.CannotChangePassword, &updateReq.CannotChangePassword) || hasChanges
 	hasChanges = helpers.BoolChanged(plan.PasswordNeverExpires, state.PasswordNeverExpires, &updateReq.PasswordNeverExpires) || hasChanges
 	hasChanges = helpers.BoolChanged(plan.SmartCardLogonRequired, state.SmartCardLogonRequired, &updateReq.SmartCardLogonRequired) || hasChanges
 	hasChanges = helpers.BoolChanged(plan.TrustedForDelegation, state.TrustedForDelegation, &updateReq.TrustedForDelegation) || hasChanges
@@ -1069,7 +1107,6 @@ func (r *UserResource) userToModel(ctx context.Context, user *ldapclient.User, m
 
 	// Security flags
 	model.Enabled = types.BoolValue(user.AccountEnabled)
-	model.CannotChangePassword = types.BoolValue(user.CannotChangePassword)
 	model.PasswordNeverExpires = types.BoolValue(user.PasswordNeverExpires)
 	model.SmartCardLogonRequired = types.BoolValue(user.SmartCardLogonRequired)
 	model.TrustedForDelegation = types.BoolValue(user.TrustedForDelegation)

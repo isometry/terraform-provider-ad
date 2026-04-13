@@ -146,7 +146,6 @@ resource "ad_group_membership" "manager_membership" {
 - `account_enabled` (Boolean) Whether the user account is enabled.
 - `account_expires` (String) When the user account expires (RFC3339 format).
 - `account_locked_out` (Boolean) Whether the user account is locked out.
-- `cannot_change_password` (Boolean) Whether the user cannot change their password.
 - `change_password_at_logon` (Boolean) Whether the user must change password at next logon.
 - `city` (String) The city/locality of the user.
 - `company` (String) The company name of the user.

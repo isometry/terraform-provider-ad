@@ -31,7 +31,7 @@ func TestAccUserResource_basic(t *testing.T) {
 					testCheckUserExists(t.Context(), "ad_user.test"),
 					resource.TestCheckResourceAttr("ad_user.test", "name", name),
 					resource.TestCheckResourceAttr("ad_user.test", "principal_name", upn),
-					resource.TestCheckResourceAttr("ad_user.test", "enabled", "true"),
+					resource.TestCheckResourceAttr("ad_user.test", "enabled", "false"),
 					resource.TestCheckResourceAttrSet("ad_user.test", "id"),
 					resource.TestCheckResourceAttrSet("ad_user.test", "dn"),
 					resource.TestCheckResourceAttrSet("ad_user.test", "sid"),
@@ -201,44 +201,40 @@ func TestAccUserResource_updateSecurityFlags(t *testing.T) {
 			return testCheckUserDestroy(t.Context(), s)
 		},
 		Steps: []resource.TestStep{
-			// Create user with default security flags
+			// Create user with default security flags (no password → disabled)
 			{
 				Config: testAccUserResourceConfig_basic(name, upn),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					testCheckUserExists(t.Context(), "ad_user.test"),
-					resource.TestCheckResourceAttr("ad_user.test", "enabled", "true"),
+					resource.TestCheckResourceAttr("ad_user.test", "enabled", "false"),
 					resource.TestCheckResourceAttr("ad_user.test", "password_never_expires", "false"),
-					resource.TestCheckResourceAttr("ad_user.test", "cannot_change_password", "false"),
 					testAccStoreUserGUID("ad_user.test"),
 				),
 			},
-			// Disable account and enable password_never_expires
+			// Explicitly disable account and enable password_never_expires
 			{
-				Config: testAccUserResourceConfig_withSecurityFlags(name, upn, false, true, true),
+				Config: testAccUserResourceConfig_withSecurityFlags(name, upn, false, true),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_user.test", "enabled", "false"),
 					resource.TestCheckResourceAttr("ad_user.test", "password_never_expires", "true"),
-					resource.TestCheckResourceAttr("ad_user.test", "cannot_change_password", "true"),
 					testAccCheckUserGUIDUnchanged(),
 				),
 			},
-			// Re-enable account, keep password_never_expires
+			// Request enabled but no password → still disabled
 			{
-				Config: testAccUserResourceConfig_withSecurityFlags(name, upn, true, true, false),
+				Config: testAccUserResourceConfig_withSecurityFlags(name, upn, true, true),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ad_user.test", "enabled", "true"),
+					resource.TestCheckResourceAttr("ad_user.test", "enabled", "false"),
 					resource.TestCheckResourceAttr("ad_user.test", "password_never_expires", "true"),
-					resource.TestCheckResourceAttr("ad_user.test", "cannot_change_password", "false"),
 					testAccCheckUserGUIDUnchanged(),
 				),
 			},
-			// Reset to defaults
+			// Reset to defaults (no password → still disabled)
 			{
 				Config: testAccUserResourceConfig_basic(name, upn),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ad_user.test", "enabled", "true"),
+					resource.TestCheckResourceAttr("ad_user.test", "enabled", "false"),
 					resource.TestCheckResourceAttr("ad_user.test", "password_never_expires", "false"),
-					resource.TestCheckResourceAttr("ad_user.test", "cannot_change_password", "false"),
 					testAccCheckUserGUIDUnchanged(),
 				),
 			},
@@ -311,7 +307,7 @@ func TestAccUserResource_disabledAccount(t *testing.T) {
 		Steps: []resource.TestStep{
 			// Create disabled user
 			{
-				Config: testAccUserResourceConfig_withSecurityFlags(name, upn, false, false, false),
+				Config: testAccUserResourceConfig_withSecurityFlags(name, upn, false, false),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					testCheckUserExists(t.Context(), "ad_user.test"),
 					resource.TestCheckResourceAttr("ad_user.test", "name", name),
@@ -341,15 +337,14 @@ func TestAccUserResource_serviceAccount(t *testing.T) {
 			return testCheckUserDestroy(t.Context(), s)
 		},
 		Steps: []resource.TestStep{
-			// Create service account (password never expires + cannot change password)
+			// Create service account (password never expires)
 			{
 				Config: testAccUserResourceConfig_serviceAccount(name, upn),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					testCheckUserExists(t.Context(), "ad_user.test"),
 					resource.TestCheckResourceAttr("ad_user.test", "name", name),
-					resource.TestCheckResourceAttr("ad_user.test", "enabled", "true"),
+					resource.TestCheckResourceAttr("ad_user.test", "enabled", "false"),
 					resource.TestCheckResourceAttr("ad_user.test", "password_never_expires", "true"),
-					resource.TestCheckResourceAttr("ad_user.test", "cannot_change_password", "true"),
 					resource.TestCheckResourceAttr("ad_user.test", "description", "Service Account"),
 				),
 			},
@@ -610,7 +605,7 @@ resource "ad_user" "test" {
 `, testProviderConfig(), testDomainDataSource(), name, upn, description, DefaultTestContainer)
 }
 
-func testAccUserResourceConfig_withSecurityFlags(name, upn string, enabled, passwordNeverExpires, cannotChangePassword bool) string {
+func testAccUserResourceConfig_withSecurityFlags(name, upn string, enabled, passwordNeverExpires bool) string {
 	return fmt.Sprintf(`
 %s
 
@@ -619,12 +614,11 @@ func testAccUserResourceConfig_withSecurityFlags(name, upn string, enabled, pass
 resource "ad_user" "test" {
   name                   = %[3]q
   principal_name         = %[4]q
-  container              = "%[8]s,${data.ad_domain.test.dn}"
+  container              = "%[7]s,${data.ad_domain.test.dn}"
   enabled                = %[5]t
   password_never_expires = %[6]t
-  cannot_change_password = %[7]t
 }
-`, testProviderConfig(), testDomainDataSource(), name, upn, enabled, passwordNeverExpires, cannotChangePassword, DefaultTestContainer)
+`, testProviderConfig(), testDomainDataSource(), name, upn, enabled, passwordNeverExpires, DefaultTestContainer)
 }
 
 func testAccUserResourceConfig_serviceAccount(name, upn string) string {
@@ -638,9 +632,7 @@ resource "ad_user" "test" {
   principal_name         = %[2]q
   container              = "%[3]s,${data.ad_domain.test.dn}"
   description            = "Service Account"
-  enabled                = true
   password_never_expires = true
-  cannot_change_password = true
 }
 `, testProviderConfig(), testDomainDataSource(), name, upn, DefaultTestContainer)
 }

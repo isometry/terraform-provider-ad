@@ -89,7 +89,6 @@ type UserDataSourceModel struct {
 	PasswordNeverExpires   types.Bool  `tfsdk:"password_never_expires"`    // Password never expires
 	PasswordNotRequired    types.Bool  `tfsdk:"password_not_required"`     // No password required
 	ChangePasswordAtLogon  types.Bool  `tfsdk:"change_password_at_logon"`  // Must change password at next logon
-	CannotChangePassword   types.Bool  `tfsdk:"cannot_change_password"`    // Cannot change password
 	SmartCardLogonRequired types.Bool  `tfsdk:"smart_card_logon_required"` // Smart card required
 	TrustedForDelegation   types.Bool  `tfsdk:"trusted_for_delegation"`    // Trusted for delegation
 	AccountLockedOut       types.Bool  `tfsdk:"account_locked_out"`        // Account is locked out
@@ -306,10 +305,6 @@ func (d *UserDataSource) Schema(ctx context.Context, req datasource.SchemaReques
 			},
 			"change_password_at_logon": schema.BoolAttribute{
 				MarkdownDescription: "Whether the user must change password at next logon.",
-				Computed:            true,
-			},
-			"cannot_change_password": schema.BoolAttribute{
-				MarkdownDescription: "Whether the user cannot change their password.",
 				Computed:            true,
 			},
 			"smart_card_logon_required": schema.BoolAttribute{
@@ -566,7 +561,6 @@ func (d *UserDataSource) mapUserToModel(ctx context.Context, user *ldapclient.Us
 	data.PasswordNeverExpires = types.BoolValue(user.PasswordNeverExpires)
 	data.PasswordNotRequired = types.BoolValue(user.PasswordNotRequired)
 	data.ChangePasswordAtLogon = types.BoolValue(user.ChangePasswordAtLogon)
-	data.CannotChangePassword = types.BoolValue(user.CannotChangePassword)
 	data.SmartCardLogonRequired = types.BoolValue(user.SmartCardLogonRequired)
 	data.TrustedForDelegation = types.BoolValue(user.TrustedForDelegation)
 	data.AccountLockedOut = types.BoolValue(user.AccountLockedOut)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -120,6 +121,33 @@ func (m *MockUserClient) WhoAmI(ctx context.Context) (*WhoAmIResult, error) {
 
 // Standard 16-byte binary GUID for testing.
 var testBinaryGUID = []byte{0x78, 0x56, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x34, 0x56}
+
+// mockPrimaryGroupSIDResolution sets up a mock expectation for the SID-to-DN resolution
+// that entryToUser performs when processing the primaryGroupID attribute. Tests that use
+// createMockUserEntry (which includes primaryGroupID and objectSid) must call this to
+// avoid unexpected Search calls from ResolveSIDToDN.
+//
+// The matcher excludes filters containing "objectClass" to avoid matching the primary
+// user/group search expectations that also contain objectSid.
+func mockPrimaryGroupSIDResolution(client *MockUserClient) {
+	client.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
+		return req.BaseDN == "DC=example,DC=com" &&
+			req.Scope == ScopeWholeSubtree &&
+			strings.Contains(req.Filter, "objectSid") &&
+			!strings.Contains(req.Filter, "objectClass") &&
+			req.SizeLimit == 1
+	})).Return(&SearchResult{
+		Entries: []*ldap.Entry{
+			{
+				DN: "CN=Domain Users,CN=Users,DC=example,DC=com",
+				Attributes: []*ldap.EntryAttribute{
+					{Name: "distinguishedName", Values: []string{"CN=Domain Users,CN=Users,DC=example,DC=com"}},
+				},
+			},
+		},
+		Total: 1,
+	}, nil).Maybe()
+}
 
 // createMockUserEntry creates a mock LDAP entry for testing user operations.
 func createMockUserEntry() *ldap.Entry {
@@ -271,6 +299,7 @@ func TestUserManager_SetTimeout(t *testing.T) {
 
 func TestUserManager_GetUserByDN_Success(t *testing.T) {
 	client := &MockUserClient{}
+	mockPrimaryGroupSIDResolution(client)
 	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
@@ -326,6 +355,7 @@ func TestUserManager_GetUserByDN_NotFound(t *testing.T) {
 
 func TestUserManager_GetUserByGUID_Success(t *testing.T) {
 	client := &MockUserClient{}
+	mockPrimaryGroupSIDResolution(client)
 	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
@@ -365,6 +395,7 @@ func TestUserManager_GetUserByGUID_InvalidFormat(t *testing.T) {
 
 func TestUserManager_GetUserBySID_Success(t *testing.T) {
 	client := &MockUserClient{}
+	mockPrimaryGroupSIDResolution(client)
 	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
@@ -391,6 +422,7 @@ func TestUserManager_GetUserBySID_Success(t *testing.T) {
 
 func TestUserManager_GetUserByUPN_Success(t *testing.T) {
 	client := &MockUserClient{}
+	mockPrimaryGroupSIDResolution(client)
 	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
@@ -417,6 +449,7 @@ func TestUserManager_GetUserByUPN_Success(t *testing.T) {
 
 func TestUserManager_GetUserBySAM_Success(t *testing.T) {
 	client := &MockUserClient{}
+	mockPrimaryGroupSIDResolution(client)
 	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
@@ -443,6 +476,7 @@ func TestUserManager_GetUserBySAM_Success(t *testing.T) {
 
 func TestUserManager_GetUserBySAM_DomainFormat(t *testing.T) {
 	client := &MockUserClient{}
+	mockPrimaryGroupSIDResolution(client)
 	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
@@ -509,6 +543,7 @@ func TestUserManager_GetUser_AutoDetectIdentifier(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			client.ExpectedCalls = nil // Reset expectations
+			mockPrimaryGroupSIDResolution(client)
 
 			client.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 				return tc.filterCheck(req.Filter)
@@ -530,6 +565,7 @@ func TestUserManager_GetUser_AutoDetectIdentifier(t *testing.T) {
 
 func TestUserManager_SearchUsers_Success(t *testing.T) {
 	client := &MockUserClient{}
+	mockPrimaryGroupSIDResolution(client)
 	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry1 := createMockUserEntry()
@@ -587,6 +623,7 @@ func TestUserManager_SearchUsersWithFilter_NameFilters(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			client.ExpectedCalls = nil // Reset expectations
+			mockPrimaryGroupSIDResolution(client)
 
 			client.On("SearchWithPaging", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 				return strings.Contains(req.Filter, tc.expectedFilter)
@@ -631,6 +668,7 @@ func TestUserManager_SearchUsersWithFilter_OrganizationalFilters(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			client.ExpectedCalls = nil // Reset expectations
+			mockPrimaryGroupSIDResolution(client)
 
 			client.On("SearchWithPaging", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 				return strings.Contains(req.Filter, tc.expectedFilter)
@@ -675,6 +713,7 @@ func TestUserManager_SearchUsersWithFilter_StatusFilters(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			client.ExpectedCalls = nil // Reset expectations
+			mockPrimaryGroupSIDResolution(client)
 
 			filter := &UserSearchFilter{Enabled: tc.enabled}
 
@@ -726,6 +765,7 @@ func TestUserManager_SearchUsersWithFilter_EmailFilters(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			client.ExpectedCalls = nil // Reset expectations
+			mockPrimaryGroupSIDResolution(client)
 
 			client.On("SearchWithPaging", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 				return strings.Contains(req.Filter, tc.expectedFilter)
@@ -746,6 +786,7 @@ func TestUserManager_SearchUsersWithFilter_EmailFilters(t *testing.T) {
 
 func TestUserManager_SearchUsersWithFilter_Container(t *testing.T) {
 	client := &MockUserClient{}
+	mockPrimaryGroupSIDResolution(client)
 	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	mockEntry := createMockUserEntry()
@@ -799,7 +840,6 @@ func TestUserManager_parseUserAccountControl(t *testing.T) {
 				PasswordNeverExpires:   false,
 				PasswordNotRequired:    false,
 				ChangePasswordAtLogon:  false,
-				CannotChangePassword:   false,
 				SmartCardLogonRequired: false,
 				TrustedForDelegation:   false,
 			},
@@ -812,7 +852,6 @@ func TestUserManager_parseUserAccountControl(t *testing.T) {
 				PasswordNeverExpires:   false,
 				PasswordNotRequired:    false,
 				ChangePasswordAtLogon:  false,
-				CannotChangePassword:   false,
 				SmartCardLogonRequired: false,
 				TrustedForDelegation:   false,
 			},
@@ -825,7 +864,6 @@ func TestUserManager_parseUserAccountControl(t *testing.T) {
 				PasswordNeverExpires:   true,
 				PasswordNotRequired:    false,
 				ChangePasswordAtLogon:  false,
-				CannotChangePassword:   false,
 				SmartCardLogonRequired: false,
 				TrustedForDelegation:   false,
 			},
@@ -838,7 +876,6 @@ func TestUserManager_parseUserAccountControl(t *testing.T) {
 				PasswordNeverExpires:   false,
 				PasswordNotRequired:    false,
 				ChangePasswordAtLogon:  false,
-				CannotChangePassword:   false,
 				SmartCardLogonRequired: true,
 				TrustedForDelegation:   false,
 			},
@@ -854,7 +891,6 @@ func TestUserManager_parseUserAccountControl(t *testing.T) {
 			assert.Equal(t, tc.expected.PasswordNeverExpires, user.PasswordNeverExpires)
 			assert.Equal(t, tc.expected.PasswordNotRequired, user.PasswordNotRequired)
 			assert.Equal(t, tc.expected.ChangePasswordAtLogon, user.ChangePasswordAtLogon)
-			assert.Equal(t, tc.expected.CannotChangePassword, user.CannotChangePassword)
 			assert.Equal(t, tc.expected.SmartCardLogonRequired, user.SmartCardLogonRequired)
 			assert.Equal(t, tc.expected.TrustedForDelegation, user.TrustedForDelegation)
 		})
@@ -914,7 +950,27 @@ func TestUserManager_parseADTimestamp(t *testing.T) {
 }
 
 func TestUserManager_entryToUser_ComprehensiveMapping(t *testing.T) {
-	manager := NewUserManager(t.Context(), &MockUserClient{}, "DC=example,DC=com", nil)
+	client := &MockUserClient{}
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
+
+	// Mock the SID resolution search for the primary group.
+	// ResolveSIDToDN searches for objectSid matching the primary group SID.
+	client.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
+		return req.BaseDN == "DC=example,DC=com" &&
+			req.Scope == ScopeWholeSubtree &&
+			strings.Contains(req.Filter, "objectSid")
+	})).Return(&SearchResult{
+		Entries: []*ldap.Entry{
+			{
+				DN: "CN=Domain Users,CN=Users,DC=example,DC=com",
+				Attributes: []*ldap.EntryAttribute{
+					{Name: "distinguishedName", Values: []string{"CN=Domain Users,CN=Users,DC=example,DC=com"}},
+				},
+			},
+		},
+		Total: 1,
+	}, nil)
+
 	entry := createMockUserEntry()
 
 	user, err := manager.entryToUser(entry)
@@ -976,8 +1032,8 @@ func TestUserManager_entryToUser_ComprehensiveMapping(t *testing.T) {
 	assert.Contains(t, user.MemberOf, "CN=Engineers,OU=Groups,DC=example,DC=com")
 	assert.Contains(t, user.MemberOf, "CN=All Users,OU=Groups,DC=example,DC=com")
 
-	// Primary group (should be constructed from SID + primaryGroupID)
-	assert.Equal(t, "S-1-5-21-123456789-123456789-123456789-513", user.PrimaryGroup)
+	// Primary group (should be resolved from SID to DN)
+	assert.Equal(t, "CN=Domain Users,CN=Users,DC=example,DC=com", user.PrimaryGroup)
 
 	// Timestamps
 	assert.Equal(t, 2023, user.WhenCreated.Year())
@@ -987,10 +1043,40 @@ func TestUserManager_entryToUser_ComprehensiveMapping(t *testing.T) {
 	assert.NotNil(t, user.LastLogon)
 	assert.NotNil(t, user.PasswordLastSet)
 	assert.NotNil(t, user.AccountExpires)
+
+	client.AssertExpectations(t)
+}
+
+func TestUserManager_entryToUser_PrimaryGroupFallback(t *testing.T) {
+	client := &MockUserClient{}
+	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
+
+	// Mock the SID resolution search to return no results (object not found).
+	client.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
+		return req.BaseDN == "DC=example,DC=com" &&
+			req.Scope == ScopeWholeSubtree &&
+			strings.Contains(req.Filter, "objectSid")
+	})).Return(&SearchResult{
+		Entries: []*ldap.Entry{},
+		Total:   0,
+	}, nil)
+
+	entry := createMockUserEntry()
+
+	user, err := manager.entryToUser(entry)
+
+	require.NoError(t, err)
+	require.NotNil(t, user)
+
+	// When SID resolution fails, the SID string should be stored as fallback
+	assert.Equal(t, "S-1-5-21-123456789-123456789-123456789-513", user.PrimaryGroup)
+
+	client.AssertExpectations(t)
 }
 
 func TestUserManager_GetUserStats(t *testing.T) {
 	client := &MockUserClient{}
+	mockPrimaryGroupSIDResolution(client)
 	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	enabledEntry := createMockUserEntry()
@@ -1103,7 +1189,6 @@ func TestCalculateUserAccountControlFromFlags(t *testing.T) {
 	tests := []struct {
 		name                 string
 		enabled              bool
-		cannotChangePassword bool
 		passwordNeverExpires bool
 		smartCardRequired    bool
 		trustedForDelegation bool
@@ -1118,12 +1203,6 @@ func TestCalculateUserAccountControlFromFlags(t *testing.T) {
 			name:        "disabled account",
 			enabled:     false,
 			expectedUAC: UACNormalAccount | UACAccountDisabled,
-		},
-		{
-			name:                 "cannot change password",
-			enabled:              true,
-			cannotChangePassword: true,
-			expectedUAC:          UACNormalAccount | UACPasswordCantChange,
 		},
 		{
 			name:                 "password never expires",
@@ -1146,11 +1225,10 @@ func TestCalculateUserAccountControlFromFlags(t *testing.T) {
 		{
 			name:                 "all flags disabled account",
 			enabled:              false,
-			cannotChangePassword: true,
 			passwordNeverExpires: true,
 			smartCardRequired:    true,
 			trustedForDelegation: true,
-			expectedUAC:          UACNormalAccount | UACAccountDisabled | UACPasswordCantChange | UACPasswordNeverExpires | UACSmartCardRequired | UACTrustedForDelegation,
+			expectedUAC:          UACNormalAccount | UACAccountDisabled | UACPasswordNeverExpires | UACSmartCardRequired | UACTrustedForDelegation,
 		},
 	}
 
@@ -1158,7 +1236,6 @@ func TestCalculateUserAccountControlFromFlags(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := CalculateUserAccountControlFromFlags(
 				tt.enabled,
-				tt.cannotChangePassword,
 				tt.passwordNeverExpires,
 				tt.smartCardRequired,
 				tt.trustedForDelegation,
@@ -1474,7 +1551,6 @@ func TestUserManager_CreateUser_WithSecurityFlags(t *testing.T) {
 
 	enabled := false
 	passwordNeverExpires := true
-	cannotChangePassword := true
 
 	req := &CreateUserRequest{
 		Name:                 "Service Account",
@@ -1483,7 +1559,6 @@ func TestUserManager_CreateUser_WithSecurityFlags(t *testing.T) {
 		Container:            "OU=Services,DC=example,DC=com",
 		Enabled:              &enabled,
 		PasswordNeverExpires: &passwordNeverExpires,
-		CannotChangePassword: &cannotChangePassword,
 	}
 
 	expectedDN := "CN=Service Account,OU=Services,DC=example,DC=com"
@@ -1580,6 +1655,79 @@ func TestUserManager_CreateUser_WithPassword(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotNil(t, user)
+	mockClient.AssertExpectations(t)
+}
+
+func TestUserManager_CreateUser_NoPassword_ForcesDisabled(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	enabled := true
+	req := &CreateUserRequest{
+		Name:              "No Password User",
+		UserPrincipalName: "nopwd@example.com",
+		SAMAccountName:    "nopwd",
+		Container:         "OU=Users,DC=example,DC=com",
+		Enabled:           &enabled,
+		InitialPassword:   "", // No password provided
+	}
+
+	expectedDN := "CN=No Password User,OU=Users,DC=example,DC=com"
+
+	// The initial Add should include UACAccountDisabled (always disabled on creation)
+	initialUAC := UACNormalAccount | UACAccountDisabled // 514
+	mockClient.On("Add", mock.Anything, mock.MatchedBy(func(r *AddRequest) bool {
+		if r.DN != expectedDN {
+			return false
+		}
+		uacVals, ok := r.Attributes["userAccountControl"]
+		if !ok || len(uacVals) == 0 {
+			return false
+		}
+		return uacVals[0] == strconv.FormatInt(int64(initialUAC), 10)
+	})).Return(nil).Once()
+
+	// The final Modify for UAC flags must ALSO have the disabled bit set,
+	// even though Enabled=true, because no password was provided.
+	// Expected UAC = UACNormalAccount | UACAccountDisabled = 512 | 2 = 514
+	expectedFinalUAC := UACNormalAccount | UACAccountDisabled // 514
+	mockClient.On("Modify", mock.Anything, mock.MatchedBy(func(r *ModifyRequest) bool {
+		if r.DN != expectedDN {
+			return false
+		}
+		uacVals, ok := r.ReplaceAttributes["userAccountControl"]
+		if !ok || len(uacVals) == 0 {
+			return false
+		}
+		return uacVals[0] == strconv.FormatInt(int64(expectedFinalUAC), 10)
+	})).Return(nil).Once()
+
+	// Mock Search to read back the created user
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(
+		makeUserSearchResult(expectedDN, "guid", "sid", "No Password User", "nopwd@example.com", "nopwd"),
+		nil,
+	).Once()
+
+	user, err := um.CreateUser(req)
+
+	require.NoError(t, err)
+	assert.NotNil(t, user)
+
+	// Verify there was NO unicodePwd modify call (no password set)
+	for _, call := range mockClient.Calls {
+		if call.Method == "Modify" {
+			modReq, ok := call.Arguments[1].(*ModifyRequest)
+			if ok {
+				_, hasUnicodePwd := modReq.ReplaceAttributes["unicodePwd"]
+				assert.False(t, hasUnicodePwd, "should not have a unicodePwd modify call when no password is provided")
+			}
+		}
+	}
+
 	mockClient.AssertExpectations(t)
 }
 
@@ -2031,16 +2179,14 @@ func TestUserManager_CalculateUACChanges(t *testing.T) {
 			currentUser: &User{
 				AccountEnabled:       true,
 				PasswordNeverExpires: false,
-				CannotChangePassword: false,
 				UserAccountControl:   UACNormalAccount,
 			},
 			updateReq: &UpdateUserRequest{
 				Enabled:              boolPtr(false),
 				PasswordNeverExpires: boolPtr(true),
-				CannotChangePassword: boolPtr(true),
 			},
 			expectChange:   true,
-			expectedNewUAC: UACNormalAccount | UACAccountDisabled | UACPasswordNeverExpires | UACPasswordCantChange,
+			expectedNewUAC: UACNormalAccount | UACAccountDisabled | UACPasswordNeverExpires,
 		},
 	}
 
@@ -2136,7 +2282,6 @@ func BenchmarkUserManager_CalculateUACChanges(b *testing.B) {
 	currentUser := &User{
 		AccountEnabled:       true,
 		PasswordNeverExpires: false,
-		CannotChangePassword: false,
 		UserAccountControl:   UACNormalAccount,
 	}
 

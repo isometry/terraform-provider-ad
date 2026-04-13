@@ -143,7 +143,6 @@ func TestAccUserDataSource_allAttributes(t *testing.T) {
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "password_never_expires"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "password_not_required"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "change_password_at_logon"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "cannot_change_password"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "smart_card_logon_required"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "trusted_for_delegation"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "account_locked_out"),

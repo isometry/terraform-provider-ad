@@ -18,7 +18,6 @@ const (
 	UACAccountDisabled         int32 = 0x00000002 // Account is disabled
 	UACHomeDirRequired         int32 = 0x00000008 // Home directory required
 	UACPasswordNotRequired     int32 = 0x00000020 // No password required
-	UACPasswordCantChange      int32 = 0x00000040 // User cannot change password
 	UACEncryptedTextPwdAllowed int32 = 0x00000080 // Encrypted text password allowed
 	UACTempDuplicateAccount    int32 = 0x00000100 // Local user account (temporary)
 	UACNormalAccount           int32 = 0x00000200 // Normal user account
@@ -124,7 +123,6 @@ type User struct {
 	PasswordNeverExpires   bool  `json:"passwordNeverExpires"`   // Password never expires
 	PasswordNotRequired    bool  `json:"passwordNotRequired"`    // No password required
 	ChangePasswordAtLogon  bool  `json:"changePasswordAtLogon"`  // Must change password at next logon
-	CannotChangePassword   bool  `json:"cannotChangePassword"`   // Cannot change password
 	SmartCardLogonRequired bool  `json:"smartCardLogonRequired"` // Smart card required
 	TrustedForDelegation   bool  `json:"trustedForDelegation"`   // Trusted for delegation
 	AccountLockedOut       bool  `json:"accountLockedOut"`       // Account is locked out
@@ -155,7 +153,6 @@ type CreateUserRequest struct {
 
 	// Security flags (pointers for optional with defaults)
 	Enabled                *bool // Default: true
-	CannotChangePassword   *bool // Default: false
 	PasswordNeverExpires   *bool // Default: false
 	SmartCardLogonRequired *bool // Default: false
 	TrustedForDelegation   *bool // Default: false
@@ -217,7 +214,6 @@ type UpdateUserRequest struct {
 
 	// Security flags
 	Enabled                *bool
-	CannotChangePassword   *bool
 	PasswordNeverExpires   *bool
 	SmartCardLogonRequired *bool
 	TrustedForDelegation   *bool
@@ -617,6 +613,12 @@ func (um *UserManager) CreateUser(req *CreateUserRequest) (*User, error) {
 
 	// Calculate and apply final UAC flags
 	finalUAC := um.calculateUserAccountControl(req)
+
+	// Active Directory requires a password before an account can be enabled.
+	// Force the account to stay disabled if no initial password was provided.
+	if req.InitialPassword == "" {
+		finalUAC |= UACAccountDisabled
+	}
 
 	// Apply final UAC flags (enable account if requested, apply other flags)
 	modReq := &ModifyRequest{
@@ -1170,9 +1172,15 @@ func (um *UserManager) entryToUser(entry *ldap.Entry) (*User, error) {
 			if len(sidParts) >= 4 {
 				domainSID := strings.Join(sidParts[:len(sidParts)-1], "-")
 				primaryGroupSID := fmt.Sprintf("%s-%d", domainSID, pgid)
-				// Note: We could resolve this SID to DN, but that requires an additional search
-				// For now, we'll store the SID and let the caller resolve it if needed
-				user.PrimaryGroup = primaryGroupSID
+				if dn, err := um.normalizer.ResolveSIDToDN(primaryGroupSID); err == nil {
+					user.PrimaryGroup = dn
+				} else {
+					tflog.SubsystemWarn(um.ctx, "ldap", "Could not resolve primary group SID to DN, using SID", map[string]any{
+						"sid":   primaryGroupSID,
+						"error": err.Error(),
+					})
+					user.PrimaryGroup = primaryGroupSID
+				}
 			}
 		}
 	}
@@ -1219,7 +1227,6 @@ func (um *UserManager) parseUserAccountControl(user *User, uac int32) {
 	user.AccountEnabled = (uac & UACAccountDisabled) == 0
 	user.PasswordNeverExpires = (uac & UACPasswordNeverExpires) != 0
 	user.PasswordNotRequired = (uac & UACPasswordNotRequired) != 0
-	user.CannotChangePassword = (uac & UACPasswordCantChange) != 0
 	user.SmartCardLogonRequired = (uac & UACSmartCardRequired) != 0
 	user.TrustedForDelegation = (uac & UACTrustedForDelegation) != 0
 	// Note: Account lockout is typically determined by lockoutTime attribute, not UAC
@@ -1445,10 +1452,6 @@ func (um *UserManager) calculateUserAccountControl(req *CreateUserRequest) int32
 	}
 
 	// Handle other flags (default: false for all)
-	if req.CannotChangePassword != nil && *req.CannotChangePassword {
-		uac |= UACPasswordCantChange
-	}
-
 	if req.PasswordNeverExpires != nil && *req.PasswordNeverExpires {
 		uac |= UACPasswordNeverExpires
 	}
@@ -1480,17 +1483,6 @@ func (um *UserManager) calculateUACChanges(req *UpdateUserRequest, currentUser *
 		} else if !*req.Enabled && currentUser.AccountEnabled {
 			// Disable account - add disabled flag
 			newUAC |= UACAccountDisabled
-			changed = true
-		}
-	}
-
-	// Handle CannotChangePassword flag
-	if req.CannotChangePassword != nil {
-		if *req.CannotChangePassword && !currentUser.CannotChangePassword {
-			newUAC |= UACPasswordCantChange
-			changed = true
-		} else if !*req.CannotChangePassword && currentUser.CannotChangePassword {
-			newUAC &^= UACPasswordCantChange
 			changed = true
 		}
 	}
@@ -1632,14 +1624,11 @@ func (um *UserManager) addModifyAttribute(modReq *ModifyRequest, ldapAttr string
 
 // CalculateUserAccountControlFromFlags calculates UAC value from individual boolean flags.
 // This is a utility function that can be used externally.
-func CalculateUserAccountControlFromFlags(enabled, cannotChangePassword, passwordNeverExpires, smartCardRequired, trustedForDelegation bool) int32 {
+func CalculateUserAccountControlFromFlags(enabled, passwordNeverExpires, smartCardRequired, trustedForDelegation bool) int32 {
 	uac := UACNormalAccount
 
 	if !enabled {
 		uac |= UACAccountDisabled
-	}
-	if cannotChangePassword {
-		uac |= UACPasswordCantChange
 	}
 	if passwordNeverExpires {
 		uac |= UACPasswordNeverExpires
