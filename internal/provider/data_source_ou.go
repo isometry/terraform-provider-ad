@@ -30,9 +30,8 @@ func NewOUDataSource() datasource.DataSource {
 
 // OUDataSource defines the data source implementation.
 type OUDataSource struct {
-	client       ldapclient.Client
-	cacheManager *ldapclient.CacheManager
-	ouManager    *ldapclient.OUManager
+	client    ldapclient.Client
+	ouManager *ldapclient.OUManager
 }
 
 // OUDataSourceModel describes the data source data model with multiple lookup methods.
@@ -172,7 +171,6 @@ func (d *OUDataSource) Configure(ctx context.Context, req datasource.ConfigureRe
 	}
 
 	d.client = providerData.Client
-	d.cacheManager = providerData.CacheManager
 
 	// Initialize OU manager
 	baseDN, err := d.client.GetBaseDN(ctx)

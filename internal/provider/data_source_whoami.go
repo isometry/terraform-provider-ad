@@ -23,13 +23,11 @@ func NewWhoAmIDataSource() datasource.DataSource {
 
 // WhoAmIDataSource defines the data source implementation.
 type WhoAmIDataSource struct {
-	Client       ldapclient.Client
-	cacheManager *ldapclient.CacheManager
+	client ldapclient.Client
 }
 
 // WhoAmIDataSourceModel describes the data source data model.
 type WhoAmIDataSourceModel struct {
-	// ID      types.String `tfsdk:"id"`       // Set to authz_id for state tracking
 	ID types.String `tfsdk:"id"` // Raw authorization ID from server
 }
 
@@ -43,10 +41,6 @@ func (d *WhoAmIDataSource) Schema(ctx context.Context, req datasource.SchemaRequ
 			"This data source requires no configuration and returns the raw authorization identity the Active Directory server has associated with the current connection.",
 
 		Attributes: map[string]schema.Attribute{
-			// "id": schema.StringAttribute{
-			// 	MarkdownDescription: "Unique identifier for this data source (same as authz_id).",
-			// 	Computed:            true,
-			// },
 			"id": schema.StringAttribute{
 				MarkdownDescription: "The raw authorization ID returned by the server. This may include a prefix like 'u:' followed by the identity " +
 					"in various formats such as DN, UPN, SAM account name, or SID.",
@@ -71,8 +65,7 @@ func (d *WhoAmIDataSource) Configure(ctx context.Context, req datasource.Configu
 		return
 	}
 
-	d.Client = providerData.Client
-	d.cacheManager = providerData.CacheManager
+	d.client = providerData.Client
 }
 
 func (d *WhoAmIDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
@@ -108,7 +101,7 @@ func (d *WhoAmIDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 	// All attributes are computed, so we don't need to read from config
 
 	// Perform the Who Am I? operation
-	result, err := d.Client.WhoAmI(ctx)
+	result, err := d.client.WhoAmI(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Performing WhoAmI Operation",
@@ -130,18 +123,7 @@ func (d *WhoAmIDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		"authz_id": result.AuthzID,
 	})
 
-	// Map result to model
-	d.mapResultToModel(result, &data)
-
-	// Save data into Terraform state
-	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
-}
-
-// mapResultToModel maps the LDAP WhoAmI result to the Terraform model.
-func (d *WhoAmIDataSource) mapResultToModel(result *ldapclient.WhoAmIResult, data *WhoAmIDataSourceModel) {
-	// Set ID to the authz_id for state tracking
-	// data.ID = types.StringValue(result.AuthzID)
-
-	// Set the raw authorization ID
 	data.ID = types.StringValue(result.AuthzID)
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

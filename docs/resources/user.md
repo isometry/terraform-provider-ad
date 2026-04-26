@@ -93,7 +93,7 @@ resource "ad_user" "service_account" {
 
 > **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
 
-- `change_password_at_logon` (Boolean) Whether the user must change their password at next logon. Defaults to `false`.
+- `change_password_at_logon` (Boolean) Whether the user must change their password at next logon. Defaults to `true` when no password is set, `false` otherwise.
 - `city` (String) The city/locality of the user.
 - `company` (String) The company name of the user.
 - `country` (String) The country of the user.

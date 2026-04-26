@@ -97,6 +97,7 @@ func TestProviderDataSources(t *testing.T) {
 		"ad_group",
 		"ad_groups",
 		"ad_ou",
+		"ad_rootdse",
 		"ad_user",
 		"ad_users",
 		"ad_whoami",

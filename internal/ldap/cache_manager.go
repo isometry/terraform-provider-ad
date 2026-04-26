@@ -125,8 +125,6 @@ func (cm *CacheManager) indexEntry(internalID string, entry *LDAPCacheEntry) {
 }
 
 // removeIndexEntry removes all index mappings for an entry.
-//
-//nolint:unused
 func (cm *CacheManager) removeIndexEntry(entry *LDAPCacheEntry) {
 	// Remove GUID index
 	if entry.ObjectGUID != "" {
@@ -219,8 +217,11 @@ func (cm *CacheManager) lookupInternalID(identifier string) (string, bool) {
 	var samToCheck string
 	if strings.HasPrefix(lowerID, "sam:") {
 		samToCheck = lowerID
-	} else if strings.Contains(identifier, "\\") {
-		samToCheck = fmt.Sprintf("sam:%s", lowerID)
+	} else if idx := strings.Index(identifier, "\\"); idx >= 0 {
+		// DOMAIN\user form: the SAM index stores only the bare sAMAccountName,
+		// so strip the "DOMAIN\" prefix before building the lookup key.
+		samValue := strings.ToLower(identifier[idx+1:])
+		samToCheck = fmt.Sprintf("sam:%s", samValue)
 	}
 	if samToCheck != "" {
 		if internalID, exists := cm.samIndex.Load(samToCheck); exists {
@@ -311,6 +312,22 @@ func (cm *CacheManager) Put(entry *LDAPCacheEntry) error {
 				entry.ObjectSID = values[0]
 				break
 			}
+		}
+	}
+
+	// Dedup: if an entry with the same DN already exists, remove the old
+	// primary row and all its index mappings so we don't leave orphans
+	// behind when a caller re-Puts an entry with a different GUID/SID.
+	dnKey := fmt.Sprintf("dn:%s", strings.ToLower(entry.DN))
+	if oldIDValue, exists := cm.dnIndex.Load(dnKey); exists {
+		if oldID, ok := oldIDValue.(string); ok {
+			if oldEntryVal, e := cm.entries.Load(oldID); e {
+				if oldEntry, ok2 := oldEntryVal.(*LDAPCacheEntry); ok2 {
+					cm.removeIndexEntry(oldEntry)
+				}
+			}
+			cm.entries.Delete(oldID)
+			cm.decrementEntries()
 		}
 	}
 
@@ -511,14 +528,19 @@ func (cm *CacheManager) GetStats() CacheStats {
 }
 
 // Clear removes all entries from the cache.
+//
+// Drains each sync.Map in place via Range+Delete rather than reassigning the
+// field to a fresh sync.Map{}. Reassignment of the map-valued struct fields
+// races any concurrent Put/Get/GetStats caller that reads the same field;
+// draining preserves the existing map headers so concurrent readers continue
+// to see a valid (possibly partly-emptied) map.
 func (cm *CacheManager) Clear() {
-	// Clear all storage and indexes
-	cm.entries = sync.Map{}
-	cm.guidIndex = sync.Map{}
-	cm.sidIndex = sync.Map{}
-	cm.upnIndex = sync.Map{}
-	cm.samIndex = sync.Map{}
-	cm.dnIndex = sync.Map{}
+	cm.entries.Range(func(k, _ any) bool { cm.entries.Delete(k); return true })
+	cm.guidIndex.Range(func(k, _ any) bool { cm.guidIndex.Delete(k); return true })
+	cm.sidIndex.Range(func(k, _ any) bool { cm.sidIndex.Delete(k); return true })
+	cm.upnIndex.Range(func(k, _ any) bool { cm.upnIndex.Delete(k); return true })
+	cm.samIndex.Range(func(k, _ any) bool { cm.samIndex.Delete(k); return true })
+	cm.dnIndex.Range(func(k, _ any) bool { cm.dnIndex.Delete(k); return true })
 
 	// Reset entry counter
 	cm.counterMu.Lock()
@@ -556,6 +578,12 @@ func (cm *CacheManager) incrementMisses() {
 func (cm *CacheManager) incrementEntries() {
 	cm.statsMu.Lock()
 	cm.stats.Entries++
+	cm.statsMu.Unlock()
+}
+
+func (cm *CacheManager) decrementEntries() {
+	cm.statsMu.Lock()
+	cm.stats.Entries--
 	cm.statsMu.Unlock()
 }
 

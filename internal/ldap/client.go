@@ -3,6 +3,7 @@ package ldap
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +15,29 @@ type client struct {
 	ctx    context.Context // Logging context with LDAP subsystem
 	pool   ConnectionPool
 	config *ConnectionConfig
+}
+
+// ldapOps is the subset of *ldap.Conn operations invoked by the client
+// for generic directory operations (search/add/modify/del/modifyDN/whoami).
+//
+// It exists as a seam so tests can intercept the exact requests that the
+// client builds (e.g. *ldap.SearchRequest, *ldap.AddRequest) without having
+// to stand up a real LDAP server. *ldap.Conn implements this interface
+// implicitly, so production code paths are unchanged behaviourally.
+type ldapOps interface {
+	Search(*ldap.SearchRequest) (*ldap.SearchResult, error)
+	Add(*ldap.AddRequest) error
+	Modify(*ldap.ModifyRequest) error
+	ModifyDN(*ldap.ModifyDNRequest) error
+	Del(*ldap.DelRequest) error
+	WhoAmI([]ldap.Control) (*ldap.WhoAmIResult, error)
+}
+
+// connOps returns the ldapOps implementation backing a PooledConnection.
+// It is a package-level variable so tests can substitute a mock
+// implementation. In production it simply returns the live *ldap.Conn.
+var connOps = func(pc *PooledConnection) ldapOps {
+	return pc.conn
 }
 
 // NewClient creates a new LDAP client with connection pooling and logging context.
@@ -373,13 +397,13 @@ func (c *client) Search(ctx context.Context, req *SearchRequest) (*SearchResult,
 			false, // TypesOnly
 			req.Filter,
 			req.Attributes,
-			nil, // Controls
+			req.Controls,
 		)
 
 		var result *ldap.SearchResult
 		err = c.withRetry(ctx, func() error {
 			var searchErr error
-			result, searchErr = conn.Conn().Search(ldapReq)
+			result, searchErr = connOps(conn).Search(ldapReq)
 			return searchErr
 		})
 
@@ -550,6 +574,7 @@ func (c *client) SearchWithPaging(ctx context.Context, req *SearchRequest) (*Sea
 
 		tflog.SubsystemTrace(c.ctx, "ldap", "Starting search page", pageFields)
 
+		pagedControls := append([]ldap.Control{pagingControl}, req.Controls...)
 		ldapReq := ldap.NewSearchRequest(
 			req.BaseDN,
 			int(req.Scope),
@@ -559,13 +584,13 @@ func (c *client) SearchWithPaging(ctx context.Context, req *SearchRequest) (*Sea
 			false,
 			req.Filter,
 			req.Attributes,
-			[]ldap.Control{pagingControl},
+			pagedControls,
 		)
 
 		var result *ldap.SearchResult
 		err = c.withRetry(ctx, func() error {
 			var searchErr error
-			result, searchErr = conn.Conn().Search(ldapReq)
+			result, searchErr = connOps(conn).Search(ldapReq)
 			return searchErr
 		})
 
@@ -680,7 +705,7 @@ func (c *client) Add(ctx context.Context, req *AddRequest) error {
 	}
 
 	return c.withRetry(ctx, func() error {
-		return conn.Conn().Add(ldapReq)
+		return connOps(conn).Add(ldapReq)
 	})
 }
 
@@ -697,7 +722,7 @@ func (c *client) Modify(ctx context.Context, req *ModifyRequest) error {
 	defer conn.Close()
 
 	// Convert our ModifyRequest to go-ldap ModifyRequest
-	ldapReq := ldap.NewModifyRequest(req.DN, nil)
+	ldapReq := ldap.NewModifyRequest(req.DN, req.Controls)
 
 	// Add attributes
 	for attr, values := range req.AddAttributes {
@@ -715,7 +740,7 @@ func (c *client) Modify(ctx context.Context, req *ModifyRequest) error {
 	}
 
 	return c.withRetry(ctx, func() error {
-		return conn.Conn().Modify(ldapReq)
+		return connOps(conn).Modify(ldapReq)
 	})
 }
 
@@ -743,7 +768,7 @@ func (c *client) ModifyDN(ctx context.Context, req *ModifyDNRequest) error {
 	ldapReq := ldap.NewModifyDNRequest(req.DN, req.NewRDN, req.DeleteOldRDN, req.NewSuperior)
 
 	return c.withRetry(ctx, func() error {
-		return conn.Conn().ModifyDN(ldapReq)
+		return connOps(conn).ModifyDN(ldapReq)
 	})
 }
 
@@ -762,7 +787,7 @@ func (c *client) Delete(ctx context.Context, dn string) error {
 	ldapReq := ldap.NewDelRequest(dn, nil)
 
 	return c.withRetry(ctx, func() error {
-		return conn.Conn().Del(ldapReq)
+		return connOps(conn).Del(ldapReq)
 	})
 }
 
@@ -909,7 +934,7 @@ func (c *client) WhoAmI(ctx context.Context) (*WhoAmIResult, error) {
 	var result *ldap.WhoAmIResult
 	err = c.withRetry(ctx, func() error {
 		var whoamiErr error
-		result, whoamiErr = conn.Conn().WhoAmI(nil)
+		result, whoamiErr = connOps(conn).WhoAmI(nil)
 		return whoamiErr
 	})
 
@@ -959,20 +984,33 @@ func (c *client) GetBaseDN(ctx context.Context) (string, error) {
 	return baseDN, nil
 }
 
-// GetServerInfo retrieves server information.
-func (c *client) GetServerInfo(ctx context.Context) (map[string]string, error) {
+// parseADBool parses an Active Directory boolean string ("TRUE"/"FALSE") to a Go bool.
+func parseADBool(s string) bool {
+	return strings.EqualFold(s, "TRUE")
+}
+
+// GetRootDSE retrieves RootDSE attributes and forest configuration from the Configuration partition.
+func (c *client) GetRootDSE(ctx context.Context) (*RootDSEInfo, error) {
+	// Query RootDSE
 	searchReq := &SearchRequest{
 		BaseDN: "",
 		Scope:  ScopeBaseObject,
 		Filter: "(objectClass=*)",
 		Attributes: []string{
 			"defaultNamingContext",
-			"schemaNamingContext",
 			"configurationNamingContext",
+			"schemaNamingContext",
 			"rootDomainNamingContext",
+			"dnsHostName",
+			"serverName",
+			"ldapServiceName",
+			"domainFunctionality",
+			"forestFunctionality",
+			"domainControllerFunctionality",
 			"supportedLDAPVersion",
 			"supportedSASLMechanisms",
-			"dnsHostName",
+			"isGlobalCatalogReady",
+			"isSynchronized",
 		},
 		SizeLimit: 1,
 		TimeLimit: 10 * time.Second,
@@ -980,20 +1018,109 @@ func (c *client) GetServerInfo(ctx context.Context) (map[string]string, error) {
 
 	result, err := c.Search(ctx, searchReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get server info: %w", err)
+		return nil, fmt.Errorf("failed to query RootDSE: %w", err)
 	}
 
 	if len(result.Entries) == 0 {
-		return nil, fmt.Errorf("no root DSE found")
+		return nil, fmt.Errorf("no RootDSE found")
 	}
 
-	info := make(map[string]string)
 	entry := result.Entries[0]
 
-	for _, attr := range searchReq.Attributes {
-		value := entry.GetAttributeValue(attr)
-		if value != "" {
-			info[attr] = value
+	// Parse functional levels (default to 0 if absent or unparseable)
+	parseFunctionalLevel := func(attr string) int64 {
+		val := entry.GetAttributeValue(attr)
+		if val == "" {
+			return 0
+		}
+		level, err := strconv.ParseInt(val, 10, 64)
+		if err != nil {
+			return 0
+		}
+		return level
+	}
+
+	// Parse supported LDAP versions
+	var ldapVersions []int64
+	for _, v := range entry.GetAttributeValues("supportedLDAPVersion") {
+		if version, err := strconv.ParseInt(v, 10, 64); err == nil {
+			ldapVersions = append(ldapVersions, version)
+		}
+	}
+
+	info := &RootDSEInfo{
+		DefaultNamingContext:       entry.GetAttributeValue("defaultNamingContext"),
+		ConfigurationNamingContext: entry.GetAttributeValue("configurationNamingContext"),
+		SchemaNamingContext:        entry.GetAttributeValue("schemaNamingContext"),
+		RootDomainNamingContext:    entry.GetAttributeValue("rootDomainNamingContext"),
+		DNSHostName:                entry.GetAttributeValue("dnsHostName"),
+		ServerName:                 entry.GetAttributeValue("serverName"),
+		LDAPServiceName:            entry.GetAttributeValue("ldapServiceName"),
+
+		DomainFunctionality:           parseFunctionalLevel("domainFunctionality"),
+		ForestFunctionality:           parseFunctionalLevel("forestFunctionality"),
+		DomainControllerFunctionality: parseFunctionalLevel("domainControllerFunctionality"),
+
+		SupportedLDAPVersions:   ldapVersions,
+		SupportedSASLMechanisms: entry.GetAttributeValues("supportedSASLMechanisms"),
+
+		IsGlobalCatalogReady: parseADBool(entry.GetAttributeValue("isGlobalCatalogReady")),
+		IsSynchronized:       parseADBool(entry.GetAttributeValue("isSynchronized")),
+	}
+
+	// Derive DNS names from naming contexts
+	if info.DefaultNamingContext != "" {
+		domainName, err := DNToDNSName(info.DefaultNamingContext)
+		if err != nil {
+			return nil, fmt.Errorf("failed to derive domain name from defaultNamingContext %q: %w", info.DefaultNamingContext, err)
+		}
+		info.DomainName = domainName
+		info.Forest.DefaultUPNSuffix = domainName
+	}
+
+	if info.RootDomainNamingContext != "" {
+		forestName, err := DNToDNSName(info.RootDomainNamingContext)
+		if err != nil {
+			return nil, fmt.Errorf("failed to derive forest name from rootDomainNamingContext %q: %w", info.RootDomainNamingContext, err)
+		}
+		info.Forest.Name = forestName
+	}
+
+	// Query Configuration partition for UPN/SPN suffixes
+	if info.ConfigurationNamingContext != "" {
+		partitionsDN := "CN=Partitions," + info.ConfigurationNamingContext
+		partitionsReq := &SearchRequest{
+			BaseDN:     partitionsDN,
+			Scope:      ScopeBaseObject,
+			Filter:     "(objectClass=crossRefContainer)",
+			Attributes: []string{"uPNSuffixes", "msDS-SPNSuffixes"},
+			SizeLimit:  1,
+			TimeLimit:  10 * time.Second,
+		}
+
+		partitionsResult, err := c.Search(ctx, partitionsReq)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query Configuration partition %q: %w", partitionsDN, err)
+		}
+
+		if len(partitionsResult.Entries) > 0 {
+			pEntry := partitionsResult.Entries[0]
+			info.Forest.UPNSuffixes = pEntry.GetAttributeValues("uPNSuffixes")
+			info.Forest.SPNSuffixes = pEntry.GetAttributeValues("msDS-SPNSuffixes")
+		}
+	}
+
+	// Compute AllUPNSuffixes: default + additional, deduplicated
+	seen := make(map[string]bool)
+	if info.Forest.DefaultUPNSuffix != "" {
+		info.Forest.AllUPNSuffixes = append(info.Forest.AllUPNSuffixes, info.Forest.DefaultUPNSuffix)
+		seen[strings.ToLower(info.Forest.DefaultUPNSuffix)] = true
+	}
+	for _, suffix := range info.Forest.UPNSuffixes {
+		lower := strings.ToLower(suffix)
+		if !seen[lower] {
+			info.Forest.AllUPNSuffixes = append(info.Forest.AllUPNSuffixes, suffix)
+			seen[lower] = true
 		}
 	}
 

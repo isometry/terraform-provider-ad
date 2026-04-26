@@ -66,6 +66,13 @@ type UserSearchFilter struct {
 	// Group membership filters (supports nested groups via LDAP_MATCHING_RULE_IN_CHAIN)
 	MemberOf       string `json:"memberOf,omitempty"`       // Filter users who are members of specified group (DN)
 	NegateMemberOf bool   `json:"negateMemberOf,omitempty"` // Whether to negate the MemberOf filter
+
+	// LDAP search scope. A nil pointer is treated as ScopeWholeSubtree by
+	// SearchUsersWithFilter to preserve the historical default for callers
+	// that don't explicitly set this field. A pointer is required because
+	// the zero value of SearchScope (ScopeBaseObject) is itself a legal and
+	// distinct scope.
+	SearchScope *SearchScope `json:"searchScope,omitempty"`
 }
 
 // User represents an Active Directory user with comprehensive attributes.
@@ -439,8 +446,16 @@ func (um *UserManager) SearchUsersWithFilter(filter *UserSearchFilter) ([]*User,
 		searchBaseDN = filter.Container
 	}
 
+	// Resolve the LDAP search scope: preserve the historical subtree behaviour
+	// when the caller has not explicitly set a scope (nil pointer). All
+	// existing (pre-wiring) callers rely on subtree semantics.
+	searchScope := ScopeWholeSubtree
+	if filter.SearchScope != nil {
+		searchScope = *filter.SearchScope
+	}
+
 	// Perform search using existing SearchUsers method with custom base DN
-	return um.searchUsersInContainer(searchBaseDN, ldapFilter, nil)
+	return um.searchUsersInContainer(searchBaseDN, ldapFilter, nil, searchScope)
 }
 
 // GetUserStats returns statistics about users in the directory.
@@ -627,7 +642,12 @@ func (um *UserManager) CreateUser(req *CreateUserRequest) (*User, error) {
 	}
 	modReq.ReplaceAttributes["userAccountControl"] = []string{strconv.FormatInt(int64(finalUAC), 10)}
 
-	// Handle "change password at logon" by setting pwdLastSet to 0
+	// Handle "change password at logon" via pwdLastSet.
+	// AD auto-updates pwdLastSet to the current timestamp when unicodePwd is
+	// modified, so the false-with-password case needs no explicit write. The
+	// provider-side validator rejects false-without-password configurations,
+	// so when ChangePasswordAtLogon is false here, a password has been set
+	// earlier in this Create flow and AD has already cleared the must-change flag.
 	if req.ChangePasswordAtLogon != nil && *req.ChangePasswordAtLogon {
 		modReq.ReplaceAttributes["pwdLastSet"] = []string{"0"}
 	}
@@ -908,7 +928,7 @@ func (um *UserManager) getUserByDN(dn string) (*User, error) {
 	}
 
 	if len(result.Entries) == 0 {
-		return nil, NewLDAPError("get_user_by_dn", fmt.Errorf("user not found at DN: %s", dn))
+		return nil, NewNotFoundError("get_user_by_dn", "user not found at DN: %s", dn)
 	}
 
 	user, err := um.entryToUser(result.Entries[0])
@@ -938,7 +958,7 @@ func (um *UserManager) getUserByGUID(guid string) (*User, error) {
 	}
 
 	if len(result.Entries) == 0 {
-		return nil, NewLDAPError("get_user_by_guid", fmt.Errorf("user with GUID %s not found", guid))
+		return nil, NewNotFoundError("get_user_by_guid", "user with GUID %s not found", guid)
 	}
 
 	user, err := um.entryToUser(result.Entries[0])
@@ -971,7 +991,7 @@ func (um *UserManager) getUserBySID(sid string) (*User, error) {
 	}
 
 	if len(result.Entries) == 0 {
-		return nil, NewLDAPError("get_user_by_sid", fmt.Errorf("user with SID %s not found", sid))
+		return nil, NewNotFoundError("get_user_by_sid", "user with SID %s not found", sid)
 	}
 
 	user, err := um.entryToUser(result.Entries[0])
@@ -999,7 +1019,7 @@ func (um *UserManager) getUserByUPN(upn string) (*User, error) {
 	}
 
 	if len(result.Entries) == 0 {
-		return nil, NewLDAPError("get_user_by_upn", fmt.Errorf("user with UPN %s not found", upn))
+		return nil, NewNotFoundError("get_user_by_upn", "user with UPN %s not found", upn)
 	}
 
 	user, err := um.entryToUser(result.Entries[0])
@@ -1035,7 +1055,7 @@ func (um *UserManager) getUserBySAM(samAccountName string) (*User, error) {
 	}
 
 	if len(result.Entries) == 0 {
-		return nil, NewLDAPError("get_user_by_sam", fmt.Errorf("user with SAM account name %s not found", samAccountName))
+		return nil, NewNotFoundError("get_user_by_sam", "user with SAM account name %s not found", samAccountName)
 	}
 
 	user, err := um.entryToUser(result.Entries[0])
@@ -1047,7 +1067,9 @@ func (um *UserManager) getUserBySAM(samAccountName string) (*User, error) {
 }
 
 // searchUsersInContainer searches for users in a specific container using LDAP filter.
-func (um *UserManager) searchUsersInContainer(baseDN, filter string, attributes []string) ([]*User, error) {
+// The searchScope argument is passed verbatim; callers are responsible for
+// defaulting an unset scope before calling this helper.
+func (um *UserManager) searchUsersInContainer(baseDN, filter string, attributes []string, searchScope SearchScope) ([]*User, error) {
 	if filter == "" {
 		filter = "(&(objectClass=user)(!(objectClass=computer)))"
 	} else {
@@ -1061,7 +1083,7 @@ func (um *UserManager) searchUsersInContainer(baseDN, filter string, attributes 
 
 	searchReq := &SearchRequest{
 		BaseDN:     baseDN,
-		Scope:      ScopeWholeSubtree,
+		Scope:      searchScope,
 		Filter:     filter,
 		Attributes: attributes,
 		TimeLimit:  um.timeout,

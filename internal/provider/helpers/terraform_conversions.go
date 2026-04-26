@@ -337,10 +337,20 @@ func StringChanged(plan, state types.String, target **string) bool {
 
 // BoolChanged checks if a bool attribute changed between plan and state.
 // If changed, sets *target to the new value.
+// When plan is null and state was set (clearing), *target is set to &false so the
+// LDAP update layer reverts the attribute to its default. This mirrors StringChanged's
+// clearing behaviour.
 // Returns true if the attribute changed.
 func BoolChanged(plan, state types.Bool, target **bool) bool {
 	if plan.Equal(state) {
 		return false
+	}
+
+	// Clearing: plan null, state had a value → revert to false.
+	if plan.IsNull() && !state.IsNull() {
+		def := false
+		*target = &def
+		return true
 	}
 
 	if !plan.IsNull() && !plan.IsUnknown() {
@@ -396,6 +406,61 @@ func DNListOrNull(ctx context.Context, dns []string, diags *diag.Diagnostics) ty
 		return types.ListNull(types.StringType)
 	}
 	return dnList
+}
+
+// StringList converts a string slice to a Terraform List of strings.
+// Returns an empty list (not null) if the slice is empty.
+func StringList(values []string, diags *diag.Diagnostics) types.List {
+	elems := make([]attr.Value, len(values))
+	for i, v := range values {
+		elems[i] = types.StringValue(v)
+	}
+	list, d := types.ListValue(types.StringType, elems)
+	diags.Append(d...)
+	return list
+}
+
+// Int64List converts an int64 slice to a Terraform List of numbers.
+// Returns an empty list (not null) if the slice is empty.
+func Int64List(values []int64, diags *diag.Diagnostics) types.List {
+	elems := make([]attr.Value, len(values))
+	for i, v := range values {
+		elems[i] = types.Int64Value(v)
+	}
+	list, d := types.ListValue(types.Int64Type, elems)
+	diags.Append(d...)
+	return list
+}
+
+// =============================================================================
+// LDAP Search Helpers
+// =============================================================================
+
+// MapSearchScope converts a Terraform "scope" string to a pointer to an
+// ldapclient.SearchScope. Recognised values are "base", "onelevel", and
+// "subtree". Empty strings and any unrecognised values return nil, which
+// the LDAP layer treats as "unset" and defaults to ScopeWholeSubtree. Schema
+// validation at the data-source level restricts inputs to the recognised set,
+// so the default branch is only hit for empty strings from null/unknown
+// Terraform values.
+//
+// Returning a pointer is required because the zero value of
+// ldapclient.SearchScope is ldapclient.ScopeBaseObject, which is itself a
+// legal, distinct scope. Only a pointer can disambiguate "explicitly set to
+// base" from "not set at all".
+func MapSearchScope(s string) *ldapclient.SearchScope {
+	var scope ldapclient.SearchScope
+	switch s {
+	case "base":
+		scope = ldapclient.ScopeBaseObject
+	case "onelevel":
+		scope = ldapclient.ScopeSingleLevel
+	case "subtree":
+		scope = ldapclient.ScopeWholeSubtree
+	default: // empty or unrecognised
+		return nil
+	}
+	return &scope
 }
 
 // DNSetOrNull converts a slice of DNs to a Terraform Set with normalization.

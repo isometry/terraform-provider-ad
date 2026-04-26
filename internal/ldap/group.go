@@ -103,6 +103,13 @@ type GroupSearchFilter struct {
 	// Group membership filters (supports nested groups via LDAP_MATCHING_RULE_IN_CHAIN)
 	MemberOf  string `json:"memberOf,omitempty"`  // Filter groups that are members of specified group (DN)
 	HasMember string `json:"hasMember,omitempty"` // Filter groups that contain specified member (DN)
+
+	// LDAP search scope (distinct from the AD group scope in `Scope` above).
+	// A nil pointer is treated as ScopeWholeSubtree by SearchGroupsWithFilter
+	// to preserve the historical default for callers that don't explicitly
+	// set this field. A pointer is required because the zero value of
+	// SearchScope (ScopeBaseObject) is itself a legal and distinct scope.
+	SearchScope *SearchScope `json:"searchScope,omitempty"`
 }
 
 // Group represents an Active Directory group.
@@ -392,7 +399,7 @@ func (gm *GroupManager) GetGroup(guid string) (*Group, error) {
 	}
 
 	if len(result.Entries) == 0 {
-		return nil, NewLDAPError("get_group", fmt.Errorf("group with GUID %s not found", guid))
+		return nil, NewNotFoundError("get_group", "group with GUID %s not found", guid)
 	}
 
 	group, err := gm.entryToGroup(result.Entries[0])
@@ -433,7 +440,7 @@ func (gm *GroupManager) getGroupByDN(dn string) (*Group, error) {
 	}
 
 	if len(result.Entries) == 0 {
-		return nil, NewLDAPError("get_group_by_dn", fmt.Errorf("group not found at DN: %s", dn))
+		return nil, NewNotFoundError("get_group_by_dn", "group not found at DN: %s", dn)
 	}
 
 	group, err := gm.entryToGroup(result.Entries[0])
@@ -908,6 +915,9 @@ func (gm *GroupManager) SearchGroupsWithFilter(filter *GroupSearchFilter) ([]*Gr
 	if filter.Scope != "" {
 		filterFields["scope"] = filter.Scope
 	}
+	if filter.SearchScope != nil {
+		filterFields["search_scope"] = filter.SearchScope.String()
+	}
 	if filter.HasMembers != nil {
 		filterFields["has_members"] = *filter.HasMembers
 	}
@@ -946,10 +956,19 @@ func (gm *GroupManager) SearchGroupsWithFilter(filter *GroupSearchFilter) ([]*Gr
 	}
 	filterFields["search_base_dn"] = searchBaseDN
 
+	// Resolve the LDAP search scope: preserve the historical subtree behaviour
+	// when the caller has not explicitly set a scope (nil pointer). All
+	// existing (pre-wiring) callers rely on subtree semantics.
+	searchScope := ScopeWholeSubtree
+	if filter.SearchScope != nil {
+		searchScope = *filter.SearchScope
+	}
+	filterFields["resolved_search_scope"] = searchScope.String()
+
 	tflog.SubsystemDebug(gm.ctx, "ldap", "Filter validation complete, executing search", filterFields)
 
 	// Perform search using existing SearchGroups method with custom base DN
-	groups, err := gm.searchGroupsInContainer(searchBaseDN, ldapFilter, nil)
+	groups, err := gm.searchGroupsInContainer(searchBaseDN, ldapFilter, nil, searchScope)
 
 	duration := time.Since(start)
 	filterFields["duration_ms"] = duration.Milliseconds()
@@ -1360,7 +1379,9 @@ func (gm *GroupManager) buildLDAPFilter(filter *GroupSearchFilter) string {
 }
 
 // searchGroupsInContainer searches for groups in a specific container using LDAP filter.
-func (gm *GroupManager) searchGroupsInContainer(baseDN, filter string, attributes []string) ([]*Group, error) {
+// The searchScope argument is passed verbatim; callers are responsible for
+// defaulting an unset scope before calling this helper.
+func (gm *GroupManager) searchGroupsInContainer(baseDN, filter string, attributes []string, searchScope SearchScope) ([]*Group, error) {
 	start := time.Now()
 
 	originalFilter := filter
@@ -1377,6 +1398,7 @@ func (gm *GroupManager) searchGroupsInContainer(baseDN, filter string, attribute
 		"original_filter": originalFilter,
 		"final_filter":    filter,
 		"attributes":      attributes,
+		"search_scope":    searchScope.String(),
 		"timeout":         gm.timeout.String(),
 	}
 
@@ -1390,7 +1412,7 @@ func (gm *GroupManager) searchGroupsInContainer(baseDN, filter string, attribute
 
 	searchReq := &SearchRequest{
 		BaseDN:     baseDN,
-		Scope:      ScopeWholeSubtree,
+		Scope:      searchScope,
 		Filter:     filter,
 		Attributes: attributes,
 		TimeLimit:  gm.timeout,

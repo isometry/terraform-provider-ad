@@ -119,6 +119,18 @@ func (m *MockUserClient) WhoAmI(ctx context.Context) (*WhoAmIResult, error) {
 	return result, args.Error(1)
 }
 
+func (m *MockUserClient) GetRootDSE(ctx context.Context) (*RootDSEInfo, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	result, ok := args.Get(0).(*RootDSEInfo)
+	if !ok {
+		return nil, args.Error(1)
+	}
+	return result, args.Error(1)
+}
+
 // Standard 16-byte binary GUID for testing.
 var testBinaryGUID = []byte{0x78, 0x56, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x34, 0x56}
 
@@ -822,6 +834,47 @@ func TestUserManager_SearchUsersWithFilter_InvalidContainer(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid container DN")
 
 	client.AssertNotCalled(t, "SearchWithPaging")
+}
+
+// TestUserManager_SearchUsersWithFilter_SearchScopePropagation verifies that
+// the UserSearchFilter.SearchScope pointer is threaded through to the
+// underlying LDAP SearchRequest, and that a nil pointer is treated as
+// ScopeWholeSubtree to preserve historical behaviour.
+func TestUserManager_SearchUsersWithFilter_SearchScopePropagation(t *testing.T) {
+	base := ScopeBaseObject
+	one := ScopeSingleLevel
+	sub := ScopeWholeSubtree
+
+	cases := []struct {
+		name     string
+		input    *SearchScope
+		expected SearchScope
+	}{
+		{name: "nil pointer defaults to subtree", input: nil, expected: ScopeWholeSubtree},
+		{name: "explicit base is propagated as base", input: &base, expected: ScopeBaseObject},
+		{name: "explicit onelevel is propagated", input: &one, expected: ScopeSingleLevel},
+		{name: "explicit subtree is propagated", input: &sub, expected: ScopeWholeSubtree},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &MockUserClient{}
+			mockPrimaryGroupSIDResolution(client)
+			manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
+
+			filter := &UserSearchFilter{NamePrefix: "Test", SearchScope: tc.input}
+
+			client.On(
+				"SearchWithPaging",
+				mock.Anything,
+				mock.MatchedBy(func(req *SearchRequest) bool { return req.Scope == tc.expected }),
+			).Return(&SearchResult{Entries: nil, Total: 0}, nil).Once()
+
+			_, err := manager.SearchUsersWithFilter(filter)
+			require.NoError(t, err)
+			client.AssertExpectations(t)
+		})
+	}
 }
 
 func TestUserManager_parseUserAccountControl(t *testing.T) {
@@ -1728,6 +1781,132 @@ func TestUserManager_CreateUser_NoPassword_ForcesDisabled(t *testing.T) {
 		}
 	}
 
+	mockClient.AssertExpectations(t)
+}
+
+func TestUserManager_CreateUser_ChangePasswordAtLogon_TrueWithPassword(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	changeAtLogon := true
+	req := &CreateUserRequest{
+		Name:                  "Test User",
+		UserPrincipalName:     "testuser@example.com",
+		SAMAccountName:        "testuser",
+		Container:             "OU=Users,DC=example,DC=com",
+		InitialPassword:       "P@ssw0rd123!",
+		ChangePasswordAtLogon: &changeAtLogon,
+	}
+
+	expectedDN := "CN=Test User,OU=Users,DC=example,DC=com"
+
+	mockClient.On("Add", mock.Anything, mock.Anything).Return(nil).Once()
+	mockClient.On("Modify", mock.Anything, mock.MatchedBy(func(r *ModifyRequest) bool {
+		return r.DN == expectedDN && r.ReplaceAttributes["unicodePwd"] != nil
+	})).Return(nil).Once()
+	mockClient.On("Modify", mock.Anything, mock.MatchedBy(func(r *ModifyRequest) bool {
+		if r.DN != expectedDN || r.ReplaceAttributes["userAccountControl"] == nil {
+			return false
+		}
+		pwdLastSet, ok := r.ReplaceAttributes["pwdLastSet"]
+		return ok && len(pwdLastSet) == 1 && pwdLastSet[0] == "0"
+	})).Return(nil).Once()
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(
+		makeUserSearchResult(expectedDN, "guid", "sid", "Test User", "testuser@example.com", "testuser"),
+		nil,
+	).Once()
+
+	user, err := um.CreateUser(req)
+
+	require.NoError(t, err)
+	assert.NotNil(t, user)
+	mockClient.AssertExpectations(t)
+}
+
+func TestUserManager_CreateUser_ChangePasswordAtLogon_FalseWithPassword(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	changeAtLogon := false
+	req := &CreateUserRequest{
+		Name:                  "Test User",
+		UserPrincipalName:     "testuser@example.com",
+		SAMAccountName:        "testuser",
+		Container:             "OU=Users,DC=example,DC=com",
+		InitialPassword:       "P@ssw0rd123!",
+		ChangePasswordAtLogon: &changeAtLogon,
+	}
+
+	expectedDN := "CN=Test User,OU=Users,DC=example,DC=com"
+
+	mockClient.On("Add", mock.Anything, mock.Anything).Return(nil).Once()
+	mockClient.On("Modify", mock.Anything, mock.MatchedBy(func(r *ModifyRequest) bool {
+		return r.DN == expectedDN && r.ReplaceAttributes["unicodePwd"] != nil
+	})).Return(nil).Once()
+	// AD auto-updates pwdLastSet to the current timestamp when unicodePwd is
+	// modified, so no explicit pwdLastSet write is expected in the final Modify.
+	mockClient.On("Modify", mock.Anything, mock.MatchedBy(func(r *ModifyRequest) bool {
+		if r.DN != expectedDN || r.ReplaceAttributes["userAccountControl"] == nil {
+			return false
+		}
+		_, hasPwdLastSet := r.ReplaceAttributes["pwdLastSet"]
+		return !hasPwdLastSet
+	})).Return(nil).Once()
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(
+		makeUserSearchResult(expectedDN, "guid", "sid", "Test User", "testuser@example.com", "testuser"),
+		nil,
+	).Once()
+
+	user, err := um.CreateUser(req)
+
+	require.NoError(t, err)
+	assert.NotNil(t, user)
+	mockClient.AssertExpectations(t)
+}
+
+func TestUserManager_CreateUser_ChangePasswordAtLogon_NilNoPassword_SkipsPwdLastSet(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	baseDN := "DC=example,DC=com"
+
+	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
+
+	req := &CreateUserRequest{
+		Name:                  "Test User",
+		UserPrincipalName:     "testuser@example.com",
+		SAMAccountName:        "testuser",
+		Container:             "OU=Users,DC=example,DC=com",
+		ChangePasswordAtLogon: nil,
+	}
+
+	expectedDN := "CN=Test User,OU=Users,DC=example,DC=com"
+
+	mockClient.On("Add", mock.Anything, mock.Anything).Return(nil).Once()
+	mockClient.On("Modify", mock.Anything, mock.MatchedBy(func(r *ModifyRequest) bool {
+		if r.DN != expectedDN || r.ReplaceAttributes["userAccountControl"] == nil {
+			return false
+		}
+		_, hasPwdLastSet := r.ReplaceAttributes["pwdLastSet"]
+		return !hasPwdLastSet
+	})).Return(nil).Once()
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(
+		makeUserSearchResult(expectedDN, "guid", "sid", "Test User", "testuser@example.com", "testuser"),
+		nil,
+	).Once()
+
+	user, err := um.CreateUser(req)
+
+	require.NoError(t, err)
+	assert.NotNil(t, user)
 	mockClient.AssertExpectations(t)
 }
 

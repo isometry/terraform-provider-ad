@@ -232,11 +232,11 @@ func (d *UsersDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 						Optional:            true,
 					},
 					"department": schema.StringAttribute{
-						MarkdownDescription: "Filter by department. Case-insensitive partial match.",
+						MarkdownDescription: "Filter by department. Case-insensitive exact match.",
 						Optional:            true,
 					},
 					"title": schema.StringAttribute{
-						MarkdownDescription: "Filter by job title. Case-insensitive partial match.",
+						MarkdownDescription: "Filter by job title. Case-insensitive exact match.",
 						Optional:            true,
 					},
 					"manager": schema.StringAttribute{
@@ -335,6 +335,10 @@ func (d *UsersDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	}
 
 	// Log the search parameters
+	searchScopeLog := "unset"
+	if searchFilter.SearchScope != nil {
+		searchScopeLog = searchFilter.SearchScope.String()
+	}
 	tflog.Debug(ctx, "Searching for AD users", map[string]any{
 		"container":     searchFilter.Container,
 		"name_prefix":   searchFilter.NamePrefix,
@@ -349,6 +353,7 @@ func (d *UsersDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 		"has_email":     searchFilter.HasEmail,
 		"email_domain":  searchFilter.EmailDomain,
 		"member_of":     searchFilter.MemberOf,
+		"search_scope":  searchScopeLog,
 	})
 
 	// Perform the search
@@ -394,6 +399,14 @@ func (d *UsersDataSource) buildSearchFilter(ctx context.Context, data *UsersData
 	// Set container if specified
 	if !data.Container.IsNull() && data.Container.ValueString() != "" {
 		searchFilter.Container = data.Container.ValueString()
+	}
+
+	// Set LDAP search scope if specified (top-level `scope` attribute). Schema
+	// validation restricts values to "base", "onelevel", or "subtree". The
+	// helper returns a nil pointer for empty/unrecognised values, which the
+	// LDAP layer treats as "unset" and defaults to subtree.
+	if !data.Scope.IsNull() && data.Scope.ValueString() != "" {
+		searchFilter.SearchScope = helpers.MapSearchScope(data.Scope.ValueString())
 	}
 
 	// Parse filter block if present

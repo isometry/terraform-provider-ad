@@ -131,13 +131,17 @@ func testProviderConfig() string {
 		fmt.Fprintf(&providerConfig, "  password = %q\n", config.Password)
 	}
 
+	// Acceptance tests typically run against AD environments with self-signed
+	// certificates, so skip TLS verification unconditionally.
+	providerConfig.WriteString("  skip_tls_verify = true\n")
+
 	providerConfig.WriteString("}\n")
 	return providerConfig.String()
 }
 
-// testDomainDataSource generates a data source for getting domain info.
-func testDomainDataSource() string {
-	return "data \"ad_domain\" \"test\" {}"
+// testRootDSEDataSource generates a data source for resolving domain naming contexts.
+func testRootDSEDataSource() string {
+	return "data \"ad_rootdse\" \"test\" {}"
 }
 
 // GenerateTestName generates a unique test name with timestamp.
@@ -179,7 +183,7 @@ func (g *TestDataGenerator) GenerateGroupConfig(name, samName string) string {
 resource "ad_group" "test" {
   name             = %[1]q
   sam_account_name = %[2]q
-  container        = "%[3]s,${data.ad_domain.test.dn}"
+  container        = "%[3]s,${data.ad_rootdse.test.default_naming_context}"
   scope            = "Global"
   category         = "Security"
 }`, name, samName, g.config.Container)
@@ -191,7 +195,7 @@ func (g *TestDataGenerator) GenerateGroupConfigWithDescription(name, samName, de
 resource "ad_group" "test" {
   name             = %[1]q
   sam_account_name = %[2]q
-  container        = "%[3]s,${data.ad_domain.test.dn}"
+  container        = "%[3]s,${data.ad_rootdse.test.default_naming_context}"
   scope            = "Global"
   category         = "Security"
   description      = %[4]q
@@ -203,7 +207,7 @@ func (g *TestDataGenerator) GenerateOUConfig(name string) string {
 	return fmt.Sprintf(`
 resource "ad_ou" "test" {
   name      = %[1]q
-  container = "${data.ad_domain.test.dn}"
+  container = "${data.ad_rootdse.test.default_naming_context}"
 }`, name)
 }
 
@@ -212,9 +216,28 @@ func (g *TestDataGenerator) GenerateOUConfigWithDescription(name, description st
 	return fmt.Sprintf(`
 resource "ad_ou" "test" {
   name        = %[1]q
-  container   = "${data.ad_domain.test.dn}"
+  container   = "${data.ad_rootdse.test.default_naming_context}"
   description = %[2]q
 }`, name, description)
+}
+
+// newTestLDAPConfig builds a ConnectionConfig populated with the same defaults
+// the production provider applies in Configure, overlaid with the test
+// environment's auth/identity fields. Skips TLS verification unconditionally:
+// acceptance tests typically target AD environments with self-signed certs.
+func newTestLDAPConfig(config *TestConfig) *ldapclient.ConnectionConfig {
+	ldapConfig := ldapclient.DefaultConfig()
+	ldapConfig.Domain = config.Domain
+	if config.LDAPURL != "" {
+		ldapConfig.LDAPURLs = []string{config.LDAPURL}
+	}
+	ldapConfig.Username = config.Username
+	ldapConfig.Password = config.Password
+	ldapConfig.KerberosKeytab = config.Keytab
+	ldapConfig.KerberosRealm = config.Realm
+	ldapConfig.TLSConfig.InsecureSkipVerify = true
+
+	return ldapConfig
 }
 
 // TestFixture manages test fixtures for cleanup.
@@ -228,15 +251,7 @@ type TestFixture struct {
 func NewTestFixture(t *testing.T) *TestFixture {
 	config := testAccPreCheckWithConfig(t)
 
-	// Create LDAP client for cleanup operations
-	ldapConfig := &ldapclient.ConnectionConfig{
-		Domain:         config.Domain,
-		LDAPURLs:       []string{config.LDAPURL},
-		Username:       config.Username,
-		Password:       config.Password,
-		KerberosKeytab: config.Keytab,
-		KerberosRealm:  config.Realm,
-	}
+	ldapConfig := newTestLDAPConfig(config)
 
 	client, err := ldapclient.NewClient(t.Context(), ldapConfig)
 	if err != nil {
@@ -286,18 +301,7 @@ func testCheckGroupExists(ctx context.Context, resourceName string) resource.Tes
 		}
 
 		config := GetTestConfig()
-		ldapURLs := []string{}
-		if config.LDAPURL != "" {
-			ldapURLs = []string{config.LDAPURL}
-		}
-		ldapConfig := &ldapclient.ConnectionConfig{
-			Domain:         config.Domain,
-			LDAPURLs:       ldapURLs,
-			Username:       config.Username,
-			Password:       config.Password,
-			KerberosKeytab: config.Keytab,
-			KerberosRealm:  config.Realm,
-		}
+		ldapConfig := newTestLDAPConfig(config)
 
 		client, err := ldapclient.NewClient(ctx, ldapConfig)
 		if err != nil {
@@ -321,18 +325,7 @@ func testCheckGroupExists(ctx context.Context, resourceName string) resource.Tes
 // testCheckGroupDestroy verifies that all test groups are destroyed.
 func testCheckGroupDestroy(ctx context.Context, s *terraform.State) error {
 	config := GetTestConfig()
-	ldapURLs := []string{}
-	if config.LDAPURL != "" {
-		ldapURLs = []string{config.LDAPURL}
-	}
-	ldapConfig := &ldapclient.ConnectionConfig{
-		Domain:         config.Domain,
-		LDAPURLs:       ldapURLs,
-		Username:       config.Username,
-		Password:       config.Password,
-		KerberosKeytab: config.Keytab,
-		KerberosRealm:  config.Realm,
-	}
+	ldapConfig := newTestLDAPConfig(config)
 
 	client, err := ldapclient.NewClient(ctx, ldapConfig)
 	if err != nil {
@@ -363,6 +356,134 @@ func testCheckGroupDestroy(ctx context.Context, s *terraform.State) error {
 	return nil
 }
 
+// testCheckOUDestroy verifies that all test OUs are destroyed.
+func testCheckOUDestroy(ctx context.Context, s *terraform.State) error {
+	config := GetTestConfig()
+	ldapConfig := newTestLDAPConfig(config)
+
+	client, err := ldapclient.NewClient(ctx, ldapConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create LDAP client: %v", err)
+	}
+	defer client.Close()
+
+	ouManager := ldapclient.NewOUManager(ctx, client, config.BaseDN)
+
+	for _, rs := range s.RootModule().Resources {
+		if rs.Type != "ad_ou" {
+			continue
+		}
+
+		// Try to read the OU - it should not exist
+		_, err := ouManager.GetOU(rs.Primary.ID)
+		if err == nil {
+			return fmt.Errorf("OU %s still exists", rs.Primary.ID)
+		}
+
+		// Verify it's a "not found" error, not some other error
+		if !ldapclient.IsNotFoundError(err) {
+			return fmt.Errorf("unexpected error checking OU %s: %v", rs.Primary.ID, err)
+		}
+	}
+
+	return nil
+}
+
+// GUID tracking for OU rename/move/container-relocation tests.
+var storedOUGUID string
+
+//nolint:unparam // resourceName kept for call-site readability across tests
+func testAccStoreOUGUID(resourceName string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[resourceName]
+		if !ok {
+			return fmt.Errorf("not found: %s", resourceName)
+		}
+
+		storedOUGUID = rs.Primary.Attributes["id"]
+		if storedOUGUID == "" {
+			return fmt.Errorf("OU ID (GUID) is empty")
+		}
+
+		return nil
+	}
+}
+
+func testAccCheckOUGUIDUnchanged() resource.TestCheckFunc {
+	const resourceName = "ad_ou.test"
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[resourceName]
+		if !ok {
+			return fmt.Errorf("not found: %s", resourceName)
+		}
+
+		currentGUID := rs.Primary.Attributes["id"]
+		if currentGUID != storedOUGUID {
+			return fmt.Errorf("OU GUID changed: expected %s, got %s", storedOUGUID, currentGUID)
+		}
+
+		return nil
+	}
+}
+
+// testAccCheckNamedOUGUIDUnchanged asserts that the GUID at the named resource
+// address matches the previously stored OU GUID. Useful for multi-OU tests
+// where the moved resource is not at the default ad_ou.test address.
+func testAccCheckNamedOUGUIDUnchanged(resourceName string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[resourceName]
+		if !ok {
+			return fmt.Errorf("not found: %s", resourceName)
+		}
+
+		currentGUID := rs.Primary.Attributes["id"]
+		if currentGUID != storedOUGUID {
+			return fmt.Errorf("OU %s GUID changed: expected %s, got %s", resourceName, storedOUGUID, currentGUID)
+		}
+
+		return nil
+	}
+}
+
+// testAccStoreNamedResourceGUID captures the GUID (resource ID) for an
+// arbitrary resource address into the supplied pointer. Use this when a test
+// needs to track more than one GUID in parallel (e.g. parent + child OUs).
+func testAccStoreNamedResourceGUID(resourceName string, dest *string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[resourceName]
+		if !ok {
+			return fmt.Errorf("not found: %s", resourceName)
+		}
+
+		guid := rs.Primary.Attributes["id"]
+		if guid == "" {
+			return fmt.Errorf("resource %s ID (GUID) is empty", resourceName)
+		}
+
+		*dest = guid
+		return nil
+	}
+}
+
+// testAccCheckNamedResourceGUIDUnchanged asserts that the GUID at the named
+// resource matches the stored value pointed to by src. Pairs with
+// testAccStoreNamedResourceGUID.
+func testAccCheckNamedResourceGUIDUnchanged(resourceName string, src *string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[resourceName]
+		if !ok {
+			return fmt.Errorf("not found: %s", resourceName)
+		}
+
+		currentGUID := rs.Primary.Attributes["id"]
+		if currentGUID != *src {
+			return fmt.Errorf("resource %s GUID changed: expected %s, got %s", resourceName, *src, currentGUID)
+		}
+
+		return nil
+	}
+}
+
 // testCheckGroupDisappears manually deletes a group outside of Terraform.
 func testCheckGroupDisappears(ctx context.Context, resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
@@ -372,18 +493,7 @@ func testCheckGroupDisappears(ctx context.Context, resourceName string) resource
 		}
 
 		config := GetTestConfig()
-		ldapURLs := []string{}
-		if config.LDAPURL != "" {
-			ldapURLs = []string{config.LDAPURL}
-		}
-		ldapConfig := &ldapclient.ConnectionConfig{
-			Domain:         config.Domain,
-			LDAPURLs:       ldapURLs,
-			Username:       config.Username,
-			Password:       config.Password,
-			KerberosKeytab: config.Keytab,
-			KerberosRealm:  config.Realm,
-		}
+		ldapConfig := newTestLDAPConfig(config)
 
 		client, err := ldapclient.NewClient(ctx, ldapConfig)
 		if err != nil {
@@ -417,18 +527,7 @@ func NewBenchmarkHelper(b *testing.B) *BenchmarkHelper {
 	SkipIfNotAccTest(&testing.T{})
 
 	config := GetTestConfig()
-	ldapURLs := []string{}
-	if config.LDAPURL != "" {
-		ldapURLs = []string{config.LDAPURL}
-	}
-	ldapConfig := &ldapclient.ConnectionConfig{
-		Domain:         config.Domain,
-		LDAPURLs:       ldapURLs,
-		Username:       config.Username,
-		Password:       config.Password,
-		KerberosKeytab: config.Keytab,
-		KerberosRealm:  config.Realm,
-	}
+	ldapConfig := newTestLDAPConfig(config)
 
 	client, err := ldapclient.NewClient(b.Context(), ldapConfig)
 	if err != nil {
@@ -502,11 +601,12 @@ func getEnvWithDefault(key, defaultValue string) string {
 
 // MockLDAPClient provides a mock LDAP client for unit testing.
 type MockLDAPClient struct {
-	groups       map[string]*ldapclient.Group
-	users        map[string]*ldapclient.User
-	ous          map[string]*ldapclient.OU
-	whoAmIResult *ldapclient.WhoAmIResult
-	err          error
+	groups        map[string]*ldapclient.Group
+	users         map[string]*ldapclient.User
+	ous           map[string]*ldapclient.OU
+	whoAmIResult  *ldapclient.WhoAmIResult
+	rootDSEResult *ldapclient.RootDSEInfo
+	err           error
 }
 
 // NewMockLDAPClient creates a new mock LDAP client.
@@ -656,4 +756,17 @@ func (m *MockLDAPClient) GetBaseDN(ctx context.Context) (string, error) {
 		return "", m.err
 	}
 	return "DC=example,DC=com", nil
+}
+
+// SetRootDSEResult sets the RootDSE result to be returned by the mock.
+func (m *MockLDAPClient) SetRootDSEResult(result *ldapclient.RootDSEInfo) {
+	m.rootDSEResult = result
+}
+
+// GetRootDSE returns the mock RootDSE result.
+func (m *MockLDAPClient) GetRootDSE(ctx context.Context) (*ldapclient.RootDSEInfo, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.rootDSEResult, nil
 }

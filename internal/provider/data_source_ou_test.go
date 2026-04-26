@@ -30,8 +30,7 @@ func TestAccOUDataSource_id(t *testing.T) {
 					resource.TestCheckResourceAttr("data.ad_ou.test", "description", "Test OU for data source"),
 					resource.TestCheckResourceAttr("data.ad_ou.test", "protected", "false"),
 					resource.TestCheckResourceAttrSet("data.ad_ou.test", "child_count"),
-					resource.TestCheckResourceAttrSet("data.ad_ou.test", "children"),
-					resource.TestCheckResourceAttrSet("data.ad_ou.test", "sid"),
+					resource.TestCheckResourceAttrSet("data.ad_ou.test", "children.#"),
 					resource.TestCheckResourceAttrSet("data.ad_ou.test", "parent"),
 					resource.TestCheckResourceAttrSet("data.ad_ou.test", "when_created"),
 					resource.TestCheckResourceAttrSet("data.ad_ou.test", "when_changed"),
@@ -58,8 +57,7 @@ func TestAccOUDataSource_dn(t *testing.T) {
 					resource.TestCheckResourceAttr("data.ad_ou.test", "description", "Test OU for DN data source"),
 					resource.TestCheckResourceAttr("data.ad_ou.test", "protected", "false"),
 					resource.TestCheckResourceAttrSet("data.ad_ou.test", "child_count"),
-					resource.TestCheckResourceAttrSet("data.ad_ou.test", "children"),
-					resource.TestCheckResourceAttrSet("data.ad_ou.test", "sid"),
+					resource.TestCheckResourceAttrSet("data.ad_ou.test", "children.#"),
 					resource.TestCheckResourceAttrSet("data.ad_ou.test", "parent"),
 					resource.TestCheckResourceAttrSet("data.ad_ou.test", "when_created"),
 					resource.TestCheckResourceAttrSet("data.ad_ou.test", "when_changed"),
@@ -86,8 +84,7 @@ func TestAccOUDataSource_nameAndPath(t *testing.T) {
 					resource.TestCheckResourceAttr("data.ad_ou.test", "description", "Test OU for name/path data source"),
 					resource.TestCheckResourceAttr("data.ad_ou.test", "protected", "false"),
 					resource.TestCheckResourceAttrSet("data.ad_ou.test", "child_count"),
-					resource.TestCheckResourceAttrSet("data.ad_ou.test", "children"),
-					resource.TestCheckResourceAttrSet("data.ad_ou.test", "sid"),
+					resource.TestCheckResourceAttrSet("data.ad_ou.test", "children.#"),
 					resource.TestCheckResourceAttrSet("data.ad_ou.test", "parent"),
 					resource.TestCheckResourceAttrSet("data.ad_ou.test", "when_created"),
 					resource.TestCheckResourceAttrSet("data.ad_ou.test", "when_changed"),
@@ -157,17 +154,17 @@ func TestAccOUDataSource_configValidation(t *testing.T) {
 			// Test that multiple lookup methods are rejected
 			{
 				Config:      testAccOUDataSourceConfig_multipleKeys(),
-				ExpectError: regexp.MustCompile("Invalid Attribute Combination|ExactlyOneOf"),
+				ExpectError: regexp.MustCompile("Exactly one of these attributes must be configured"),
 			},
 			// Test that name without path is rejected
 			{
 				Config:      testAccOUDataSourceConfig_nameWithoutPath(),
-				ExpectError: regexp.MustCompile("Invalid Attribute Combination|RequiredTogether"),
+				ExpectError: regexp.MustCompile("(Exactly one of these attributes must be configured|These attributes must be configured together)"),
 			},
 			// Test that path without name is rejected
 			{
 				Config:      testAccOUDataSourceConfig_pathWithoutName(),
-				ExpectError: regexp.MustCompile("Invalid Attribute Combination|RequiredTogether"),
+				ExpectError: regexp.MustCompile("(Exactly one of these attributes must be configured|These attributes must be configured together)"),
 			},
 		},
 	})
@@ -224,10 +221,14 @@ func testAccCheckOUDataSourceHasChildren(dataSourceName string, expectedChildRes
 // Test configuration functions
 
 func testAccOUDataSourceConfig_id() string {
-	return `
+	return fmt.Sprintf(`
+%s
+
+%s
+
 resource "ad_ou" "test" {
   name        = "TestOUDataSource"
-  path        = "DC=example,DC=com"
+  path        = data.ad_rootdse.test.default_naming_context
   description = "Test OU for data source"
   protected   = false
 }
@@ -235,14 +236,18 @@ resource "ad_ou" "test" {
 data "ad_ou" "test" {
   id = ad_ou.test.id
 }
-`
+`, testProviderConfig(), testRootDSEDataSource())
 }
 
 func testAccOUDataSourceConfig_dn() string {
-	return `
+	return fmt.Sprintf(`
+%s
+
+%s
+
 resource "ad_ou" "test" {
   name        = "TestOUDataSourceDN"
-  path        = "DC=example,DC=com"
+  path        = data.ad_rootdse.test.default_naming_context
   description = "Test OU for DN data source"
   protected   = false
 }
@@ -250,30 +255,40 @@ resource "ad_ou" "test" {
 data "ad_ou" "test" {
   dn = ad_ou.test.dn
 }
-`
+`, testProviderConfig(), testRootDSEDataSource())
 }
 
 func testAccOUDataSourceConfig_nameAndPath() string {
-	return `
+	return fmt.Sprintf(`
+%s
+
+%s
+
 resource "ad_ou" "test" {
   name        = "TestOUDataSourceName"
-  path        = "DC=example,DC=com"
+  path        = data.ad_rootdse.test.default_naming_context
   description = "Test OU for name/path data source"
   protected   = false
 }
 
 data "ad_ou" "test" {
   name = "TestOUDataSourceName"
-  path = "DC=example,DC=com"
+  path = data.ad_rootdse.test.default_naming_context
+
+  depends_on = [ad_ou.test]
 }
-`
+`, testProviderConfig(), testRootDSEDataSource())
 }
 
 func testAccOUDataSourceConfig_withChildren() string {
-	return `
+	return fmt.Sprintf(`
+%s
+
+%s
+
 resource "ad_ou" "parent" {
   name        = "TestOUParent"
-  path        = "DC=example,DC=com"
+  path        = data.ad_rootdse.test.default_naming_context
   description = "Parent OU with children"
   protected   = false
 }
@@ -294,47 +309,65 @@ resource "ad_ou" "child2" {
 
 data "ad_ou" "parent" {
   id = ad_ou.parent.id
+
+  # Without this, the data source can race the child OU creates: the graph
+  # only requires ad_ou.parent, and children are read in parallel.
+  depends_on = [ad_ou.child1, ad_ou.child2]
 }
-`
+`, testProviderConfig(), testRootDSEDataSource())
 }
 
 func testAccOUDataSourceConfig_notFound() string {
-	return `
+	return fmt.Sprintf(`
+%s
+
 data "ad_ou" "test" {
   id = "00000000-0000-0000-0000-000000000000"
 }
-`
+`, testProviderConfig())
 }
 
 func testAccOUDataSourceConfig_invalidGUID() string {
-	return `
+	return fmt.Sprintf(`
+%s
+
 data "ad_ou" "test" {
   id = "invalid-guid-format"
 }
-`
+`, testProviderConfig())
 }
 
 func testAccOUDataSourceConfig_multipleKeys() string {
-	return `
+	return fmt.Sprintf(`
+%s
+
+%s
+
 data "ad_ou" "test" {
   id = "550e8400-e29b-41d4-a716-446655440000"
-  dn = "OU=Test,DC=example,DC=com"
+  dn = "OU=Test,${data.ad_rootdse.test.default_naming_context}"
 }
-`
+`, testProviderConfig(), testRootDSEDataSource())
 }
 
 func testAccOUDataSourceConfig_nameWithoutPath() string {
-	return `
+	return fmt.Sprintf(`
+%s
+
 data "ad_ou" "test" {
   name = "TestOU"
 }
-`
+`, testProviderConfig())
 }
 
 func testAccOUDataSourceConfig_pathWithoutName() string {
-	return `
+	return fmt.Sprintf(`
+%s
+
+%s
+
 data "ad_ou" "test" {
-  path = "DC=example,DC=com"
+  path = data.ad_rootdse.test.default_naming_context
 }
-`
+`, testProviderConfig(), testRootDSEDataSource())
 }

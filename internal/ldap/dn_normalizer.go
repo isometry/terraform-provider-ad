@@ -177,6 +177,35 @@ func RDNEqual(a, b string) bool {
 	return pa.RDNs[0].EqualFold(pb.RDNs[0])
 }
 
+// DNToDNSName converts a Distinguished Name to a DNS domain name by extracting
+// DC components. For example: "DC=sub,DC=example,DC=com" -> "sub.example.com"
+// Non-DC components (CN, OU, etc.) are ignored.
+func DNToDNSName(dn string) (string, error) {
+	if dn == "" {
+		return "", fmt.Errorf("DN cannot be empty")
+	}
+
+	parsedDN, err := ldap.ParseDN(dn)
+	if err != nil {
+		return "", fmt.Errorf("invalid DN syntax: %w", err)
+	}
+
+	var dcComponents []string
+	for _, rdn := range parsedDN.RDNs {
+		for _, attr := range rdn.Attributes {
+			if strings.EqualFold(attr.Type, "DC") {
+				dcComponents = append(dcComponents, attr.Value)
+			}
+		}
+	}
+
+	if len(dcComponents) == 0 {
+		return "", fmt.Errorf("no DC components found in DN '%s'", dn)
+	}
+
+	return strings.Join(dcComponents, "."), nil
+}
+
 // IsDNChild checks if childDN is a direct or indirect child of parentDN.
 func IsDNChild(childDN, parentDN string) (bool, error) {
 	if childDN == "" || parentDN == "" {

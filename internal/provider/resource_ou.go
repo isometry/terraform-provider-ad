@@ -35,8 +35,7 @@ func NewOUResource() resource.Resource {
 
 // OUResource defines the resource implementation.
 type OUResource struct {
-	client       ldapclient.Client
-	cacheManager *ldapclient.CacheManager
+	client ldapclient.Client
 }
 
 // OUResourceModel describes the resource data model.
@@ -104,15 +103,10 @@ func (r *OUResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 			"managed_by": schema.StringAttribute{
 				MarkdownDescription: "Distinguished Name (DN) of the user or computer that manages this organizational unit. " +
 					"Must be a valid DN format (e.g., `CN=User,OU=Users,DC=example,DC=com`). " +
-					"Set to an empty string (`\"\"`) to clear.",
+					"Omit (or set to `null`) to clear; AD treats an absent attribute as unset.",
 				Optional: true,
-				Computed: true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-					planmodifiers.NullForEmptyString(),
-				},
 				Validators: []validator.String{
-					validators.IsValidDNOrEmpty(),
+					validators.IsValidDN(),
 				},
 			},
 			"dn": schema.StringAttribute{
@@ -150,7 +144,6 @@ func (r *OUResource) Configure(ctx context.Context, req resource.ConfigureReques
 	}
 
 	r.client = providerData.Client
-	r.cacheManager = providerData.CacheManager
 }
 
 func (r *OUResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -348,12 +341,12 @@ func (r *OUResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		hasChanges = true
 	}
 
-	// Check for managedBy changes — only concrete values trigger updates.
-	// Null/unknown are no-ops (UseStateForUnknown preserves state); "" clears; a DN sets.
-	if !data.ManagedBy.Equal(currentData.ManagedBy) &&
-		!data.ManagedBy.IsNull() && !data.ManagedBy.IsUnknown() {
-		managedByValue := data.ManagedBy.ValueString()
-		updateReq.ManagedBy = &managedByValue
+	// Check for managedBy changes. The attribute is Optional only — users
+	// clear it by omitting it (config null), which arrives here as plan-null
+	// against a state holding the prior DN; helpers.StringChanged emits &""
+	// as the LDAP clear signal in that case. plan == state → no-op; plan
+	// has a value → &value.
+	if helpers.StringChanged(data.ManagedBy, currentData.ManagedBy, &updateReq.ManagedBy) {
 		hasChanges = true
 	}
 

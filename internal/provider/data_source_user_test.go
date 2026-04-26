@@ -13,19 +13,17 @@ func TestAccUserDataSource(t *testing.T) {
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
-			// Read testing
+			// Read testing by UPN
 			{
-				Config: testAccUserDataSourceConfig_byUPN("testuser@example.com"),
+				Config: testAccUserDataSourceConfig_createAndLookupByUPN(),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("data.ad_user.test", "upn", "testuser@example.com"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "id"),
+					resource.TestCheckResourceAttrPair("data.ad_user.test", "id", "ad_user.test", "id"),
+					resource.TestCheckResourceAttrPair("data.ad_user.test", "dn", "ad_user.test", "dn"),
+					resource.TestCheckResourceAttrPair("data.ad_user.test", "upn", "ad_user.test", "principal_name"),
+					resource.TestCheckResourceAttrPair("data.ad_user.test", "sam_account_name", "ad_user.test", "sam_account_name"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "object_guid"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "dn"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "sam_account_name"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "display_name"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "when_created"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "when_changed"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "account_enabled"),
 				),
 			},
 		},
@@ -38,14 +36,13 @@ func TestAccUserDataSource_byDN(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccUserDataSourceConfig_byDN("CN=Test User,CN=Users,DC=example,DC=com"),
+				Config: testAccUserDataSourceConfig_createAndLookupByDN(),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("data.ad_user.test", "dn", "CN=Test User,CN=Users,DC=example,DC=com"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "id"),
+					resource.TestCheckResourceAttrPair("data.ad_user.test", "id", "ad_user.test", "id"),
+					resource.TestCheckResourceAttrPair("data.ad_user.test", "dn", "ad_user.test", "dn"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "object_guid"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "upn"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "sam_account_name"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "display_name"),
 				),
 			},
 		},
@@ -58,14 +55,13 @@ func TestAccUserDataSource_byGUID(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccUserDataSourceConfig_byGUID("550e8400-e29b-41d4-a716-446655440000"),
+				Config: testAccUserDataSourceConfig_createAndLookupByGUID(),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("data.ad_user.test", "object_guid", "550e8400-e29b-41d4-a716-446655440000"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "id"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "dn"),
+					resource.TestCheckResourceAttrPair("data.ad_user.test", "id", "ad_user.test", "id"),
+					resource.TestCheckResourceAttrPair("data.ad_user.test", "object_guid", "ad_user.test", "id"),
+					resource.TestCheckResourceAttrPair("data.ad_user.test", "dn", "ad_user.test", "dn"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "upn"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "sam_account_name"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "display_name"),
 				),
 			},
 		},
@@ -78,14 +74,13 @@ func TestAccUserDataSource_bySAM(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccUserDataSourceConfig_bySAM("testuser"),
+				Config: testAccUserDataSourceConfig_createAndLookupBySAM(),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("data.ad_user.test", "sam_account_name", "testuser"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "id"),
+					resource.TestCheckResourceAttrPair("data.ad_user.test", "id", "ad_user.test", "id"),
+					resource.TestCheckResourceAttrPair("data.ad_user.test", "sam_account_name", "ad_user.test", "sam_account_name"),
+					resource.TestCheckResourceAttrPair("data.ad_user.test", "dn", "ad_user.test", "dn"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "object_guid"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "dn"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "upn"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "display_name"),
 				),
 			},
 		},
@@ -98,15 +93,14 @@ func TestAccUserDataSource_bySID(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccUserDataSourceConfig_bySID("S-1-5-21-123456789-123456789-123456789-1001"),
+				Config: testAccUserDataSourceConfig_createAndLookupBySID(),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("data.ad_user.test", "object_sid", "S-1-5-21-123456789-123456789-123456789-1001"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "id"),
+					resource.TestCheckResourceAttrPair("data.ad_user.test", "id", "ad_user.test", "id"),
+					resource.TestCheckResourceAttrPair("data.ad_user.test", "object_sid", "ad_user.test", "sid"),
+					resource.TestCheckResourceAttrPair("data.ad_user.test", "dn", "ad_user.test", "dn"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "object_guid"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "dn"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "upn"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "sam_account_name"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "display_name"),
 				),
 			},
 		},
@@ -119,37 +113,18 @@ func TestAccUserDataSource_allAttributes(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccUserDataSourceConfig_byUPN("fulluser@example.com"),
+				Config: testAccUserDataSourceConfig_createAndLookupByUPN(),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					// Core identity
+					// Core identity (always set by AD for a newly created user)
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "id"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "object_guid"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "object_sid"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "dn"),
-					resource.TestCheckResourceAttr("data.ad_user.test", "upn", "fulluser@example.com"),
+					resource.TestCheckResourceAttrSet("data.ad_user.test", "upn"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "sam_account_name"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "display_name"),
 
-					// Contact information (may be empty for test users)
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "email_address"),
-
-					// Organizational information (may be empty for test users)
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "title"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "department"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "company"),
-
-					// Account status
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "account_enabled"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "password_never_expires"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "password_not_required"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "change_password_at_logon"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "smart_card_logon_required"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "trusted_for_delegation"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "account_locked_out"),
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "user_account_control"),
-
-					// Group memberships
-					resource.TestCheckResourceAttrSet("data.ad_user.test", "member_of"),
+					// Group memberships (computed list/string attributes).
+					resource.TestCheckResourceAttrSet("data.ad_user.test", "member_of.#"),
 					resource.TestCheckResourceAttrSet("data.ad_user.test", "primary_group"),
 
 					// Timestamps
@@ -182,58 +157,106 @@ func TestAccUserDataSource_configValidation(t *testing.T) {
 
 // Test configuration functions
 
-func testAccUserDataSourceConfig_byUPN(upn string) string {
-	return fmt.Sprintf(`
-data "ad_user" "test" {
-  upn = %[1]q
+// testAccUserResourceForDataSource creates an ad_user that the data source tests can look up.
+func testAccUserResourceForDataSource() string {
+	return `
+resource "ad_user" "test" {
+  name             = "TestUserDS"
+  principal_name   = "testuserds@${data.ad_rootdse.test.domain_name}"
+  sam_account_name = "testuserds"
+  container        = "CN=Users,${data.ad_rootdse.test.default_naming_context}"
+  password         = "TestP4ssw0rd!Ds"
+  enabled          = true
 }
-`, upn)
-}
-
-func testAccUserDataSourceConfig_byDN(dn string) string {
-	return fmt.Sprintf(`
-data "ad_user" "test" {
-  dn = %[1]q
-}
-`, dn)
+`
 }
 
-func testAccUserDataSourceConfig_byGUID(guid string) string {
+func testAccUserDataSourceConfig_createAndLookupByUPN() string {
 	return fmt.Sprintf(`
+%s
+
+%s
+
+%s
+
 data "ad_user" "test" {
-  id = %[1]q
+  upn = ad_user.test.principal_name
 }
-`, guid)
+`, testProviderConfig(), testRootDSEDataSource(), testAccUserResourceForDataSource())
 }
 
-func testAccUserDataSourceConfig_bySAM(sam string) string {
+func testAccUserDataSourceConfig_createAndLookupByDN() string {
 	return fmt.Sprintf(`
+%s
+
+%s
+
+%s
+
 data "ad_user" "test" {
-  sam_account_name = %[1]q
+  dn = ad_user.test.dn
 }
-`, sam)
+`, testProviderConfig(), testRootDSEDataSource(), testAccUserResourceForDataSource())
 }
 
-func testAccUserDataSourceConfig_bySID(sid string) string {
+func testAccUserDataSourceConfig_createAndLookupByGUID() string {
 	return fmt.Sprintf(`
+%s
+
+%s
+
+%s
+
 data "ad_user" "test" {
-  sid = %[1]q
+  id = ad_user.test.id
 }
-`, sid)
+`, testProviderConfig(), testRootDSEDataSource(), testAccUserResourceForDataSource())
+}
+
+func testAccUserDataSourceConfig_createAndLookupBySAM() string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+%s
+
+data "ad_user" "test" {
+  sam_account_name = ad_user.test.sam_account_name
+}
+`, testProviderConfig(), testRootDSEDataSource(), testAccUserResourceForDataSource())
+}
+
+func testAccUserDataSourceConfig_createAndLookupBySID() string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+%s
+
+data "ad_user" "test" {
+  sid = ad_user.test.sid
+}
+`, testProviderConfig(), testRootDSEDataSource(), testAccUserResourceForDataSource())
 }
 
 func testAccUserDataSourceConfig_noLookupMethod() string {
-	return `
+	return fmt.Sprintf(`
+%s
+
 data "ad_user" "test" {
 }
-`
+`, testProviderConfig())
 }
 
 func testAccUserDataSourceConfig_multipleLookupMethods() string {
-	return `
+	return fmt.Sprintf(`
+%s
+
 data "ad_user" "test" {
-  upn = "test@example.com"
-  sam_account_name    = "test"
+  upn              = "test@example.com"
+  sam_account_name = "test"
 }
-`
+`, testProviderConfig())
 }

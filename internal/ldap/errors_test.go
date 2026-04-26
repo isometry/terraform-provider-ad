@@ -2,6 +2,7 @@ package ldap
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/go-ldap/ldap/v3"
@@ -502,6 +503,69 @@ func TestErrorHelperFunctions(t *testing.T) {
 				t.Errorf("IsPermissionError() = %v, want %v", IsPermissionError(tt.err), tt.isPerm)
 			}
 		})
+	}
+}
+
+func TestIsNotFoundError_GenericNotFound(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "generic not found via NewLDAPError",
+			err:  NewLDAPError("get_user_by_guid", fmt.Errorf("user with GUID xxx not found")),
+			want: true,
+		},
+		{
+			name: "generic no such object",
+			err:  NewLDAPError("search", fmt.Errorf("no such object at DN")),
+			want: true,
+		},
+		{
+			name: "generic does not exist",
+			err:  NewLDAPError("get_ou", fmt.Errorf("OU does not exist")),
+			want: true,
+		},
+		{
+			name: "NewNotFoundError helper",
+			err:  NewNotFoundError("get_user_by_guid", "user with GUID %s not found", "abc"),
+			want: true,
+		},
+		{
+			name: "connection not found should classify as connection, not not-found",
+			err:  NewLDAPError("connect", fmt.Errorf("connection not found")),
+			want: false,
+		},
+		{
+			name: "unrelated error",
+			err:  NewLDAPError("bind", fmt.Errorf("something else went wrong")),
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsNotFoundError(tt.err); got != tt.want {
+				t.Errorf("IsNotFoundError() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewNotFoundError(t *testing.T) {
+	err := NewNotFoundError("get_user_by_guid", "user with GUID %s not found", "abc-123")
+	if err == nil {
+		t.Fatal("NewNotFoundError() returned nil")
+	}
+	if err.Category != ErrorCategoryNotFound {
+		t.Errorf("Category = %v, want %v", err.Category, ErrorCategoryNotFound)
+	}
+	if err.Operation != "get_user_by_guid" {
+		t.Errorf("Operation = %q, want %q", err.Operation, "get_user_by_guid")
+	}
+	if !IsNotFoundError(err) {
+		t.Error("IsNotFoundError() = false, want true")
 	}
 }
 

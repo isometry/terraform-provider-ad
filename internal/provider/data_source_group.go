@@ -259,6 +259,22 @@ func (d *GroupDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	// Determine lookup method and retrieve group
 	group, err := d.retrieveGroup(ctx, &data, &resp.Diagnostics)
 	if err != nil {
+		// Emit a friendlier "Group Not Found" diagnostic when the underlying
+		// LDAP error indicates the object could not be located. This keeps
+		// the raw LDAP wire error out of the Summary while preserving it in
+		// the Detail for debugging.
+		if ldapclient.IsNotFoundError(err) {
+			resp.Diagnostics.AddError(
+				"Group Not Found",
+				fmt.Sprintf(
+					"No Active Directory group was found matching the configured %s.\n\n"+
+						"Underlying error: %s",
+					groupLookupAttributeDescription(&data),
+					err.Error(),
+				),
+			)
+			return
+		}
 		resp.Diagnostics.AddError(
 			"Error Reading Group",
 			fmt.Sprintf("Could not read Active Directory group: %s", err.Error()),
@@ -269,7 +285,10 @@ func (d *GroupDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	if group == nil {
 		resp.Diagnostics.AddError(
 			"Group Not Found",
-			"The specified Active Directory group could not be found.",
+			fmt.Sprintf(
+				"No Active Directory group was found matching the configured %s.",
+				groupLookupAttributeDescription(&data),
+			),
 		)
 		return
 	}
@@ -360,7 +379,11 @@ func (d *GroupDataSource) retrieveGroup(ctx context.Context, data *GroupDataSour
 		}
 
 		if len(groups) == 0 {
-			return nil, fmt.Errorf("no group found with SAM account name: %s", samAccountName)
+			return nil, ldapclient.NewNotFoundError(
+				"search_group_by_sam",
+				"no group found with SAM account name: %s",
+				samAccountName,
+			)
 		}
 
 		if len(groups) > 1 {
@@ -459,4 +482,25 @@ func (d *GroupDataSource) mapGroupToModel(ctx context.Context, group *ldapclient
 		"scope":           group.Scope,
 		"category":        group.Category,
 	})
+}
+
+// groupLookupAttributeDescription returns a human-readable description of the
+// lookup attribute(s) provided in the configuration, used for "Group Not
+// Found" diagnostic detail strings.
+func groupLookupAttributeDescription(data *GroupDataSourceModel) string {
+	switch {
+	case !data.ID.IsNull() && data.ID.ValueString() != "":
+		return fmt.Sprintf("id=%q", data.ID.ValueString())
+	case !data.DistinguishedName.IsNull() && data.DistinguishedName.ValueString() != "":
+		return fmt.Sprintf("dn=%q", data.DistinguishedName.ValueString())
+	case !data.Name.IsNull() && data.Name.ValueString() != "":
+		if !data.Container.IsNull() && data.Container.ValueString() != "" {
+			return fmt.Sprintf("name=%q in container=%q", data.Name.ValueString(), data.Container.ValueString())
+		}
+		return fmt.Sprintf("name=%q", data.Name.ValueString())
+	case !data.SAMAccountName.IsNull() && data.SAMAccountName.ValueString() != "":
+		return fmt.Sprintf("sam_account_name=%q", data.SAMAccountName.ValueString())
+	default:
+		return "lookup attribute"
+	}
 }

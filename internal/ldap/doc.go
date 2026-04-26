@@ -47,7 +47,7 @@ The implementation respects Active Directory operational limits:
   - Batch sizes respect AD's member operation limits (ADMemberBatchSize)
   - Connection limits prevent resource exhaustion (MaxConnectionPoolLimit)
   - Cache sizes balance performance and memory usage (DefaultNormalizerCacheSize)
-  - Security descriptor analysis for protection detection (ProtectedOUDescriptorMinLength)
+  - Security descriptor DACL parsing for OU protection detection
 
 # Error Handling
 

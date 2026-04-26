@@ -171,14 +171,7 @@ func BenchmarkConnectionPool(b *testing.B) {
 	}
 
 	config := GetTestConfig()
-	ldapConfig := &ldapclient.ConnectionConfig{
-		Domain:         config.Domain,
-		LDAPURLs:       []string{config.LDAPURL},
-		Username:       config.Username,
-		Password:       config.Password,
-		KerberosKeytab: config.Keytab,
-		KerberosRealm:  config.Realm,
-	}
+	ldapConfig := newTestLDAPConfig(config)
 
 	b.Run("ClientCreation", func(b *testing.B) {
 		for b.Loop() {

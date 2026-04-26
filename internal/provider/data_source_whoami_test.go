@@ -64,7 +64,6 @@ func TestWhoAmIDataSource_Configure(t *testing.T) {
 	dataSource.Configure(t.Context(), req, resp)
 
 	assert.False(t, resp.Diagnostics.HasError())
-	assert.Equal(t, mockClient, dataSource.Client)
 }
 
 func TestWhoAmIDataSource_Configure_WrongType(t *testing.T) {
@@ -84,7 +83,9 @@ func TestWhoAmIDataSource_Configure_WrongType(t *testing.T) {
 func TestWhoAmIDataSource_Read(t *testing.T) {
 	dataSource := &provider.WhoAmIDataSource{}
 	mockClient := NewMockLDAPClient()
-	dataSource.Client = mockClient
+	providerData := &ldapclient.ProviderData{Client: mockClient, CacheManager: nil}
+	configResp := &datasource.ConfigureResponse{}
+	dataSource.Configure(t.Context(), datasource.ConfigureRequest{ProviderData: providerData}, configResp)
 
 	whoAmIResult := &ldapclient.WhoAmIResult{
 		AuthzID: "u:CN=John Doe,CN=Users,DC=example,DC=com",
@@ -120,13 +121,14 @@ func TestWhoAmIDataSource_Read(t *testing.T) {
 	resp.State.Get(t.Context(), &data)
 
 	assert.Equal(t, "u:CN=John Doe,CN=Users,DC=example,DC=com", data.ID.ValueString())
-	assert.Equal(t, "u:CN=John Doe,CN=Users,DC=example,DC=com", data.ID.ValueString())
 }
 
 func TestWhoAmIDataSource_Read_WhoAmI_Error(t *testing.T) {
 	dataSource := &provider.WhoAmIDataSource{}
 	mockClient := NewMockLDAPClient()
-	dataSource.Client = mockClient
+	providerData := &ldapclient.ProviderData{Client: mockClient, CacheManager: nil}
+	configResp := &datasource.ConfigureResponse{}
+	dataSource.Configure(t.Context(), datasource.ConfigureRequest{ProviderData: providerData}, configResp)
 
 	mockClient.SetError(assert.AnError)
 
@@ -153,7 +155,9 @@ func TestWhoAmIDataSource_Read_WhoAmI_Error(t *testing.T) {
 func TestWhoAmIDataSource_Read_Nil_Result(t *testing.T) {
 	dataSource := &provider.WhoAmIDataSource{}
 	mockClient := NewMockLDAPClient()
-	dataSource.Client = mockClient
+	providerData := &ldapclient.ProviderData{Client: mockClient, CacheManager: nil}
+	configResp := &datasource.ConfigureResponse{}
+	dataSource.Configure(t.Context(), datasource.ConfigureRequest{ProviderData: providerData}, configResp)
 
 	mockClient.SetWhoAmIResult(nil)
 
@@ -195,7 +199,8 @@ func TestAccWhoAmIDataSource(t *testing.T) {
 }
 
 func testAccWhoAmIDataSourceConfig() string {
-	return `
+	return testProviderConfig() + `
+
 data "ad_whoami" "test" {}
 `
 }

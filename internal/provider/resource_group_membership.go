@@ -240,6 +240,81 @@ func (r *GroupMembershipResource) ModifyPlan(ctx context.Context, req resource.M
 	}
 	plan.MembersNormalized = membersNormalizedSet
 
+	// If prior state exists (not a Create), reconcile semantic-identity
+	// differences in the `members` attribute so format/case changes that refer
+	// to the same principal do not produce spurious plan diffs.
+	//
+	// The `members` attribute preserves user-provided input verbatim, but two
+	// distinct literal values can refer to the same AD object:
+	//   1. DN vs. DN differing only by attribute-type case ("CN=" vs "Cn=").
+	//   2. Different identifier formats (DN, UPN, GUID, SID, SAM) that all
+	//      resolve to the same DN.
+	//
+	// For any plan member whose canonical DN matches a state member under DN
+	// semantic equality (DNEqual), reuse the state member's literal value.
+	// This folds both reconciliation paths into a single state iteration.
+	//
+	// Plan identifiers that cannot be resolved (e.g. normalizedMap miss) or
+	// fail to find a matching state member are preserved verbatim. Any
+	// normalization error is tolerated at plan time -- Create/Update will
+	// surface a higher-quality error message if the identifier is truly bad.
+	if !req.State.Raw.IsNull() {
+		var state GroupMembershipResourceModel
+		stateDiags := req.State.Get(ctx, &state)
+		// Only apply the reconciliation if state extraction succeeded and the
+		// state carries a known, non-null members set.
+		if !stateDiags.HasError() && !state.Members.IsNull() && !state.Members.IsUnknown() {
+			var stateMembers []string
+			if d := state.Members.ElementsAs(ctx, &stateMembers, false); !d.HasError() && len(stateMembers) > 0 {
+				reconciled := make([]string, 0, len(members))
+				changed := false
+				for _, planMember := range members {
+					trimmed := strings.TrimSpace(planMember)
+
+					// Determine the DN to compare against state members.
+					// DN-shaped inputs compare directly; other identifier
+					// formats use the canonical DN resolved earlier by
+					// NormalizeToDNBatch (keyed by trimmed identifier).
+					var compareDN string
+					if normalizer.DetectIdentifierType(trimmed) == ldapclient.IdentifierTypeDN {
+						compareDN = trimmed
+					} else if dn, ok := normalizedMap[trimmed]; ok {
+						compareDN = dn
+					}
+
+					matched := false
+					if compareDN != "" {
+						for _, stateMember := range stateMembers {
+							if ldapclient.DNEqual(compareDN, stateMember) {
+								reconciled = append(reconciled, stateMember)
+								if stateMember != planMember {
+									changed = true
+								}
+								matched = true
+								break
+							}
+						}
+					}
+					if !matched {
+						reconciled = append(reconciled, planMember)
+					}
+				}
+				if changed {
+					reconciledSet, rdiags := types.SetValueFrom(ctx, types.StringType, reconciled)
+					resp.Diagnostics.Append(rdiags...)
+					if resp.Diagnostics.HasError() {
+						return
+					}
+					plan.Members = reconciledSet
+					tflog.Debug(ctx, "Reconciled members against state (DN case and cross-type identifier formats)", map[string]any{
+						"group_id":           plan.GroupID.ValueString(),
+						"reconciled_members": reconciled,
+					})
+				}
+			}
+		}
+	}
+
 	tflog.Debug(ctx, "Normalized member identifiers during planning", map[string]any{
 		"group_id":           plan.GroupID.ValueString(),
 		"members":            members,

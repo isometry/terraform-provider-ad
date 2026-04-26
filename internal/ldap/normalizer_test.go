@@ -104,6 +104,18 @@ func (m *MockClient) WhoAmI(ctx context.Context) (*WhoAmIResult, error) {
 	return result, args.Error(1)
 }
 
+func (m *MockClient) GetRootDSE(ctx context.Context) (*RootDSEInfo, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	result, ok := args.Get(0).(*RootDSEInfo)
+	if !ok {
+		return nil, args.Error(1)
+	}
+	return result, args.Error(1)
+}
+
 func (m *MockClient) ModifyDN(ctx context.Context, req *ModifyDNRequest) error {
 	args := m.Called(ctx, req)
 	return args.Error(0)

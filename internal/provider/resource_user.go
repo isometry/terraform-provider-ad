@@ -14,7 +14,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -33,6 +36,7 @@ import (
 var _ resource.Resource = &UserResource{}
 var _ resource.ResourceWithImportState = &UserResource{}
 var _ resource.ResourceWithValidateConfig = &UserResource{}
+var _ resource.ResourceWithConfigValidators = &UserResource{}
 var _ resource.ResourceWithModifyPlan = &UserResource{}
 
 // NewUserResource creates a new instance of the user resource.
@@ -239,6 +243,9 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Optional:            true,
 				Computed:            true,
 				Default:             booldefault.StaticBool(true),
+				PlanModifiers: []planmodifier.Bool{
+					planmodifiers.EnabledRequiresPassword(path.Root("password")),
+				},
 			},
 			"password_never_expires": schema.BoolAttribute{
 				MarkdownDescription: "Whether the user's password never expires. Defaults to `false`.",
@@ -259,24 +266,35 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Default:             booldefault.StaticBool(false),
 			},
 			"change_password_at_logon": schema.BoolAttribute{
-				MarkdownDescription: "Whether the user must change their password at next logon. Defaults to `false`.",
+				MarkdownDescription: "Whether the user must change their password at next logon. Defaults to `true` when no password is set, `false` otherwise.",
 				Optional:            true,
 				Computed:            true,
-				Default:             booldefault.StaticBool(false),
+				PlanModifiers: []planmodifier.Bool{
+					planmodifiers.DefaultChangePasswordAtLogon(),
+				},
 			},
 
 			// Computed security (read-only)
 			"password_not_required": schema.BoolAttribute{
 				MarkdownDescription: "Whether the user account is configured to not require a password.",
 				Computed:            true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"account_locked_out": schema.BoolAttribute{
 				MarkdownDescription: "Whether the user account is currently locked out.",
 				Computed:            true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"user_account_control": schema.Int64Attribute{
 				MarkdownDescription: "The raw Active Directory userAccountControl value as an integer.",
 				Computed:            true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
 			},
 
 			// Personal information
@@ -504,32 +522,53 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "A list of Distinguished Names of groups this user is a member of.",
 				ElementType:         types.StringType,
 				Computed:            true,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"primary_group": schema.StringAttribute{
 				MarkdownDescription: "The primary group of the user (typically 'Domain Users').",
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 
 			// Computed timestamps
 			"when_created": schema.StringAttribute{
 				MarkdownDescription: "When the user was created (RFC3339 format).",
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"when_changed": schema.StringAttribute{
 				MarkdownDescription: "When the user was last modified (RFC3339 format).",
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"last_logon": schema.StringAttribute{
 				MarkdownDescription: "When the user last logged on (RFC3339 format).",
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"password_last_set": schema.StringAttribute{
 				MarkdownDescription: "When the user's password was last set (RFC3339 format).",
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					planmodifiers.PasswordLastSetUnknown(),
+				},
 			},
 			"account_expires": schema.StringAttribute{
 				MarkdownDescription: "When the user account expires (RFC3339 format).",
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 		},
 	}
@@ -554,32 +593,10 @@ func (r *UserResource) ValidateConfig(ctx context.Context, req resource.Validate
 	}
 }
 
-func (r *UserResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	// Only process if we have a plan (not during destroy)
-	if req.Plan.Raw.IsNull() {
-		return
-	}
-
-	var config UserResourceModel
-	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// Active Directory requires a password before an account can be enabled.
-	// If no password is configured and enabled would be true, force it to false
-	// in the plan so the plan reflects what AD will actually store.
-	if config.Password.IsNull() || config.Password.ValueString() == "" {
-		var plan UserResourceModel
-		resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-
-		if !plan.Enabled.IsNull() && plan.Enabled.ValueBool() {
-			plan.Enabled = types.BoolValue(false)
-			resp.Diagnostics.Append(resp.Plan.Set(ctx, plan)...)
-		}
+// ConfigValidators implements resource.ResourceWithConfigValidators.
+func (r *UserResource) ConfigValidators(_ context.Context) []resource.ConfigValidator {
+	return []resource.ConfigValidator{
+		validators.ChangePasswordAtLogonRequiresPassword(),
 	}
 }
 
@@ -599,6 +616,87 @@ func (r *UserResource) Configure(ctx context.Context, req resource.ConfigureRequ
 
 	r.client = providerData.Client
 	r.cacheManager = providerData.CacheManager
+}
+
+// ModifyPlan adjusts computed attributes whose final value cannot be pinned to
+// state when other attributes change. It must run after all attribute-level
+// plan modifiers so the "driver" attributes have been fully resolved (e.g.
+// booldefault and EnabledRequiresPassword on `enabled`).
+//
+// It marks:
+//   - user_account_control as Unknown when any of the UAC driver attributes
+//     differs between state and plan;
+//   - when_changed as Unknown when any tracked attribute differs between state
+//     and plan (i.e. an Update will occur).
+//
+// On create (state is null) and destroy (plan is null) it is a no-op: the
+// framework's Unknown default for Computed attributes applies on create, and
+// destroy leaves computed values untouched.
+func (r *UserResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// Destroy: nothing to do.
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+
+	// Create: leave framework Unknown defaults in place.
+	if req.State.Raw.IsNull() {
+		return
+	}
+
+	var plan, state UserResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Mark user_account_control Unknown when any UAC driver differs between
+	// state and plan. Unknown plan driver values are treated as "no change"
+	// (they will be resolved by the driver's own plan modifiers).
+	if userAccountControlDriversDiffer(plan, state) {
+		plan.UserAccountControl = types.Int64Unknown()
+	}
+
+	// Mark when_changed Unknown whenever the plan represents a real change
+	// from state (i.e. an Update will happen). On pure refresh the helper
+	// returns false and we leave the UseStateForUnknown-resolved value intact.
+	differs, diags := planmodifiers.PlanDiffersFromState(ctx, req.Plan, req.State)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if differs {
+		plan.WhenChanged = types.StringUnknown()
+	}
+
+	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
+}
+
+// userAccountControlDriversDiffer reports whether any of the boolean driver
+// attributes that compose userAccountControl differ between state and plan.
+// Unknown plan values are treated as "no change" — the framework resolves
+// them via the driver attribute's own plan modifiers.
+func userAccountControlDriversDiffer(plan, state UserResourceModel) bool {
+	drivers := []struct {
+		plan, state types.Bool
+	}{
+		{plan.Enabled, state.Enabled},
+		{plan.PasswordNeverExpires, state.PasswordNeverExpires},
+		{plan.SmartCardLogonRequired, state.SmartCardLogonRequired},
+		{plan.TrustedForDelegation, state.TrustedForDelegation},
+	}
+	for _, d := range drivers {
+		if d.plan.IsUnknown() {
+			continue
+		}
+		if !d.plan.Equal(d.state) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *UserResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
