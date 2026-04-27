@@ -73,6 +73,12 @@ type UserSearchFilter struct {
 	// the zero value of SearchScope (ScopeBaseObject) is itself a legal and
 	// distinct scope.
 	SearchScope *SearchScope `json:"searchScope,omitempty"`
+
+	// Attributes restricts the LDAP attributes returned for each user. Empty
+	// means "use the full user attribute list". A narrow list speeds up bulk
+	// searches (data sources) by trimming wire payload and skipping per-user
+	// derivations like primary-group SID resolution.
+	Attributes []string `json:"-"`
 }
 
 // User represents an Active Directory user with comprehensive attributes.
@@ -454,36 +460,7 @@ func (um *UserManager) SearchUsersWithFilter(filter *UserSearchFilter) ([]*User,
 		searchScope = *filter.SearchScope
 	}
 
-	// Perform search using existing SearchUsers method with custom base DN
-	return um.searchUsersInContainer(searchBaseDN, ldapFilter, nil, searchScope)
-}
-
-// GetUserStats returns statistics about users in the directory.
-func (um *UserManager) GetUserStats() (map[string]int, error) {
-	stats := make(map[string]int)
-
-	// Count total users
-	allUsers, err := um.SearchUsers("", []string{"userAccountControl"})
-	if err != nil {
-		return nil, WrapError("get_user_stats", err)
-	}
-
-	stats["total"] = len(allUsers)
-
-	// Count by status
-	enabledCount := 0
-	disabledCount := 0
-	for _, user := range allUsers {
-		if user.AccountEnabled {
-			enabledCount++
-		} else {
-			disabledCount++
-		}
-	}
-	stats["enabled"] = enabledCount
-	stats["disabled"] = disabledCount
-
-	return stats, nil
+	return um.searchUsersInContainer(searchBaseDN, ldapFilter, filter.Attributes, searchScope)
 }
 
 // -----------------------------------------------------------------------------
@@ -699,7 +676,7 @@ func (um *UserManager) UpdateUser(guid string, req *UpdateUserRequest) (*User, e
 
 	// Handle name and/or container changes (both require ModifyDN)
 	needsRename := req.Name != nil && *req.Name != currentUser.CommonName
-	currentContainer := um.extractContainer(currentUser.DistinguishedName)
+	currentContainer, _ := GetDNParent(currentUser.DistinguishedName)
 	needsMove := req.Container != nil && !strings.EqualFold(*req.Container, currentContainer)
 
 	if needsRename || needsMove {
@@ -821,26 +798,21 @@ func (um *UserManager) DeleteUser(guid string) error {
 		return fmt.Errorf("user GUID cannot be empty")
 	}
 
-	// Get user to determine DN
-	user, err := um.GetUserByGUID(guid)
+	dn, err := um.resolveGUIDToDN(guid)
 	if err != nil {
-		// Check if it's a "not found" error
-		if ldapErr, ok := err.(*LDAPError); ok {
-			if strings.Contains(ldapErr.Message, "not found") {
-				// User already doesn't exist
-				return nil
-			}
+		if IsNotFoundError(err) {
+			// User already doesn't exist
+			return nil
 		}
 		return WrapError("get_user_for_deletion", err)
 	}
 
 	tflog.SubsystemDebug(um.ctx, "ldap", "Deleting user", map[string]any{
 		"user_guid": guid,
-		"user_dn":   user.DistinguishedName,
+		"user_dn":   dn,
 	})
 
-	// Delete the user
-	if err := um.client.Delete(um.ctx, user.DistinguishedName); err != nil {
+	if err := um.client.Delete(um.ctx, dn); err != nil {
 		return WrapError("delete_user", err)
 	}
 
@@ -849,43 +821,6 @@ func (um *UserManager) DeleteUser(guid string) error {
 	})
 
 	return nil
-}
-
-// MoveUser moves a user to a different organizational unit.
-func (um *UserManager) MoveUser(guid string, newContainerDN string) (*User, error) {
-	if guid == "" {
-		return nil, fmt.Errorf("user GUID cannot be empty")
-	}
-
-	if newContainerDN == "" {
-		return nil, fmt.Errorf("new container DN cannot be empty")
-	}
-
-	// Get the current user to obtain its DN and CN
-	user, err := um.GetUserByGUID(guid)
-	if err != nil {
-		return nil, WrapError("get_user_for_move", err)
-	}
-
-	currentContainer := um.extractContainer(user.DistinguishedName)
-
-	// Check if already in the target container
-	if strings.EqualFold(currentContainer, newContainerDN) {
-		return user, nil
-	}
-
-	// Perform the move
-	if err := um.renameAndMoveUser(user, user.CommonName, newContainerDN); err != nil {
-		return nil, WrapError("move_user", err)
-	}
-
-	// Retrieve the user from its new location
-	movedUser, err := um.GetUserByGUID(guid)
-	if err != nil {
-		return nil, WrapError("get_moved_user", err)
-	}
-
-	return movedUser, nil
 }
 
 // SetPassword sets the password for a user.
@@ -898,13 +833,12 @@ func (um *UserManager) SetPassword(guid string, password string) error {
 		return fmt.Errorf("password cannot be empty")
 	}
 
-	// Get user to determine DN
-	user, err := um.GetUserByGUID(guid)
+	dn, err := um.resolveGUIDToDN(guid)
 	if err != nil {
 		return WrapError("get_user_for_password", err)
 	}
 
-	return um.setPasswordByDN(user.DistinguishedName, password)
+	return um.setPasswordByDN(dn, password)
 }
 
 // -----------------------------------------------------------------------------
@@ -937,6 +871,29 @@ func (um *UserManager) getUserByDN(dn string) (*User, error) {
 	}
 
 	return user, nil
+}
+
+// resolveGUIDToDN performs a narrow LDAP search to obtain only the DN of a
+// user identified by GUID. Cheaper than GetUserByGUID when callers (delete,
+// set-password) only need the DN to issue follow-up operations.
+func (um *UserManager) resolveGUIDToDN(guid string) (string, error) {
+	searchReq, err := um.guidHandler.GenerateGUIDSearchRequest(um.baseDN, guid)
+	if err != nil {
+		return "", WrapError("generate_guid_search", err)
+	}
+	searchReq.Filter = fmt.Sprintf("(&%s(objectClass=user)(!(objectClass=computer)))", searchReq.Filter)
+	searchReq.Attributes = []string{"distinguishedName"}
+	searchReq.SizeLimit = 1
+	searchReq.TimeLimit = um.timeout
+
+	result, err := um.client.Search(um.ctx, searchReq)
+	if err != nil {
+		return "", WrapError("search_user_by_guid", err)
+	}
+	if len(result.Entries) == 0 {
+		return "", NewNotFoundError("resolve_guid_to_dn", "user with GUID %s not found", guid)
+	}
+	return result.Entries[0].DN, nil
 }
 
 // getUserByGUID is the internal implementation for GUID-based user retrieval.
@@ -1241,6 +1198,13 @@ func (um *UserManager) entryToUser(entry *ldap.Entry) (*User, error) {
 		}
 	}
 
+	// AD sets lockoutTime to a non-zero filetime when the account is locked.
+	// Note: AD does not clear lockoutTime on auto-unlock; a non-zero value
+	// older than the domain lockoutDuration may represent a stale lock.
+	if lockoutTime := entry.GetAttributeValue("lockoutTime"); lockoutTime != "" && lockoutTime != "0" {
+		user.AccountLockedOut = true
+	}
+
 	return user, nil
 }
 
@@ -1251,8 +1215,6 @@ func (um *UserManager) parseUserAccountControl(user *User, uac int32) {
 	user.PasswordNotRequired = (uac & UACPasswordNotRequired) != 0
 	user.SmartCardLogonRequired = (uac & UACSmartCardRequired) != 0
 	user.TrustedForDelegation = (uac & UACTrustedForDelegation) != 0
-	// Note: Account lockout is typically determined by lockoutTime attribute, not UAC
-	user.AccountLockedOut = false // This would require checking lockoutTime attribute
 }
 
 // parseADTimestamp parses Active Directory timestamp format (100-nanosecond intervals since Jan 1, 1601).
@@ -1277,6 +1239,22 @@ func (um *UserManager) parseADTimestamp(timestamp string) (time.Time, error) {
 
 	unixNanos := (ticks - adEpoch) * 100
 	return time.Unix(0, unixNanos).UTC(), nil
+}
+
+// DataSourceUsersAttributes is the narrow attribute set the ad_users data
+// source projects. Omitting attributes that the data source doesn't expose
+// (notably primaryGroupID, memberOf, address fields) keeps paged searches
+// over thousands of users cheap and lets entryToUser skip primary-group
+// SID resolution because primaryGroupID is absent from the entry.
+func DataSourceUsersAttributes() []string {
+	return []string{
+		"objectGUID", "distinguishedName",
+		"sAMAccountName", "userPrincipalName", "cn",
+		"displayName", "givenName", "sn", "mail",
+		"title", "department", "company", "manager", "physicalDeliveryOfficeName",
+		"userAccountControl",
+		"whenCreated", "lastLogon",
+	}
 }
 
 // getAllUserAttributes returns the complete list of user attributes to retrieve.
@@ -1307,8 +1285,8 @@ func (um *UserManager) getAllUserAttributes() []string {
 		// Account control and membership
 		"userAccountControl", "memberOf", "primaryGroupID",
 
-		// Timestamps
-		"whenCreated", "whenChanged", "lastLogon", "pwdLastSet", "accountExpires",
+		// Timestamps and lockout
+		"whenCreated", "whenChanged", "lastLogon", "pwdLastSet", "accountExpires", "lockoutTime",
 	}
 }
 
@@ -1547,7 +1525,7 @@ func (um *UserManager) calculateUACChanges(req *UpdateUserRequest, currentUser *
 
 // renameAndMoveUser handles renaming and/or moving a user using ModifyDN operation.
 func (um *UserManager) renameAndMoveUser(currentUser *User, newName, newContainer string) error {
-	currentContainer := um.extractContainer(currentUser.DistinguishedName)
+	currentContainer, _ := GetDNParent(currentUser.DistinguishedName)
 
 	// Check if any actual change is needed
 	if newName == currentUser.CommonName && strings.EqualFold(newContainer, currentContainer) {
@@ -1602,19 +1580,6 @@ func (um *UserManager) renameAndMoveUser(currentUser *User, newName, newContaine
 	return nil
 }
 
-// extractContainer extracts the container DN from a full DN.
-func (um *UserManager) extractContainer(dn string) string {
-	parsedDN, err := ldap.ParseDN(dn)
-	if err != nil || len(parsedDN.RDNs) <= 1 {
-		return ""
-	}
-
-	// Reconstruct container DN from all RDNs except the first
-	containerRDNs := parsedDN.RDNs[1:]
-	containerDN := &ldap.DN{RDNs: containerRDNs}
-	return containerDN.String()
-}
-
 // addOptionalAttribute adds an attribute to the map if the value is non-empty.
 func (um *UserManager) addOptionalAttribute(attrs map[string][]string, name, value string) {
 	if value != "" {
@@ -1642,25 +1607,4 @@ func (um *UserManager) addModifyAttribute(modReq *ModifyRequest, ldapAttr string
 	}
 
 	return true
-}
-
-// CalculateUserAccountControlFromFlags calculates UAC value from individual boolean flags.
-// This is a utility function that can be used externally.
-func CalculateUserAccountControlFromFlags(enabled, passwordNeverExpires, smartCardRequired, trustedForDelegation bool) int32 {
-	uac := UACNormalAccount
-
-	if !enabled {
-		uac |= UACAccountDisabled
-	}
-	if passwordNeverExpires {
-		uac |= UACPasswordNeverExpires
-	}
-	if smartCardRequired {
-		uac |= UACSmartCardRequired
-	}
-	if trustedForDelegation {
-		uac |= UACTrustedForDelegation
-	}
-
-	return uac
 }

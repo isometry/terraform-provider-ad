@@ -106,51 +106,6 @@ func TerraformValueToGo(ctx context.Context, value attr.Value) (any, error) {
 	}
 }
 
-// DynamicValueToMap converts a Terraform dynamic value to a Go map[string]interface{}.
-// The dynamic value must contain either an object or map type underneath.
-// Returns an error if the value is null, unknown, or not a map/object type.
-func DynamicValueToMap(ctx context.Context, value attr.Value) (map[string]any, error) {
-	if value.IsNull() || value.IsUnknown() {
-		return nil, fmt.Errorf("value cannot be null or unknown")
-	}
-
-	dynamicVal, ok := value.(types.Dynamic)
-	if !ok {
-		return nil, fmt.Errorf("expected dynamic value, got %T", value)
-	}
-
-	underlyingVal := dynamicVal.UnderlyingValue()
-
-	switch v := underlyingVal.(type) {
-	case types.Object:
-		// Handle object type (existing logic)
-		result := make(map[string]any)
-		for attrName, attrVal := range v.Attributes() {
-			goVal, err := TerraformValueToGo(ctx, attrVal)
-			if err != nil {
-				return nil, fmt.Errorf("failed to convert attribute %s: %w", attrName, err)
-			}
-			result[attrName] = goVal
-		}
-		return result, nil
-
-	case types.Map:
-		// Handle map type (new logic)
-		result := make(map[string]any)
-		for key, mapVal := range v.Elements() {
-			goVal, err := TerraformValueToGo(ctx, mapVal)
-			if err != nil {
-				return nil, fmt.Errorf("failed to convert map element %s: %w", key, err)
-			}
-			result[key] = goVal
-		}
-		return result, nil
-
-	default:
-		return nil, fmt.Errorf("expected object or map value, got %T", underlyingVal)
-	}
-}
-
 // ExtractMapFromDynamic extracts a map[string]attr.Value from a dynamic value.
 // It handles both map and object types by converting them to a unified map representation.
 // Returns an error if the underlying value is neither a map nor an object.
@@ -242,40 +197,6 @@ func GetString(v types.String) string {
 		return ""
 	}
 	return v.ValueString()
-}
-
-// =============================================================================
-// Pointer Helpers (for LDAP requests where nil = don't modify)
-// =============================================================================
-
-// StringPtr returns a pointer to the string value, or nil if null/unknown.
-// Use this for LDAP update requests where nil means "don't modify this field".
-func StringPtr(v types.String) *string {
-	if v.IsNull() || v.IsUnknown() {
-		return nil
-	}
-	val := v.ValueString()
-	return &val
-}
-
-// BoolPtr returns a pointer to the bool value, or nil if null/unknown.
-// Use this for LDAP update requests where nil means "don't modify this field".
-func BoolPtr(v types.Bool) *bool {
-	if v.IsNull() || v.IsUnknown() {
-		return nil
-	}
-	val := v.ValueBool()
-	return &val
-}
-
-// Int64Ptr returns a pointer to the int64 value, or nil if null/unknown.
-// Use this for LDAP update requests where nil means "don't modify this field".
-func Int64Ptr(v types.Int64) *int64 {
-	if v.IsNull() || v.IsUnknown() {
-		return nil
-	}
-	val := v.ValueInt64()
-	return &val
 }
 
 // =============================================================================

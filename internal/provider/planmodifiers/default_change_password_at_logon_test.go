@@ -128,8 +128,8 @@ func TestDefaultChangePasswordAtLogon_PlanModifyBool(t *testing.T) {
 			expected:    types.BoolValue(true),
 		},
 		"user_explicit_true_preserved_with_password": {
-			configRaw:   makeObj(stringValue(ptrStr("Sekret!1")), boolValue(boolPtr(true))),
-			planRaw:     makeObj(stringValue(ptrStr("Sekret!1")), boolValue(boolPtr(true))),
+			configRaw:   makeObj(stringValue(ptrStr("Sekret!1")), boolValue(new(true))),
+			planRaw:     makeObj(stringValue(ptrStr("Sekret!1")), boolValue(new(true))),
 			stateRaw:    nullRaw,
 			configValue: types.BoolValue(true),
 			stateValue:  types.BoolNull(),
@@ -137,8 +137,8 @@ func TestDefaultChangePasswordAtLogon_PlanModifyBool(t *testing.T) {
 			expected:    types.BoolValue(true),
 		},
 		"user_explicit_false_preserved_with_password": {
-			configRaw:   makeObj(stringValue(ptrStr("Sekret!1")), boolValue(boolPtr(false))),
-			planRaw:     makeObj(stringValue(ptrStr("Sekret!1")), boolValue(boolPtr(false))),
+			configRaw:   makeObj(stringValue(ptrStr("Sekret!1")), boolValue(new(false))),
+			planRaw:     makeObj(stringValue(ptrStr("Sekret!1")), boolValue(new(false))),
 			stateRaw:    nullRaw,
 			configValue: types.BoolValue(false),
 			stateValue:  types.BoolNull(),
@@ -146,8 +146,8 @@ func TestDefaultChangePasswordAtLogon_PlanModifyBool(t *testing.T) {
 			expected:    types.BoolValue(false),
 		},
 		"user_explicit_true_preserved_without_password": {
-			configRaw:   makeObj(stringValue(nil), boolValue(boolPtr(true))),
-			planRaw:     makeObj(stringValue(nil), boolValue(boolPtr(true))),
+			configRaw:   makeObj(stringValue(nil), boolValue(new(true))),
+			planRaw:     makeObj(stringValue(nil), boolValue(new(true))),
 			stateRaw:    nullRaw,
 			configValue: types.BoolValue(true),
 			stateValue:  types.BoolNull(),
@@ -159,7 +159,7 @@ func TestDefaultChangePasswordAtLogon_PlanModifyBool(t *testing.T) {
 			// Modifier still applies (it is not gated to Create).
 			configRaw:   makeObj(stringValue(nil), boolValue(nil)),
 			planRaw:     makeObj(stringValue(nil), tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue)),
-			stateRaw:    makeObj(stringValue(nil), boolValue(boolPtr(true))),
+			stateRaw:    makeObj(stringValue(nil), boolValue(new(true))),
 			configValue: types.BoolNull(),
 			stateValue:  types.BoolValue(true),
 			planValue:   types.BoolUnknown(),
@@ -168,7 +168,7 @@ func TestDefaultChangePasswordAtLogon_PlanModifyBool(t *testing.T) {
 		"update_no_config_with_password_defaults_false": {
 			configRaw:   makeObj(stringValue(ptrStr("Sekret!1")), boolValue(nil)),
 			planRaw:     makeObj(stringValue(ptrStr("Sekret!1")), tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue)),
-			stateRaw:    makeObj(stringValue(ptrStr("Sekret!1")), boolValue(boolPtr(false))),
+			stateRaw:    makeObj(stringValue(ptrStr("Sekret!1")), boolValue(new(false))),
 			configValue: types.BoolNull(),
 			stateValue:  types.BoolValue(false),
 			planValue:   types.BoolUnknown(),
@@ -212,7 +212,7 @@ func TestDefaultChangePasswordAtLogon_PlanModifyBool(t *testing.T) {
 			// behaviour; callers typically skip destroy at the resource level.
 			configRaw:   nullRaw,
 			planRaw:     nullRaw,
-			stateRaw:    makeObj(stringValue(ptrStr("Sekret!1")), boolValue(boolPtr(false))),
+			stateRaw:    makeObj(stringValue(ptrStr("Sekret!1")), boolValue(new(false))),
 			configValue: types.BoolNull(),
 			stateValue:  types.BoolValue(false),
 			planValue:   types.BoolNull(),
@@ -246,5 +246,3 @@ func TestDefaultChangePasswordAtLogon_PlanModifyBool(t *testing.T) {
 		})
 	}
 }
-
-func boolPtr(b bool) *bool { return &b }

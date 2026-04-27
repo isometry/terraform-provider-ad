@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -47,7 +48,7 @@ func newGMTestNames(extraUsers int) gmTestNames {
 		User3:  GenerateTestName("tf-mship-u3-"),
 		User3S: GenerateTestSAMName("tfmshu3"),
 	}
-	for i := 0; i < extraUsers; i++ {
+	for i := range extraUsers {
 		n.ExtraUs = append(n.ExtraUs, struct {
 			Name string
 			SAM  string
@@ -1192,10 +1193,5 @@ func collectNormalizedMembers(attrs map[string]string) []string {
 }
 
 func containsLower(haystack []string, needle string) bool {
-	for _, h := range haystack {
-		if h == needle {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(haystack, needle)
 }

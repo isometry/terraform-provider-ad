@@ -218,75 +218,6 @@ func TestTerraformValueToGo(t *testing.T) {
 }
 
 // ===========================================================================
-// DynamicValueToMap
-// ===========================================================================
-
-func TestDynamicValueToMap(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("dynamic wrapping object", func(t *testing.T) {
-		val := types.DynamicValue(mustObject(t,
-			map[string]attr.Type{"a": types.StringType, "b": types.Int64Type},
-			map[string]attr.Value{"a": types.StringValue("hi"), "b": types.Int64Value(2)},
-		))
-		got, err := helpers.DynamicValueToMap(ctx, val)
-		require.NoError(t, err)
-		assert.Equal(t, map[string]any{"a": "hi", "b": int64(2)}, got)
-	})
-
-	t.Run("dynamic wrapping map", func(t *testing.T) {
-		val := types.DynamicValue(mustMap(t, types.StringType, map[string]attr.Value{
-			"x": types.StringValue("1"),
-			"y": types.StringValue("2"),
-		}))
-		got, err := helpers.DynamicValueToMap(ctx, val)
-		require.NoError(t, err)
-		assert.Equal(t, map[string]any{"x": "1", "y": "2"}, got)
-	})
-
-	t.Run("null dynamic errors", func(t *testing.T) {
-		_, err := helpers.DynamicValueToMap(ctx, types.DynamicNull())
-		require.Error(t, err)
-	})
-
-	t.Run("unknown dynamic errors", func(t *testing.T) {
-		_, err := helpers.DynamicValueToMap(ctx, types.DynamicUnknown())
-		require.Error(t, err)
-	})
-
-	t.Run("non-dynamic value errors", func(t *testing.T) {
-		_, err := helpers.DynamicValueToMap(ctx, types.StringValue("nope"))
-		require.Error(t, err)
-	})
-
-	t.Run("dynamic wrapping list errors", func(t *testing.T) {
-		val := types.DynamicValue(mustList(t, types.StringType, []attr.Value{types.StringValue("x")}))
-		_, err := helpers.DynamicValueToMap(ctx, val)
-		require.Error(t, err)
-	})
-
-	t.Run("propagates attribute conversion errors", func(t *testing.T) {
-		val := types.DynamicValue(mustObject(t,
-			map[string]attr.Type{"bad": types.StringType},
-			map[string]attr.Value{"bad": types.StringUnknown()},
-		))
-		_, err := helpers.DynamicValueToMap(ctx, val)
-		require.Error(t, err)
-	})
-
-	t.Run("propagates map element errors", func(t *testing.T) {
-		// A map with all-null elements typed as string; nulls are fine, so we need another path.
-		// Build a map containing a known-good entry alongside an unknown one is not directly
-		// allowed because types.MapValue rejects unknown, but we can build via MapValueMust.
-		val := types.DynamicValue(types.MapValueMust(types.StringType, map[string]attr.Value{
-			"k": types.StringUnknown(),
-		}))
-		_, err := helpers.DynamicValueToMap(ctx, val)
-		require.Error(t, err)
-	})
-}
-
-// ===========================================================================
 // ExtractMapFromDynamic
 // ===========================================================================
 
@@ -456,83 +387,6 @@ func TestGetString(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			assert.Equal(t, c.want, helpers.GetString(c.in))
-		})
-	}
-}
-
-// ===========================================================================
-// Pointer helpers
-// ===========================================================================
-
-func TestStringPtr(t *testing.T) {
-	cases := []struct {
-		name string
-		in   types.String
-		want *string
-	}{
-		{"value", types.StringValue("hi"), ptrString("hi")},
-		{"empty value returns pointer to empty", types.StringValue(""), ptrString("")},
-		{"null", types.StringNull(), nil},
-		{"unknown", types.StringUnknown(), nil},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := helpers.StringPtr(c.in)
-			if c.want == nil {
-				assert.Nil(t, got)
-				return
-			}
-			require.NotNil(t, got)
-			assert.Equal(t, *c.want, *got)
-		})
-	}
-}
-
-func TestBoolPtr(t *testing.T) {
-	cases := []struct {
-		name string
-		in   types.Bool
-		want *bool
-	}{
-		{"true", types.BoolValue(true), ptrBool(true)},
-		{"false", types.BoolValue(false), ptrBool(false)},
-		{"null", types.BoolNull(), nil},
-		{"unknown", types.BoolUnknown(), nil},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := helpers.BoolPtr(c.in)
-			if c.want == nil {
-				assert.Nil(t, got)
-				return
-			}
-			require.NotNil(t, got)
-			assert.Equal(t, *c.want, *got)
-		})
-	}
-}
-
-func TestInt64Ptr(t *testing.T) {
-	cases := []struct {
-		name string
-		in   types.Int64
-		want *int64
-	}{
-		{"positive", types.Int64Value(42), ptrInt64(42)},
-		{"zero", types.Int64Value(0), ptrInt64(0)},
-		{"negative", types.Int64Value(-9), ptrInt64(-9)},
-		{"null", types.Int64Null(), nil},
-		{"unknown", types.Int64Unknown(), nil},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := helpers.Int64Ptr(c.in)
-			if c.want == nil {
-				assert.Nil(t, got)
-				return
-			}
-			require.NotNil(t, got)
-			assert.Equal(t, *c.want, *got)
 		})
 	}
 }
@@ -883,9 +737,3 @@ func TestDNSetOrNull(t *testing.T) {
 		assert.Equal(t, types.StringType, got.ElementType(ctx))
 	})
 }
-
-// ---------- tiny pointer helpers for readable test cases --------------------
-
-func ptrString(s string) *string { return &s }
-func ptrBool(b bool) *bool       { return &b }
-func ptrInt64(i int64) *int64    { return &i }

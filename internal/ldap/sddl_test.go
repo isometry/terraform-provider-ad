@@ -124,7 +124,7 @@ func TestSecurityDescriptor_RoundTrip_Protected(t *testing.T) {
 	require.NotNil(t, parsed.DACL)
 	require.GreaterOrEqual(t, len(parsed.DACL.ACEs), 1)
 	assert.Equal(t, AccessDeniedACEType, parsed.DACL.ACEs[0].AceType)
-	assert.Equal(t, everyoneSID().String(), parsed.DACL.ACEs[0].SID.String())
+	assert.Equal(t, everyoneSIDValue.String(), parsed.DACL.ACEs[0].SID.String())
 	assert.Equal(t,
 		AccessMaskDelete|AccessMaskDeleteChild,
 		parsed.DACL.ACEs[0].AccessMask&(AccessMaskDelete|AccessMaskDeleteChild))
@@ -176,7 +176,7 @@ func TestSecurityDescriptor_HasDenyDeleteEveryoneACE_Negative(t *testing.T) {
 					ACEs: []ACE{{
 						AceType:    AccessDeniedACEType,
 						AccessMask: AccessMaskDelete,
-						SID:        everyoneSID(),
+						SID:        everyoneSIDValue,
 					}},
 				},
 			},
@@ -242,7 +242,7 @@ func TestRoundTrip_DACLOnly(t *testing.T) {
 				AceType:    AccessDeniedACEType,
 				AceFlags:   ContainerInheritACE,
 				AccessMask: AccessMaskDelete | AccessMaskDeleteChild,
-				SID:        everyoneSID(),
+				SID:        everyoneSIDValue,
 			}},
 		},
 	}
@@ -281,7 +281,7 @@ func TestSecurityDescriptor_ObjectACE_RoundTrip(t *testing.T) {
 					AceType:    AccessDeniedACEType,
 					AceFlags:   ContainerInheritACE,
 					AccessMask: AccessMaskDelete | AccessMaskDeleteChild,
-					SID:        everyoneSID(),
+					SID:        everyoneSIDValue,
 				},
 				{
 					AceType:  accessAllowedObjectACEType,
@@ -306,7 +306,7 @@ func TestSecurityDescriptor_ObjectACE_RoundTrip(t *testing.T) {
 	assert.Equal(t,
 		AccessMaskDelete|AccessMaskDeleteChild,
 		parsed.DACL.ACEs[0].AccessMask)
-	assert.Equal(t, everyoneSID().String(), parsed.DACL.ACEs[0].SID.String())
+	assert.Equal(t, everyoneSIDValue.String(), parsed.DACL.ACEs[0].SID.String())
 
 	// Object ACE preserved opaquely.
 	assert.Equal(t, accessAllowedObjectACEType, parsed.DACL.ACEs[1].AceType)
@@ -366,7 +366,7 @@ func TestSecurityDescriptor_ObjectACE_ProtectionHelpers(t *testing.T) {
 	parsed.AddDenyDeleteEveryoneACE()
 	require.Len(t, parsed.DACL.ACEs, 2)
 	assert.Equal(t, AccessDeniedACEType, parsed.DACL.ACEs[0].AceType)
-	assert.Equal(t, everyoneSID().String(), parsed.DACL.ACEs[0].SID.String())
+	assert.Equal(t, everyoneSIDValue.String(), parsed.DACL.ACEs[0].SID.String())
 	assert.Equal(t, accessAllowedObjectACEType, parsed.DACL.ACEs[1].AceType)
 	require.NotNil(t, parsed.DACL.ACEs[1].RawBody)
 	assert.True(t, bytes.Equal(objectBody, parsed.DACL.ACEs[1].RawBody),

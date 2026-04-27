@@ -265,12 +265,12 @@ func TestCacheManager_GetStats_HitMissCounters(t *testing.T) {
 	)))
 
 	// Three hits
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, ok := cm.Get("dan@example.com")
 		require.True(t, ok)
 	}
 	// Two misses
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		_, ok := cm.Get("ghost@example.com")
 		require.False(t, ok)
 	}
@@ -447,10 +447,10 @@ func TestCacheManager_ConcurrentReadWrite(t *testing.T) {
 
 	// Writers: each goroutine inserts its own disjoint set of entries.
 	var writeErrs atomic.Int64
-	for w := 0; w < writers; w++ {
+	for w := range writers {
 		go func() {
 			defer wg.Done()
-			for i := 0; i < perGoroutine; i++ {
+			for i := range perGoroutine {
 				id := fmt.Sprintf("%d-%d", w, i)
 				entry := &LDAPCacheEntry{
 					DN:         fmt.Sprintf("CN=User%s,DC=example,DC=com", id),
@@ -470,10 +470,10 @@ func TestCacheManager_ConcurrentReadWrite(t *testing.T) {
 
 	// Readers: probe random keys (both hits and misses). We don't assert on
 	// specific results here — this test is a race-detector harness.
-	for r := 0; r < readers; r++ {
+	for r := range readers {
 		go func() {
 			defer wg.Done()
-			for i := 0; i < perGoroutine; i++ {
+			for i := range perGoroutine {
 				// Mix of possible keys: some will be writes by anyone else,
 				// some are guaranteed misses.
 				_, _ = cm.Get(fmt.Sprintf("CN=User%d-%d,DC=example,DC=com", r%writers, i%perGoroutine))
@@ -511,9 +511,7 @@ func TestCacheManager_ConcurrentClearAndWrite(t *testing.T) {
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		i := 0
 		for {
 			select {
@@ -528,11 +526,9 @@ func TestCacheManager_ConcurrentClearAndWrite(t *testing.T) {
 				i++
 			}
 		}
-	}()
+	})
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			select {
 			case <-stop:
@@ -542,11 +538,9 @@ func TestCacheManager_ConcurrentClearAndWrite(t *testing.T) {
 				time.Sleep(time.Microsecond)
 			}
 		}
-	}()
+	})
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			select {
 			case <-stop:
@@ -555,7 +549,7 @@ func TestCacheManager_ConcurrentClearAndWrite(t *testing.T) {
 				_ = cm.GetStats()
 			}
 		}
-	}()
+	})
 
 	time.Sleep(50 * time.Millisecond)
 	close(stop)

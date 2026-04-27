@@ -51,18 +51,6 @@ type UpdateOURequest struct {
 	Path        *string `json:"path,omitempty"`        // Optional: New parent DN (triggers OU move)
 }
 
-// OUEntry represents a simplified OU entry for the interface.
-type OUEntry struct {
-	DN           string
-	Name         string
-	Description  string
-	Protected    bool
-	CreatedDate  time.Time
-	ModifiedDate time.Time
-	ObjectGUID   string
-	Children     []string
-}
-
 // OUManager handles Active Directory organizational unit operations.
 type OUManager struct {
 	ctx         context.Context

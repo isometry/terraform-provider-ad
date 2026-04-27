@@ -1,6 +1,6 @@
 module github.com/isometry/terraform-provider-ad
 
-go 1.26.1
+go 1.26.2
 
 require (
 	github.com/creasty/defaults v1.8.0

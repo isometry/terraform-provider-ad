@@ -356,7 +356,9 @@ func (d *UsersDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 		"search_scope":  searchScopeLog,
 	})
 
-	// Perform the search
+	// Narrow attribute list: data source only projects ~17 fields, so we save
+	// per-page wire payload and side-step per-user primary-group SID lookups.
+	searchFilter.Attributes = ldapclient.DataSourceUsersAttributes()
 	users, err := d.userManager.SearchUsersWithFilter(searchFilter)
 	if err != nil {
 		resp.Diagnostics.AddError(

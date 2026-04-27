@@ -272,11 +272,6 @@ func makeUserSearchResult(dn, guid, sid, cn, upn, sam string) *SearchResult {
 	}
 }
 
-// Helper function to create bool pointer.
-func boolPtr(b bool) *bool {
-	return &b
-}
-
 // -----------------------------------------------------------------------------
 // UserManager Constructor and Basic Tests
 // -----------------------------------------------------------------------------
@@ -1127,29 +1122,6 @@ func TestUserManager_entryToUser_PrimaryGroupFallback(t *testing.T) {
 	client.AssertExpectations(t)
 }
 
-func TestUserManager_GetUserStats(t *testing.T) {
-	client := &MockUserClient{}
-	mockPrimaryGroupSIDResolution(client)
-	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
-
-	enabledEntry := createMockUserEntry()
-	disabledEntry := createDisabledUserEntry()
-
-	client.On("SearchWithPaging", mock.Anything, mock.AnythingOfType("*ldap.SearchRequest")).Return(&SearchResult{
-		Entries: []*ldap.Entry{enabledEntry, disabledEntry},
-		Total:   2,
-	}, nil)
-
-	stats, err := manager.GetUserStats()
-
-	assert.NoError(t, err)
-	assert.Equal(t, 2, stats["total"])
-	assert.Equal(t, 1, stats["enabled"])
-	assert.Equal(t, 1, stats["disabled"])
-
-	client.AssertExpectations(t)
-}
-
 func TestUserManager_EmptyIdentifier(t *testing.T) {
 	client := &MockUserClient{}
 	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
@@ -1234,70 +1206,6 @@ func TestEncodeADPassword(t *testing.T) {
 			}
 
 			t.Logf("Password %q encoded to: %s", tt.password, gotHex)
-		})
-	}
-}
-
-func TestCalculateUserAccountControlFromFlags(t *testing.T) {
-	tests := []struct {
-		name                 string
-		enabled              bool
-		passwordNeverExpires bool
-		smartCardRequired    bool
-		trustedForDelegation bool
-		expectedUAC          int32
-	}{
-		{
-			name:        "normal enabled account",
-			enabled:     true,
-			expectedUAC: UACNormalAccount,
-		},
-		{
-			name:        "disabled account",
-			enabled:     false,
-			expectedUAC: UACNormalAccount | UACAccountDisabled,
-		},
-		{
-			name:                 "password never expires",
-			enabled:              true,
-			passwordNeverExpires: true,
-			expectedUAC:          UACNormalAccount | UACPasswordNeverExpires,
-		},
-		{
-			name:              "smart card required",
-			enabled:           true,
-			smartCardRequired: true,
-			expectedUAC:       UACNormalAccount | UACSmartCardRequired,
-		},
-		{
-			name:                 "trusted for delegation",
-			enabled:              true,
-			trustedForDelegation: true,
-			expectedUAC:          UACNormalAccount | UACTrustedForDelegation,
-		},
-		{
-			name:                 "all flags disabled account",
-			enabled:              false,
-			passwordNeverExpires: true,
-			smartCardRequired:    true,
-			trustedForDelegation: true,
-			expectedUAC:          UACNormalAccount | UACAccountDisabled | UACPasswordNeverExpires | UACSmartCardRequired | UACTrustedForDelegation,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := CalculateUserAccountControlFromFlags(
-				tt.enabled,
-				tt.passwordNeverExpires,
-				tt.smartCardRequired,
-				tt.trustedForDelegation,
-			)
-
-			if got != tt.expectedUAC {
-				t.Errorf("CalculateUserAccountControlFromFlags() = %d (0x%08X), want %d (0x%08X)",
-					got, got, tt.expectedUAC, tt.expectedUAC)
-			}
 		})
 	}
 }
@@ -1432,51 +1340,6 @@ func TestValidateCreateUserRequest(t *testing.T) {
 				if err != nil {
 					t.Errorf("ValidateCreateUserRequest() unexpected error: %v", err)
 				}
-			}
-		})
-	}
-}
-
-func TestExtractContainer(t *testing.T) {
-	um := NewUserManager(context.Background(), &MockUserClient{}, "DC=example,DC=com", nil)
-
-	tests := []struct {
-		name     string
-		dn       string
-		expected string
-	}{
-		{
-			name:     "standard user DN",
-			dn:       "CN=John Doe,OU=Users,DC=example,DC=com",
-			expected: "ou=Users,dc=example,dc=com", // ldap library normalizes to lowercase
-		},
-		{
-			name:     "nested OU",
-			dn:       "CN=Jane Smith,OU=Admins,OU=IT,DC=example,DC=com",
-			expected: "ou=Admins,ou=IT,dc=example,dc=com",
-		},
-		{
-			name:     "users container",
-			dn:       "CN=Test User,CN=Users,DC=example,DC=com",
-			expected: "cn=Users,dc=example,dc=com",
-		},
-		{
-			name:     "single RDN",
-			dn:       "CN=Test",
-			expected: "",
-		},
-		{
-			name:     "empty DN",
-			dn:       "",
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := um.extractContainer(tt.dn)
-			if got != tt.expected {
-				t.Errorf("extractContainer(%q) = %q, want %q", tt.dn, got, tt.expected)
 			}
 		})
 	}
@@ -2200,10 +2063,10 @@ func TestUserManager_DeleteUser_NotFound(t *testing.T) {
 	// Use a valid GUID format
 	userGUID := "12345678-1234-1234-1234-000000000000"
 
-	// Mock Search with "not found" error
+	// Mock Search with categorized "not found" error
 	mockClient.On("Search", mock.Anything, mock.Anything).Return(
 		(*SearchResult)(nil),
-		&LDAPError{Operation: "test", Message: "object not found"},
+		NewNotFoundError("test", "object not found"),
 	).Once()
 
 	err := um.DeleteUser(userGUID)
@@ -2242,70 +2105,6 @@ func TestUserManager_SetPassword_Success(t *testing.T) {
 	mockClient.AssertExpectations(t)
 }
 
-func TestUserManager_MoveUser_Success(t *testing.T) {
-	ctx := context.Background()
-	mockClient := &MockClient{}
-	cacheManager := NewCacheManager()
-	baseDN := "DC=example,DC=com"
-
-	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
-
-	userGUID := "12345678-1234-1234-1234-123456789012"
-	currentDN := "CN=Test User,OU=Users,DC=example,DC=com"
-	newContainer := "OU=Admins,DC=example,DC=com"
-	newDN := "CN=Test User,OU=Admins,DC=example,DC=com"
-
-	// First search - get current user
-	mockClient.On("Search", mock.Anything, mock.Anything).Return(
-		makeUserSearchResult(currentDN, userGUID, "sid", "Test User", "testuser@example.com", "testuser"),
-		nil,
-	).Once()
-
-	// Mock ModifyDN
-	mockClient.On("ModifyDN", mock.Anything, mock.MatchedBy(func(r *ModifyDNRequest) bool {
-		return r.DN == currentDN && r.NewSuperior == newContainer
-	})).Return(nil).Once()
-
-	// Second search - get user after move
-	mockClient.On("Search", mock.Anything, mock.Anything).Return(
-		makeUserSearchResult(newDN, userGUID, "sid", "Test User", "testuser@example.com", "testuser"),
-		nil,
-	).Once()
-
-	user, err := um.MoveUser(userGUID, newContainer)
-
-	require.NoError(t, err)
-	assert.NotNil(t, user)
-	mockClient.AssertExpectations(t)
-}
-
-func TestUserManager_MoveUser_AlreadyInContainer(t *testing.T) {
-	ctx := context.Background()
-	mockClient := &MockClient{}
-	cacheManager := NewCacheManager()
-	baseDN := "DC=example,DC=com"
-
-	um := NewUserManager(ctx, mockClient, baseDN, cacheManager)
-
-	userGUID := "12345678-1234-1234-1234-123456789012"
-	userDN := "CN=Test User,OU=Users,DC=example,DC=com"
-	sameContainer := "OU=Users,DC=example,DC=com"
-
-	// Mock Search
-	mockClient.On("Search", mock.Anything, mock.Anything).Return(
-		makeUserSearchResult(userDN, userGUID, "sid", "Test User", "testuser@example.com", "testuser"),
-		nil,
-	).Once()
-
-	// ModifyDN should NOT be called since user is already in target container
-
-	user, err := um.MoveUser(userGUID, sameContainer)
-
-	require.NoError(t, err)
-	assert.NotNil(t, user)
-	mockClient.AssertNotCalled(t, "ModifyDN", mock.Anything, mock.Anything)
-}
-
 // Test UAC calculation helper function
 
 func TestUserManager_CalculateUACChanges(t *testing.T) {
@@ -2338,7 +2137,7 @@ func TestUserManager_CalculateUACChanges(t *testing.T) {
 				AccountEnabled:     true,
 				UserAccountControl: UACNormalAccount,
 			},
-			updateReq:      &UpdateUserRequest{Enabled: boolPtr(false)},
+			updateReq:      &UpdateUserRequest{Enabled: new(false)},
 			expectChange:   true,
 			expectedNewUAC: UACNormalAccount | UACAccountDisabled,
 		},
@@ -2349,7 +2148,7 @@ func TestUserManager_CalculateUACChanges(t *testing.T) {
 				PasswordNeverExpires: false,
 				UserAccountControl:   UACNormalAccount,
 			},
-			updateReq:      &UpdateUserRequest{PasswordNeverExpires: boolPtr(true)},
+			updateReq:      &UpdateUserRequest{PasswordNeverExpires: new(true)},
 			expectChange:   true,
 			expectedNewUAC: UACNormalAccount | UACPasswordNeverExpires,
 		},
@@ -2361,8 +2160,8 @@ func TestUserManager_CalculateUACChanges(t *testing.T) {
 				UserAccountControl:   UACNormalAccount,
 			},
 			updateReq: &UpdateUserRequest{
-				Enabled:              boolPtr(false),
-				PasswordNeverExpires: boolPtr(true),
+				Enabled:              new(false),
+				PasswordNeverExpires: new(true),
 			},
 			expectChange:   true,
 			expectedNewUAC: UACNormalAccount | UACAccountDisabled | UACPasswordNeverExpires,
@@ -2465,8 +2264,8 @@ func BenchmarkUserManager_CalculateUACChanges(b *testing.B) {
 	}
 
 	updateReq := &UpdateUserRequest{
-		Enabled:              boolPtr(false),
-		PasswordNeverExpires: boolPtr(true),
+		Enabled:              new(false),
+		PasswordNeverExpires: new(true),
 	}
 
 	for b.Loop() {

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	ldaplib "github.com/go-ldap/ldap/v3"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -39,6 +38,13 @@ var _ resource.ResourceWithValidateConfig = &UserResource{}
 var _ resource.ResourceWithConfigValidators = &UserResource{}
 var _ resource.ResourceWithModifyPlan = &UserResource{}
 
+// Schema-level regex validators compiled once at package load.
+var (
+	userNameRegex          = regexp.MustCompile(`^[^"]+$`)
+	userPrincipalNameRegex = regexp.MustCompile(`^[^@]+@[^@]+$`)
+	userSAMAccountRegex    = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+)
+
 // NewUserResource creates a new instance of the user resource.
 func NewUserResource() resource.Resource {
 	return &UserResource{}
@@ -48,87 +54,76 @@ func NewUserResource() resource.Resource {
 type UserResource struct {
 	client       ldapclient.Client
 	cacheManager *ldapclient.CacheManager
+	baseDN       string
 }
 
 // UserResourceModel describes the resource data model.
 type UserResourceModel struct {
-	// Identity (computed)
-	ID  types.String              `tfsdk:"id"`  // objectGUID
-	DN  customtypes.DNStringValue `tfsdk:"dn"`  // computed
-	SID types.String              `tfsdk:"sid"` // computed
+	ID  types.String              `tfsdk:"id"`
+	DN  customtypes.DNStringValue `tfsdk:"dn"`
+	SID types.String              `tfsdk:"sid"`
 
-	// Required
-	Name           types.String              `tfsdk:"name"`             // cn
-	PrincipalName  types.String              `tfsdk:"principal_name"`   // UPN
-	SAMAccountName types.String              `tfsdk:"sam_account_name"` // Optional+Computed (auto from name)
-	Container      customtypes.DNStringValue `tfsdk:"container"`        // parent OU
+	Name           types.String              `tfsdk:"name"`
+	PrincipalName  types.String              `tfsdk:"principal_name"`
+	SAMAccountName types.String              `tfsdk:"sam_account_name"`
+	Container      customtypes.DNStringValue `tfsdk:"container"`
 
-	// Password (write-only with version trigger)
 	Password        types.String `tfsdk:"password"`
 	PasswordVersion types.Int64  `tfsdk:"password_version"`
 
-	// Security flags (Optional+Computed+Default)
-	Enabled                types.Bool `tfsdk:"enabled"`                   // default: true
-	PasswordNeverExpires   types.Bool `tfsdk:"password_never_expires"`    // default: false
-	SmartCardLogonRequired types.Bool `tfsdk:"smart_card_logon_required"` // default: false
-	TrustedForDelegation   types.Bool `tfsdk:"trusted_for_delegation"`    // default: false
-	ChangePasswordAtLogon  types.Bool `tfsdk:"change_password_at_logon"`  // default: false
+	Enabled                types.Bool `tfsdk:"enabled"`
+	PasswordNeverExpires   types.Bool `tfsdk:"password_never_expires"`
+	SmartCardLogonRequired types.Bool `tfsdk:"smart_card_logon_required"`
+	TrustedForDelegation   types.Bool `tfsdk:"trusted_for_delegation"`
+	ChangePasswordAtLogon  types.Bool `tfsdk:"change_password_at_logon"`
 
-	// Computed security (read-only)
-	PasswordNotRequired types.Bool  `tfsdk:"password_not_required"` // computed
-	AccountLockedOut    types.Bool  `tfsdk:"account_locked_out"`    // computed
-	UserAccountControl  types.Int64 `tfsdk:"user_account_control"`  // computed (raw int)
+	PasswordNotRequired types.Bool  `tfsdk:"password_not_required"`
+	AccountLockedOut    types.Bool  `tfsdk:"account_locked_out"`
+	UserAccountControl  types.Int64 `tfsdk:"user_account_control"`
 
-	// Personal information
-	DisplayName types.String `tfsdk:"display_name"` // optional
-	Description types.String `tfsdk:"description"`  // optional
-	GivenName   types.String `tfsdk:"given_name"`   // optional
-	Surname     types.String `tfsdk:"surname"`      // optional
-	Initials    types.String `tfsdk:"initials"`     // optional
+	DisplayName types.String `tfsdk:"display_name"`
+	Description types.String `tfsdk:"description"`
+	GivenName   types.String `tfsdk:"given_name"`
+	Surname     types.String `tfsdk:"surname"`
+	Initials    types.String `tfsdk:"initials"`
 
-	// Contact information
-	EmailAddress types.String `tfsdk:"email_address"` // optional
-	HomePhone    types.String `tfsdk:"home_phone"`    // optional
-	MobilePhone  types.String `tfsdk:"mobile_phone"`  // optional
-	OfficePhone  types.String `tfsdk:"office_phone"`  // optional
-	Fax          types.String `tfsdk:"fax"`           // optional
-	HomePage     types.String `tfsdk:"home_page"`     // optional
+	EmailAddress types.String `tfsdk:"email_address"`
+	HomePhone    types.String `tfsdk:"home_phone"`
+	MobilePhone  types.String `tfsdk:"mobile_phone"`
+	OfficePhone  types.String `tfsdk:"office_phone"`
+	Fax          types.String `tfsdk:"fax"`
+	HomePage     types.String `tfsdk:"home_page"`
 
-	// Address information
-	StreetAddress types.String `tfsdk:"street_address"` // optional
-	City          types.String `tfsdk:"city"`           // optional
-	State         types.String `tfsdk:"state"`          // optional
-	PostalCode    types.String `tfsdk:"postal_code"`    // optional
-	Country       types.String `tfsdk:"country"`        // optional
-	POBox         types.String `tfsdk:"po_box"`         // optional
+	StreetAddress types.String `tfsdk:"street_address"`
+	City          types.String `tfsdk:"city"`
+	State         types.String `tfsdk:"state"`
+	PostalCode    types.String `tfsdk:"postal_code"`
+	Country       types.String `tfsdk:"country"`
+	POBox         types.String `tfsdk:"po_box"`
 
-	// Organizational information
-	Title          types.String `tfsdk:"title"`           // optional
-	Department     types.String `tfsdk:"department"`      // optional
-	Company        types.String `tfsdk:"company"`         // optional
-	Manager        types.String `tfsdk:"manager"`         // optional (DN)
-	EmployeeID     types.String `tfsdk:"employee_id"`     // optional
-	EmployeeNumber types.String `tfsdk:"employee_number"` // optional
-	Office         types.String `tfsdk:"office"`          // optional
-	Division       types.String `tfsdk:"division"`        // optional
-	Organization   types.String `tfsdk:"organization"`    // optional
+	Title          types.String `tfsdk:"title"`
+	Department     types.String `tfsdk:"department"`
+	Company        types.String `tfsdk:"company"`
+	Manager        types.String `tfsdk:"manager"`
+	EmployeeID     types.String `tfsdk:"employee_id"`
+	EmployeeNumber types.String `tfsdk:"employee_number"`
+	Office         types.String `tfsdk:"office"`
+	Division       types.String `tfsdk:"division"`
+	Organization   types.String `tfsdk:"organization"`
 
-	// System information
-	HomeDirectory types.String `tfsdk:"home_directory"` // optional
-	HomeDrive     types.String `tfsdk:"home_drive"`     // optional
-	ProfilePath   types.String `tfsdk:"profile_path"`   // optional
-	LogonScript   types.String `tfsdk:"logon_script"`   // optional
+	HomeDirectory types.String `tfsdk:"home_directory"`
+	HomeDrive     types.String `tfsdk:"home_drive"`
+	ProfilePath   types.String `tfsdk:"profile_path"`
+	LogonScript   types.String `tfsdk:"logon_script"`
 
-	// Computed memberships
-	MemberOf     types.List   `tfsdk:"member_of"`     // computed (list of group DNs)
-	PrimaryGroup types.String `tfsdk:"primary_group"` // computed
+	MemberOf     types.List   `tfsdk:"member_of"`
+	PrimaryGroup types.String `tfsdk:"primary_group"`
 
-	// Computed timestamps
-	WhenCreated     types.String `tfsdk:"when_created"`      // computed
-	WhenChanged     types.String `tfsdk:"when_changed"`      // computed
-	LastLogon       types.String `tfsdk:"last_logon"`        // computed
-	PasswordLastSet types.String `tfsdk:"password_last_set"` // computed
-	AccountExpires  types.String `tfsdk:"account_expires"`   // computed
+	WhenCreated     types.String `tfsdk:"when_created"`
+	WhenChanged     types.String `tfsdk:"when_changed"`
+	LastLogon       types.String `tfsdk:"last_logon"`
+	PasswordLastSet types.String `tfsdk:"password_last_set"`
+	AccountExpires  types.String `tfsdk:"account_expires"`
 }
 
 func (r *UserResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -172,7 +167,7 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Validators: []validator.String{
 					stringvalidator.LengthBetween(1, 64),
 					stringvalidator.RegexMatches(
-						regexp.MustCompile(`^[^"]+$`),
+						userNameRegex,
 						"User name cannot contain double quotes",
 					),
 				},
@@ -187,7 +182,7 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Validators: []validator.String{
 					stringvalidator.LengthBetween(1, 256),
 					stringvalidator.RegexMatches(
-						regexp.MustCompile(`^[^@]+@[^@]+$`),
+						userPrincipalNameRegex,
 						"UPN must be in the format user@domain",
 					),
 				},
@@ -200,7 +195,7 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Validators: []validator.String{
 					stringvalidator.LengthBetween(1, 20),
 					stringvalidator.RegexMatches(
-						regexp.MustCompile(`^[a-zA-Z0-9._-]+$`),
+						userSAMAccountRegex,
 						"SAM account name can only contain letters, numbers, dots, underscores, and hyphens",
 					),
 				},
@@ -616,6 +611,16 @@ func (r *UserResource) Configure(ctx context.Context, req resource.ConfigureRequ
 
 	r.client = providerData.Client
 	r.cacheManager = providerData.CacheManager
+
+	baseDN, err := r.client.GetBaseDN(ctx)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"LDAP Configuration Error",
+			fmt.Sprintf("Could not determine base DN from LDAP server: %s", err.Error()),
+		)
+		return
+	}
+	r.baseDN = baseDN
 }
 
 // ModifyPlan adjusts computed attributes whose final value cannot be pinned to
@@ -739,15 +744,7 @@ func (r *UserResource) Create(ctx context.Context, req resource.CreateRequest, r
 		}
 	}()
 
-	// Create UserManager
-	userManager, err := r.getUserManager(ctx)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error Creating User Manager",
-			err.Error(),
-		)
-		return
-	}
+	userManager := r.getUserManager(ctx)
 
 	// Convert Terraform model to LDAP create request
 	createReq := r.modelToCreateRequest(&data)
@@ -792,24 +789,14 @@ func (r *UserResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		"guid": data.ID.ValueString(),
 	})
 
-	// Create UserManager
-	userManager, err := r.getUserManager(ctx)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error Creating User Manager",
-			err.Error(),
-		)
-		return
-	}
+	userManager := r.getUserManager(ctx)
 
 	// Get the user by GUID
 	user, err := userManager.GetUserByGUID(data.ID.ValueString())
 	if err != nil {
-		if ldapErr, ok := err.(*ldapclient.LDAPError); ok {
-			if strings.Contains(ldapErr.Error(), "not found") {
-				resp.State.RemoveResource(ctx)
-				return
-			}
+		if ldapclient.IsNotFoundError(err) {
+			resp.State.RemoveResource(ctx)
+			return
 		}
 
 		resp.Diagnostics.AddError(
@@ -839,15 +826,7 @@ func (r *UserResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		"guid": data.ID.ValueString(),
 	})
 
-	// Create UserManager
-	userManager, err := r.getUserManager(ctx)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error Creating User Manager",
-			err.Error(),
-		)
-		return
-	}
+	userManager := r.getUserManager(ctx)
 
 	// Get current state for comparison
 	var currentData UserResourceModel
@@ -857,6 +836,7 @@ func (r *UserResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	}
 
 	// Check if password should be reset (version > 0 AND version changed)
+	passwordReset := false
 	if !data.PasswordVersion.IsNull() &&
 		data.PasswordVersion.ValueInt64() > 0 &&
 		!data.PasswordVersion.Equal(currentData.PasswordVersion) {
@@ -883,25 +863,28 @@ func (r *UserResource) Update(ctx context.Context, req resource.UpdateRequest, r
 				return
 			}
 			tflog.Debug(ctx, "Password reset successfully")
+			passwordReset = true
 		}
 	}
 
 	// Build update request by comparing plan to current state
 	updateReq := r.buildUpdateRequest(&data, &currentData)
 
-	// Check if there are any changes
 	if updateReq == nil {
 		tflog.Debug(ctx, "No changes detected for AD user")
-		// Still need to refresh computed fields
-		user, err := userManager.GetUserByGUID(data.ID.ValueString())
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Error Reading User",
-				fmt.Sprintf("Could not read user with ID %s: %s", data.ID.ValueString(), err.Error()),
-			)
-			return
+		// Plan == state for AD-tracked attrs; only re-read when SetPassword
+		// ran (which mutates pwdLastSet/PasswordLastSet on the server).
+		if passwordReset {
+			user, err := userManager.GetUserByGUID(data.ID.ValueString())
+			if err != nil {
+				resp.Diagnostics.AddError(
+					"Error Reading User",
+					fmt.Sprintf("Could not read user with ID %s: %s", data.ID.ValueString(), err.Error()),
+				)
+				return
+			}
+			r.userToModel(ctx, user, &data, &resp.Diagnostics)
 		}
-		r.userToModel(ctx, user, &data, &resp.Diagnostics)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 		return
 	}
@@ -940,18 +923,10 @@ func (r *UserResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		"guid": data.ID.ValueString(),
 	})
 
-	// Create UserManager
-	userManager, err := r.getUserManager(ctx)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error Creating User Manager",
-			err.Error(),
-		)
-		return
-	}
+	userManager := r.getUserManager(ctx)
 
 	// Delete the user
-	err = userManager.DeleteUser(data.ID.ValueString())
+	err := userManager.DeleteUser(data.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Deleting User",
@@ -972,17 +947,8 @@ func (r *UserResource) ImportState(ctx context.Context, req resource.ImportState
 		"import_id": importID,
 	})
 
-	baseDN, err := r.client.GetBaseDN(ctx)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error Getting Base DN",
-			fmt.Sprintf("Could not get base DN for identifier normalization: %s", err.Error()),
-		)
-		return
-	}
-
 	// Normalize the import ID to a DN (supports DN, GUID, SID, UPN, SAM formats)
-	normalizer := ldapclient.NewMemberNormalizer(r.client, baseDN, r.cacheManager)
+	normalizer := ldapclient.NewMemberNormalizer(r.client, r.baseDN, r.cacheManager)
 	userDN, err := normalizer.NormalizeToDN(importID)
 	if err != nil {
 		resp.Diagnostics.AddError(
@@ -997,15 +963,7 @@ func (r *UserResource) ImportState(ctx context.Context, req resource.ImportState
 		"user_dn":   userDN,
 	})
 
-	// Create UserManager
-	userManager, err := r.getUserManager(ctx)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error Creating User Manager",
-			err.Error(),
-		)
-		return
-	}
+	userManager := r.getUserManager(ctx)
 
 	// Get the user by DN
 	user, err := userManager.GetUserByDN(userDN)
@@ -1028,17 +986,11 @@ func (r *UserResource) ImportState(ctx context.Context, req resource.ImportState
 	})
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), user.ObjectGUID)...)
 }
 
-// getUserManager creates a UserManager instance with base DN lookup.
-func (r *UserResource) getUserManager(ctx context.Context) (*ldapclient.UserManager, error) {
-	baseDN, err := r.client.GetBaseDN(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("could not get base DN from LDAP server: %w", err)
-	}
-
-	return ldapclient.NewUserManager(ctx, r.client, baseDN, r.cacheManager), nil
+// getUserManager creates a UserManager instance using the cached base DN.
+func (r *UserResource) getUserManager(ctx context.Context) *ldapclient.UserManager {
+	return ldapclient.NewUserManager(ctx, r.client, r.baseDN, r.cacheManager)
 }
 
 // modelToCreateRequest converts the Terraform model to an LDAP CreateUserRequest.
@@ -1196,7 +1148,8 @@ func (r *UserResource) userToModel(ctx context.Context, user *ldapclient.User, m
 
 	// Normalize DN and container
 	model.DN = customtypes.DNString(helpers.NormalizeDN(ctx, user.DistinguishedName))
-	model.Container = customtypes.DNString(helpers.NormalizeDN(ctx, r.extractContainer(user.DistinguishedName)))
+	containerDN, _ := ldapclient.GetDNParent(user.DistinguishedName)
+	model.Container = customtypes.DNString(helpers.NormalizeDN(ctx, containerDN))
 
 	// Required fields
 	model.Name = types.StringValue(user.CommonName)
@@ -1265,14 +1218,4 @@ func (r *UserResource) userToModel(ctx context.Context, user *ldapclient.User, m
 	model.LastLogon = helpers.TimestampOrNull(user.LastLogon)
 	model.PasswordLastSet = helpers.TimestampOrNull(user.PasswordLastSet)
 	model.AccountExpires = helpers.TimestampOrNull(user.AccountExpires)
-}
-
-// extractContainer extracts the parent container DN from a full DN.
-func (r *UserResource) extractContainer(dn string) string {
-	if parsedDN, err := ldaplib.ParseDN(dn); err == nil && len(parsedDN.RDNs) > 1 {
-		containerRDNs := parsedDN.RDNs[1:]
-		containerDN := &ldaplib.DN{RDNs: containerRDNs}
-		return containerDN.String()
-	}
-	return ""
 }

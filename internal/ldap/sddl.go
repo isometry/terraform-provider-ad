@@ -196,7 +196,7 @@ func unmarshalACL(buf []byte, offset uint32) (*ACL, error) {
 	cursor := offset + 8
 	end := offset + uint32(aclSize)
 	acl.ACEs = make([]ACE, 0, aceCount)
-	for i := uint16(0); i < aceCount; i++ {
+	for i := range aceCount {
 		if cursor+4 > end {
 			return nil, fmt.Errorf("ACE %d header runs past ACL boundary", i)
 		}
@@ -395,13 +395,31 @@ func marshalACE(ace *ACE) ([]byte, error) {
 	return out, nil
 }
 
-// everyoneSID returns the well-known S-1-1-0 (World) SID.
-func everyoneSID() SID {
-	return SID{
-		RevisionLevel:  1,
-		Authority:      1,
-		SubAuthorities: []uint32{0},
-	}
+// everyoneSIDValue is the well-known S-1-1-0 (World) SID.
+var everyoneSIDValue = SID{
+	RevisionLevel:  1,
+	Authority:      1,
+	SubAuthorities: []uint32{0},
+}
+
+// isEveryoneSID reports whether s is the World SID (S-1-1-0) without
+// allocating: direct field comparison, no string formatting.
+func isEveryoneSID(s SID) bool {
+	return s.RevisionLevel == 1 &&
+		s.Authority == 1 &&
+		len(s.SubAuthorities) == 1 &&
+		s.SubAuthorities[0] == 0
+}
+
+// isDenyDeleteEveryoneACE reports whether the ACE is the canonical
+// "protect from accidental deletion" entry: deny DELETE+DELETE_CHILD to
+// Everyone, with no opaque body.
+func isDenyDeleteEveryoneACE(ace ACE) bool {
+	return ace.RawBody == nil &&
+		ace.AceType == AccessDeniedACEType &&
+		ace.AccessMask&AccessMaskDelete != 0 &&
+		ace.AccessMask&AccessMaskDeleteChild != 0 &&
+		isEveryoneSID(ace.SID)
 }
 
 // HasDenyDeleteEveryoneACE reports whether the DACL contains the specific deny
@@ -411,22 +429,8 @@ func (sd *SecurityDescriptor) HasDenyDeleteEveryoneACE() bool {
 	if sd == nil || sd.DACL == nil {
 		return false
 	}
-	want := everyoneSID().String()
 	for _, ace := range sd.DACL.ACEs {
-		if ace.RawBody != nil {
-			// Opaque (non-simple) ACE: not our deny-delete ACE by definition.
-			continue
-		}
-		if ace.AceType != AccessDeniedACEType {
-			continue
-		}
-		if ace.AccessMask&AccessMaskDelete == 0 {
-			continue
-		}
-		if ace.AccessMask&AccessMaskDeleteChild == 0 {
-			continue
-		}
-		if ace.SID.String() == want {
+		if isDenyDeleteEveryoneACE(ace) {
 			return true
 		}
 	}
@@ -441,7 +445,7 @@ func (sd *SecurityDescriptor) AddDenyDeleteEveryoneACE() {
 		AceType:    AccessDeniedACEType,
 		AceFlags:   ContainerInheritACE,
 		AccessMask: AccessMaskDelete | AccessMaskDeleteChild,
-		SID:        everyoneSID(),
+		SID:        everyoneSIDValue,
 	}
 	if sd.DACL == nil {
 		sd.DACL = &ACL{AclRevision: 2, ACEs: []ACE{ace}}
@@ -457,15 +461,10 @@ func (sd *SecurityDescriptor) RemoveDenyDeleteEveryoneACE() bool {
 	if sd == nil || sd.DACL == nil {
 		return false
 	}
-	want := everyoneSID().String()
 	filtered := sd.DACL.ACEs[:0]
 	removed := false
 	for _, ace := range sd.DACL.ACEs {
-		if ace.RawBody == nil &&
-			ace.AceType == AccessDeniedACEType &&
-			ace.AccessMask&AccessMaskDelete != 0 &&
-			ace.AccessMask&AccessMaskDeleteChild != 0 &&
-			ace.SID.String() == want {
+		if isDenyDeleteEveryoneACE(ace) {
 			removed = true
 			continue
 		}
