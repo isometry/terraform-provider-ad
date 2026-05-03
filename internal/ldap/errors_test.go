@@ -557,6 +557,7 @@ func TestNewNotFoundError(t *testing.T) {
 	err := NewNotFoundError("get_user_by_guid", "user with GUID %s not found", "abc-123")
 	if err == nil {
 		t.Fatal("NewNotFoundError() returned nil")
+		return
 	}
 	if err.Category != ErrorCategoryNotFound {
 		t.Errorf("Category = %v, want %v", err.Category, ErrorCategoryNotFound)

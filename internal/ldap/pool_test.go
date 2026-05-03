@@ -14,6 +14,7 @@ func TestDefaultConfig(t *testing.T) {
 
 	if config == nil {
 		t.Fatal("DefaultConfig() returned nil")
+		return
 	}
 
 	// Verify security defaults
@@ -426,6 +427,7 @@ func TestTLSConfigServerName(t *testing.T) {
 			} else {
 				if tlsConfig == nil {
 					t.Fatal("TLS config should not be nil")
+					return
 				}
 				if tlsConfig.ServerName != tt.wantServerName {
 					t.Errorf("ServerName = %s, want %s", tlsConfig.ServerName, tt.wantServerName)

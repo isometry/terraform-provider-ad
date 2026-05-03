@@ -13,10 +13,10 @@ import (
 )
 
 // buildTestSecurityDescriptor returns a self-relative security descriptor
-// suitable for ntSecurityDescriptor test fixtures. When protected is true,
-// the DACL includes the deny-delete ACE for Everyone (S-1-1-0) that
-// "protect from accidental deletion" installs.
-func buildTestSecurityDescriptor(tb testing.TB, protected bool) []byte {
+// suitable for ntSecurityDescriptor test fixtures. The DACL includes the
+// deny-delete ACE for Everyone (S-1-1-0) that "protect from accidental
+// deletion" installs, so the resulting fixture represents a protected OU.
+func buildTestSecurityDescriptor(tb testing.TB) []byte {
 	tb.Helper()
 	sd := &SecurityDescriptor{
 		Revision: 1,
@@ -24,7 +24,6 @@ func buildTestSecurityDescriptor(tb testing.TB, protected bool) []byte {
 		DACL: &ACL{
 			AclRevision: 2,
 			ACEs: []ACE{
-				// A benign allow ACE so unprotected fixtures still have a DACL.
 				{
 					AceType:    AccessAllowedACEType,
 					AceFlags:   ContainerInheritACE,
@@ -38,9 +37,7 @@ func buildTestSecurityDescriptor(tb testing.TB, protected bool) []byte {
 			},
 		},
 	}
-	if protected {
-		sd.AddDenyDeleteEveryoneACE()
-	}
+	sd.AddDenyDeleteEveryoneACE()
 	raw, err := sd.Marshal()
 	if err != nil {
 		tb.Fatalf("marshal test security descriptor: %v", err)
@@ -714,8 +711,8 @@ func TestOUManager_DeleteOU_Protected(t *testing.T) {
 			{Name: "description", Values: []string{"Test OU"}},
 			// Real security descriptor with deny-delete ACE for Everyone.
 			{Name: "nTSecurityDescriptor",
-				Values:     []string{string(buildTestSecurityDescriptor(t, true))},
-				ByteValues: [][]byte{buildTestSecurityDescriptor(t, true)}},
+				Values:     []string{string(buildTestSecurityDescriptor(t))},
+				ByteValues: [][]byte{buildTestSecurityDescriptor(t)}},
 		},
 	}
 
@@ -851,8 +848,8 @@ func TestOUManager_GetOUStats(t *testing.T) {
 			{Name: "distinguishedName", Values: []string{"OU=ProtectedOU,dc=example,dc=com"}},
 			{Name: "ou", Values: []string{"ProtectedOU"}},
 			{Name: "nTSecurityDescriptor",
-				Values:     []string{string(buildTestSecurityDescriptor(t, true))},
-				ByteValues: [][]byte{buildTestSecurityDescriptor(t, true)}}, // Deny-delete ACE = protected
+				Values:     []string{string(buildTestSecurityDescriptor(t))},
+				ByteValues: [][]byte{buildTestSecurityDescriptor(t)}}, // Deny-delete ACE = protected
 		},
 	}
 

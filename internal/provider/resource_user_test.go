@@ -180,7 +180,7 @@ func TestAccUserResource_update(t *testing.T) {
 					testCheckUserExists(t.Context(), "ad_user.test"),
 					resource.TestCheckResourceAttr("ad_user.test", "name", name),
 					resource.TestCheckResourceAttr("ad_user.test", "description", "Original description"),
-					testAccStoreUserGUID("ad_user.test"),
+					testAccStoreUserGUID(),
 				),
 			},
 			// Update description
@@ -224,7 +224,7 @@ func TestAccUserResource_updateSecurityFlags(t *testing.T) {
 					testCheckUserExists(t.Context(), "ad_user.test"),
 					resource.TestCheckResourceAttr("ad_user.test", "enabled", "false"),
 					resource.TestCheckResourceAttr("ad_user.test", "password_never_expires", "false"),
-					testAccStoreUserGUID("ad_user.test"),
+					testAccStoreUserGUID(),
 				),
 			},
 			// Explicitly disable account and enable password_never_expires
@@ -278,7 +278,7 @@ func TestAccUserResource_containerMove(t *testing.T) {
 					resource.TestCheckResourceAttr("ad_user.test", "name", name),
 					resource.TestCheckResourceAttrSet("ad_user.test", "id"),
 					resource.TestCheckResourceAttrSet("ad_user.test", "dn"),
-					testAccStoreUserGUID("ad_user.test"),
+					testAccStoreUserGUID(),
 				),
 			},
 			// Move to a specific container
@@ -843,7 +843,8 @@ func testCheckUserDisappears(ctx context.Context, resourceName string) resource.
 
 var storedUserGUID string
 
-func testAccStoreUserGUID(resourceName string) resource.TestCheckFunc {
+func testAccStoreUserGUID() resource.TestCheckFunc {
+	const resourceName = "ad_user.test"
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
@@ -1331,7 +1332,7 @@ func TestAccUserResource_profileAttributes(t *testing.T) {
 					resource.TestCheckResourceAttr("ad_user.test", "home_drive", "H:"),
 					resource.TestCheckResourceAttr("ad_user.test", "profile_path", `\\server\profiles\%username%`),
 					resource.TestCheckResourceAttr("ad_user.test", "logon_script", "logon.bat"),
-					testAccStoreUserGUID("ad_user.test"),
+					testAccStoreUserGUID(),
 				),
 			},
 			// Step 2: update only profile_path; the other three must not change.
@@ -1444,7 +1445,7 @@ func TestAccUserResource_organizationalUpdate(t *testing.T) {
 					resource.TestCheckResourceAttr("ad_user.test", "department", "Engineering"),
 					resource.TestCheckResourceAttr("ad_user.test", "company", "Acme Corp"),
 					resource.TestCheckResourceAttr("ad_user.test", "employee_id", "EMP-001"),
-					testAccStoreUserGUID("ad_user.test"),
+					testAccStoreUserGUID(),
 				),
 			},
 			// Step 2: update all four to new values. GUID unchanged.
