@@ -121,6 +121,25 @@ func TestSID_RoundTrip_Bytes(t *testing.T) {
 	}
 }
 
+func TestSID_Bytes_AuthorityOutOfRange(t *testing.T) {
+	sid := SID{RevisionLevel: 1, Authority: 1 << 48}
+	_, err := sid.Bytes()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds 48-bit maximum")
+}
+
+func TestSID_Bytes_AuthorityMax(t *testing.T) {
+	sid := SID{RevisionLevel: 1, Authority: 1<<48 - 1}
+	b, err := sid.Bytes()
+	require.NoError(t, err)
+	require.Len(t, b, 8)
+	decoded, err := DecodeSID(b)
+	require.NoError(t, err)
+	assert.Equal(t, sid.RevisionLevel, decoded.RevisionLevel)
+	assert.Equal(t, sid.Authority, decoded.Authority)
+	assert.Empty(t, decoded.SubAuthorities)
+}
+
 func TestSID_RoundTrip_String(t *testing.T) {
 	// Known binary SID for S-1-5-18 (Local System).
 	b, err := hex.DecodeString("010100000000000512000000")

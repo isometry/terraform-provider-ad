@@ -36,24 +36,30 @@ func (s SID) RID() uint32 {
 	return s.SubAuthorities[len(s.SubAuthorities)-1]
 }
 
+// maxSIDAuthority is the largest value the 6-byte big-endian Authority field
+// of a Windows SID can hold (2^48 - 1).
+const maxSIDAuthority uint64 = 1<<48 - 1
+
 // Bytes encodes the SID to its binary representation as stored in Active Directory.
 func (s SID) Bytes() ([]byte, error) {
 	count := len(s.SubAuthorities)
 	if count > 255 {
 		return nil, fmt.Errorf("too many sub-authorities: %d (max 255)", count)
 	}
+	if s.Authority > maxSIDAuthority {
+		return nil, fmt.Errorf("authority %d exceeds 48-bit maximum %d", s.Authority, maxSIDAuthority)
+	}
 
 	buf := make([]byte, 8+4*count)
 	buf[0] = s.RevisionLevel
 	buf[1] = byte(count)
 
-	// Authority is stored as 6 bytes big-endian.
-	buf[2] = byte(s.Authority >> 40)
-	buf[3] = byte(s.Authority >> 32)
-	buf[4] = byte(s.Authority >> 24)
-	buf[5] = byte(s.Authority >> 16)
-	buf[6] = byte(s.Authority >> 8)
-	buf[7] = byte(s.Authority)
+	// Authority is stored as 6 bytes big-endian. Encode as full 8-byte
+	// big-endian and copy the low 6 bytes; the bound check above guarantees
+	// the high two bytes are zero.
+	var authBuf [8]byte
+	binary.BigEndian.PutUint64(authBuf[:], s.Authority)
+	copy(buf[2:8], authBuf[2:8])
 
 	// Sub-authorities are stored as 4 bytes little-endian each.
 	for i, sa := range s.SubAuthorities {
