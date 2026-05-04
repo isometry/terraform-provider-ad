@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -33,8 +34,7 @@ type CacheStats struct {
 	LastWarmed  time.Time
 
 	// Performance metrics
-	HitRate        float64
-	AverageHitTime time.Duration
+	HitRate float64
 
 	// Memory usage
 	EstimatedMemoryBytes int64
@@ -59,9 +59,16 @@ type CacheManager struct {
 	samIndex  sync.Map // map[string]string - SAM to internal ID mapping
 	dnIndex   sync.Map // map[string]string - DN to internal ID mapping
 
-	// Statistics tracking
-	statsMu sync.RWMutex
-	stats   CacheStats
+	// Hot-path counters: lock-free, read in GetStats and incremented on every
+	// Get/Put. Avoids serializing every cache lookup behind a single mutex.
+	hitsCount    atomic.Int64
+	missesCount  atomic.Int64
+	entriesCount atomic.Int64
+
+	// Cold-path stats (warming bookkeeping): updated rarely, guarded by statsMu.
+	statsMu     sync.Mutex
+	warmingRuns int64
+	lastWarmed  time.Time
 
 	// Utility handlers
 	guidHandler *GUIDHandler
@@ -77,9 +84,6 @@ func NewCacheManager() *CacheManager {
 	return &CacheManager{
 		guidHandler: NewGUIDHandler(),
 		sidHandler:  NewSIDHandler(),
-		stats: CacheStats{
-			LastWarmed: time.Time{}, // Zero time indicates never warmed
-		},
 	}
 }
 
@@ -125,8 +129,6 @@ func (cm *CacheManager) indexEntry(internalID string, entry *LDAPCacheEntry) {
 }
 
 // removeIndexEntry removes all index mappings for an entry.
-//
-//nolint:unused
 func (cm *CacheManager) removeIndexEntry(entry *LDAPCacheEntry) {
 	// Remove GUID index
 	if entry.ObjectGUID != "" {
@@ -219,8 +221,11 @@ func (cm *CacheManager) lookupInternalID(identifier string) (string, bool) {
 	var samToCheck string
 	if strings.HasPrefix(lowerID, "sam:") {
 		samToCheck = lowerID
-	} else if strings.Contains(identifier, "\\") {
-		samToCheck = fmt.Sprintf("sam:%s", lowerID)
+	} else if _, after, ok := strings.Cut(identifier, "\\"); ok {
+		// DOMAIN\user form: the SAM index stores only the bare sAMAccountName,
+		// so strip the "DOMAIN\" prefix before building the lookup key.
+		samValue := strings.ToLower(after)
+		samToCheck = fmt.Sprintf("sam:%s", samValue)
 	}
 	if samToCheck != "" {
 		if internalID, exists := cm.samIndex.Load(samToCheck); exists {
@@ -250,30 +255,22 @@ func (cm *CacheManager) lookupInternalID(identifier string) (string, bool) {
 
 // Get retrieves a cache entry by any supported identifier (GUID, SID, DN, UPN, SAM).
 func (cm *CacheManager) Get(identifier string) (*LDAPCacheEntry, bool) {
-	start := time.Now()
-	defer func() {
-		duration := time.Since(start)
-		cm.updateHitTime(duration)
-	}()
-
-	// Find the internal ID
 	internalID, found := cm.lookupInternalID(identifier)
 	if !found {
-		cm.incrementMisses()
+		cm.missesCount.Add(1)
 		return nil, false
 	}
 
-	// Get the entry from primary storage
 	if entryInterface, exists := cm.entries.Load(internalID); exists {
-		cm.incrementHits()
 		if entry, ok := entryInterface.(*LDAPCacheEntry); ok {
+			cm.hitsCount.Add(1)
 			return entry, true
 		}
 	}
 
 	// Entry index exists but entry is missing - clean up orphaned index
 	cm.cleanupOrphanedIndex(identifier, internalID)
-	cm.incrementMisses()
+	cm.missesCount.Add(1)
 	return nil, false
 }
 
@@ -314,14 +311,29 @@ func (cm *CacheManager) Put(entry *LDAPCacheEntry) error {
 		}
 	}
 
+	// Dedup: if an entry with the same DN already exists, remove the old
+	// primary row and all its index mappings so we don't leave orphans
+	// behind when a caller re-Puts an entry with a different GUID/SID.
+	dnKey := fmt.Sprintf("dn:%s", strings.ToLower(entry.DN))
+	if oldIDValue, exists := cm.dnIndex.Load(dnKey); exists {
+		if oldID, ok := oldIDValue.(string); ok {
+			if oldEntryVal, e := cm.entries.Load(oldID); e {
+				if oldEntry, ok2 := oldEntryVal.(*LDAPCacheEntry); ok2 {
+					cm.removeIndexEntry(oldEntry)
+				}
+			}
+			cm.entries.Delete(oldID)
+			cm.entriesCount.Add(-1)
+		}
+	}
+
 	// Store the entry
 	cm.entries.Store(internalID, entry)
 
 	// Create all index mappings
 	cm.indexEntry(internalID, entry)
 
-	// Update statistics
-	cm.incrementEntries()
+	cm.entriesCount.Add(1)
 
 	return nil
 }
@@ -413,8 +425,8 @@ func (cm *CacheManager) WarmCache(ctx context.Context, client Client, baseDN str
 
 	// Update warming statistics
 	cm.statsMu.Lock()
-	cm.stats.WarmingRuns++
-	cm.stats.LastWarmed = time.Now()
+	cm.warmingRuns++
+	cm.lastWarmed = time.Now()
 	cm.statsMu.Unlock()
 
 	tflog.SubsystemInfo(ctx, "ldap", "Cache warming completed", map[string]any{
@@ -483,100 +495,59 @@ func (cm *CacheManager) convertLDAPEntryToCacheEntry(ldapEntry *ldap.Entry) (*LD
 
 // GetStats returns current cache statistics.
 func (cm *CacheManager) GetStats() CacheStats {
-	cm.statsMu.RLock()
-	defer cm.statsMu.RUnlock()
+	hits := cm.hitsCount.Load()
+	misses := cm.missesCount.Load()
 
-	stats := cm.stats
+	cm.statsMu.Lock()
+	warmingRuns := cm.warmingRuns
+	lastWarmed := cm.lastWarmed
+	cm.statsMu.Unlock()
 
-	// Calculate hit rate
-	totalRequests := stats.Hits + stats.Misses
-	if totalRequests > 0 {
-		stats.HitRate = float64(stats.Hits) / float64(totalRequests) * 100
+	stats := CacheStats{
+		Hits:        hits,
+		Misses:      misses,
+		Entries:     cm.entriesCount.Load(),
+		WarmingRuns: warmingRuns,
+		LastWarmed:  lastWarmed,
 	}
 
-	// Count current entries
-	stats.Entries = cm.countEntries()
+	if total := hits + misses; total > 0 {
+		stats.HitRate = float64(hits) / float64(total) * 100
+	}
 
-	// Count indexed entries
 	stats.IndexedByGUID = cm.countIndex(&cm.guidIndex)
 	stats.IndexedBySID = cm.countIndex(&cm.sidIndex)
 	stats.IndexedByUPN = cm.countIndex(&cm.upnIndex)
 	stats.IndexedBySAM = cm.countIndex(&cm.samIndex)
 	stats.IndexedByDN = cm.countIndex(&cm.dnIndex)
-
-	// Estimate memory usage
 	stats.EstimatedMemoryBytes = cm.estimateMemoryUsage()
 
 	return stats
 }
 
 // Clear removes all entries from the cache.
+//
+// Drains each sync.Map in place via Range+Delete rather than reassigning the
+// field to a fresh sync.Map{}. Reassignment of the map-valued struct fields
+// races any concurrent Put/Get/GetStats caller that reads the same field;
+// draining preserves the existing map headers so concurrent readers continue
+// to see a valid (possibly partly-emptied) map.
 func (cm *CacheManager) Clear() {
-	// Clear all storage and indexes
-	cm.entries = sync.Map{}
-	cm.guidIndex = sync.Map{}
-	cm.sidIndex = sync.Map{}
-	cm.upnIndex = sync.Map{}
-	cm.samIndex = sync.Map{}
-	cm.dnIndex = sync.Map{}
+	cm.entries.Range(func(k, _ any) bool { cm.entries.Delete(k); return true })
+	cm.guidIndex.Range(func(k, _ any) bool { cm.guidIndex.Delete(k); return true })
+	cm.sidIndex.Range(func(k, _ any) bool { cm.sidIndex.Delete(k); return true })
+	cm.upnIndex.Range(func(k, _ any) bool { cm.upnIndex.Delete(k); return true })
+	cm.samIndex.Range(func(k, _ any) bool { cm.samIndex.Delete(k); return true })
+	cm.dnIndex.Range(func(k, _ any) bool { cm.dnIndex.Delete(k); return true })
 
 	// Reset entry counter
 	cm.counterMu.Lock()
 	cm.idCounter = 0
 	cm.counterMu.Unlock()
 
-	// Reset statistics (keep historical data like hits/misses)
-	cm.statsMu.Lock()
-	// Don't reset hits, misses, warming runs - keep historical data
-	// Reset current state counters
-	cm.stats.Entries = 0
-	cm.stats.IndexedByGUID = 0
-	cm.stats.IndexedBySID = 0
-	cm.stats.IndexedByUPN = 0
-	cm.stats.IndexedBySAM = 0
-	cm.stats.IndexedByDN = 0
-	cm.stats.EstimatedMemoryBytes = 0
-	cm.statsMu.Unlock()
-}
-
-// Helper methods for statistics tracking
-
-func (cm *CacheManager) incrementHits() {
-	cm.statsMu.Lock()
-	cm.stats.Hits++
-	cm.statsMu.Unlock()
-}
-
-func (cm *CacheManager) incrementMisses() {
-	cm.statsMu.Lock()
-	cm.stats.Misses++
-	cm.statsMu.Unlock()
-}
-
-func (cm *CacheManager) incrementEntries() {
-	cm.statsMu.Lock()
-	cm.stats.Entries++
-	cm.statsMu.Unlock()
-}
-
-func (cm *CacheManager) updateHitTime(duration time.Duration) {
-	cm.statsMu.Lock()
-	// Simple moving average of hit times
-	if cm.stats.AverageHitTime == 0 {
-		cm.stats.AverageHitTime = duration
-	} else {
-		cm.stats.AverageHitTime = (cm.stats.AverageHitTime + duration) / 2
-	}
-	cm.statsMu.Unlock()
-}
-
-func (cm *CacheManager) countEntries() int64 {
-	count := int64(0)
-	cm.entries.Range(func(key, value any) bool {
-		count++
-		return true
-	})
-	return count
+	// Don't reset hits/misses/warmingRuns - keep historical data.
+	// Index counts and EstimatedMemoryBytes are computed lazily in GetStats.
+	cm.entriesCount.Store(0)
 }
 
 func (cm *CacheManager) countIndex(index *sync.Map) int64 {

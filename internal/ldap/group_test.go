@@ -111,6 +111,18 @@ func (m *MockGroupClient) WhoAmI(ctx context.Context) (*WhoAmIResult, error) {
 	return result, args.Error(1)
 }
 
+func (m *MockGroupClient) GetRootDSE(ctx context.Context) (*RootDSEInfo, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	result, ok := args.Get(0).(*RootDSEInfo)
+	if !ok {
+		return nil, args.Error(1)
+	}
+	return result, args.Error(1)
+}
+
 // Helper function to create a mock LDAP entry for a group.
 func createMockGroupEntry(name, guid, dn string, groupType int32) *ldap.Entry {
 	guidHandler := NewGUIDHandler()
@@ -1886,7 +1898,7 @@ func TestSearchGroupsInContainer(t *testing.T) {
 				len(searchReq.Attributes) == 2
 		})).Return(searchResult, nil)
 
-		groups, err := gm.searchGroupsInContainer(customBaseDN, filter, attributes)
+		groups, err := gm.searchGroupsInContainer(customBaseDN, filter, attributes, ScopeWholeSubtree)
 
 		require.NoError(t, err)
 		assert.Len(t, groups, 1)
@@ -1904,7 +1916,7 @@ func TestSearchGroupsInContainer(t *testing.T) {
 			return searchReq.Filter == "(objectClass=group)"
 		})).Return(searchResult, nil)
 
-		groups, err := gm.searchGroupsInContainer("DC=test,DC=local", "", nil)
+		groups, err := gm.searchGroupsInContainer("DC=test,DC=local", "", nil, ScopeWholeSubtree)
 
 		require.NoError(t, err)
 		assert.Len(t, groups, 1)
@@ -1921,12 +1933,51 @@ func TestSearchGroupsInContainer(t *testing.T) {
 			return len(searchReq.Attributes) > 5 // Should have default attributes
 		})).Return(searchResult, nil)
 
-		groups, err := gm.searchGroupsInContainer("DC=test,DC=local", "", nil)
+		groups, err := gm.searchGroupsInContainer("DC=test,DC=local", "", nil, ScopeWholeSubtree)
 
 		require.NoError(t, err)
 		assert.Len(t, groups, 1)
 		mockClient.AssertExpectations(t)
 	})
+}
+
+// TestSearchGroupsWithFilter_SearchScopePropagation verifies that the
+// GroupSearchFilter.SearchScope pointer is threaded through to the underlying
+// LDAP SearchRequest, and that a nil pointer is treated as ScopeWholeSubtree
+// to preserve historical behaviour.
+func TestSearchGroupsWithFilter_SearchScopePropagation(t *testing.T) {
+	base := ScopeBaseObject
+	one := ScopeSingleLevel
+	sub := ScopeWholeSubtree
+
+	cases := []struct {
+		name     string
+		input    *SearchScope
+		expected SearchScope
+	}{
+		{name: "nil pointer defaults to subtree", input: nil, expected: ScopeWholeSubtree},
+		{name: "explicit base is propagated as base", input: &base, expected: ScopeBaseObject},
+		{name: "explicit onelevel is propagated", input: &one, expected: ScopeSingleLevel},
+		{name: "explicit subtree is propagated", input: &sub, expected: ScopeWholeSubtree},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gm, mockClient := createTestGroupManager(t)
+
+			filter := &GroupSearchFilter{NamePrefix: "Test", SearchScope: tc.input}
+
+			mockClient.On(
+				"SearchWithPaging",
+				mock.Anything,
+				mock.MatchedBy(func(req *SearchRequest) bool { return req.Scope == tc.expected }),
+			).Return(&SearchResult{Entries: nil, Total: 0}, nil).Once()
+
+			_, err := gm.SearchGroupsWithFilter(filter)
+			require.NoError(t, err)
+			mockClient.AssertExpectations(t)
+		})
+	}
 }
 
 func TestAddMembersConflictHandling(t *testing.T) {

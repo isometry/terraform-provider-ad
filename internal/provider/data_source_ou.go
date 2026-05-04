@@ -4,10 +4,8 @@ import (
 	"context"
 	"fmt"
 	"regexp"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/datasourcevalidator"
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -17,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	"github.com/isometry/terraform-provider-ad/internal/provider/helpers"
 	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
 	"github.com/isometry/terraform-provider-ad/internal/utils"
 )
@@ -31,9 +30,8 @@ func NewOUDataSource() datasource.DataSource {
 
 // OUDataSource defines the data source implementation.
 type OUDataSource struct {
-	client       ldapclient.Client
-	cacheManager *ldapclient.CacheManager
-	ouManager    *ldapclient.OUManager
+	client    ldapclient.Client
+	ouManager *ldapclient.OUManager
 }
 
 // OUDataSourceModel describes the data source data model with multiple lookup methods.
@@ -173,7 +171,6 @@ func (d *OUDataSource) Configure(ctx context.Context, req datasource.ConfigureRe
 	}
 
 	d.client = providerData.Client
-	d.cacheManager = providerData.CacheManager
 
 	// Initialize OU manager
 	baseDN, err := d.client.GetBaseDN(ctx)
@@ -287,31 +284,11 @@ func (d *OUDataSource) mapOUToModel(ctx context.Context, ou *ldapclient.OU, data
 	// Set the ID to objectGUID for state tracking
 	data.ID = types.StringValue(ou.ObjectGUID)
 
-	// Normalize DN case to ensure uppercase attribute types
-	normalizedDN, err := ldapclient.NormalizeDNCase(ou.DistinguishedName)
-	if err != nil {
-		// Log error but use original DN as fallback
-		tflog.Warn(ctx, "Failed to normalize OU DN case", map[string]any{
-			"original_dn": ou.DistinguishedName,
-			"error":       err.Error(),
-		})
-		normalizedDN = ou.DistinguishedName
-	}
+	// Normalize DN and path
+	normalizedDN := helpers.NormalizeDN(ctx, ou.DistinguishedName)
+	normalizedPath := helpers.NormalizeDN(ctx, ou.Parent)
 	data.DN = types.StringValue(normalizedDN)
-
-	// Set name from OU data
 	data.Name = types.StringValue(ou.Name)
-
-	// Normalize path (parent) DN case
-	normalizedPath, err := ldapclient.NormalizeDNCase(ou.Parent)
-	if err != nil {
-		// Log error but use original path as fallback
-		tflog.Warn(ctx, "Failed to normalize path DN case", map[string]any{
-			"original_path": ou.Parent,
-			"error":         err.Error(),
-		})
-		normalizedPath = ou.Parent
-	}
 	data.Path = types.StringValue(normalizedPath)
 
 	// Core OU attributes
@@ -319,19 +296,9 @@ func (d *OUDataSource) mapOUToModel(ctx context.Context, ou *ldapclient.OU, data
 	data.Protected = types.BoolValue(ou.Protected)
 	data.Parent = types.StringValue(normalizedPath) // Already normalized above
 
-	// ManagedBy information
+	// ManagedBy information (normalize DN if present)
 	if ou.ManagedBy != "" {
-		// Normalize managedBy DN case
-		normalizedManagedBy, err := ldapclient.NormalizeDNCase(ou.ManagedBy)
-		if err != nil {
-			// Log error but use original DN as fallback
-			tflog.Warn(ctx, "Failed to normalize managedBy DN case", map[string]any{
-				"original_managed_by": ou.ManagedBy,
-				"error":               err.Error(),
-			})
-			normalizedManagedBy = ou.ManagedBy
-		}
-		data.ManagedBy = types.StringValue(normalizedManagedBy)
+		data.ManagedBy = types.StringValue(helpers.NormalizeDN(ctx, ou.ManagedBy))
 	} else {
 		data.ManagedBy = types.StringNull()
 	}
@@ -347,49 +314,25 @@ func (d *OUDataSource) mapOUToModel(ctx context.Context, ou *ldapclient.OU, data
 		children = []*ldapclient.OU{}
 	}
 
-	// Convert child OUs to a List
+	// Convert child OUs to a List with normalization
 	childCount := int64(len(children))
 	data.ChildCount = types.Int64Value(childCount)
 
-	if len(children) > 0 {
-		childElements := make([]attr.Value, len(children))
-		for i, child := range children {
-			// Normalize child DN case
-			normalizedChildDN, err := ldapclient.NormalizeDNCase(child.DistinguishedName)
-			if err != nil {
-				// Log error but use original DN as fallback
-				tflog.Warn(ctx, "Failed to normalize child OU DN case", map[string]any{
-					"original_child_dn": child.DistinguishedName,
-					"error":             err.Error(),
-				})
-				normalizedChildDN = child.DistinguishedName
-			}
-			childElements[i] = types.StringValue(normalizedChildDN)
-		}
-
-		childList, childDiags := types.ListValue(types.StringType, childElements)
-		diags.Append(childDiags...)
-		if !childDiags.HasError() {
-			data.Children = childList
-		}
-	} else {
-		// Empty list for no children
-		emptyList, childDiags := types.ListValue(types.StringType, []attr.Value{})
-		diags.Append(childDiags...)
-		if !childDiags.HasError() {
-			data.Children = emptyList
-		}
+	childDNs := make([]string, len(children))
+	for i, child := range children {
+		childDNs[i] = child.DistinguishedName
 	}
+	data.Children = helpers.DNListOrNull(ctx, childDNs, diags)
 
 	// Timestamps
 	if !ou.WhenCreated.IsZero() {
-		data.WhenCreated = types.StringValue(ou.WhenCreated.Format(time.RFC3339))
+		data.WhenCreated = helpers.Timestamp(ou.WhenCreated)
 	} else {
 		data.WhenCreated = types.StringNull()
 	}
 
 	if !ou.WhenChanged.IsZero() {
-		data.WhenChanged = types.StringValue(ou.WhenChanged.Format(time.RFC3339))
+		data.WhenChanged = helpers.Timestamp(ou.WhenChanged)
 	} else {
 		data.WhenChanged = types.StringNull()
 	}

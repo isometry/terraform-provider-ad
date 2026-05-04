@@ -121,7 +121,6 @@ func (pd *ProviderData) GetCombinedStats() map[string]any {
 			"hit_rate":               cacheStats.HitRate,
 			"warming_runs":           cacheStats.WarmingRuns,
 			"last_warmed":            cacheStats.LastWarmed,
-			"average_hit_time_ms":    cacheStats.AverageHitTime.Milliseconds(),
 			"estimated_memory_bytes": cacheStats.EstimatedMemoryBytes,
 			"indexed_by_guid":        cacheStats.IndexedByGUID,
 			"indexed_by_sid":         cacheStats.IndexedBySID,

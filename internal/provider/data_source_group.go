@@ -3,11 +3,9 @@ package provider
 import (
 	"context"
 	"fmt"
-	"time"
 
 	ldap "github.com/go-ldap/ldap/v3"
 	"github.com/hashicorp/terraform-plugin-framework-validators/datasourcevalidator"
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -17,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	"github.com/isometry/terraform-provider-ad/internal/provider/helpers"
 	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
 	"github.com/isometry/terraform-provider-ad/internal/utils"
 )
@@ -260,6 +259,22 @@ func (d *GroupDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	// Determine lookup method and retrieve group
 	group, err := d.retrieveGroup(ctx, &data, &resp.Diagnostics)
 	if err != nil {
+		// Emit a friendlier "Group Not Found" diagnostic when the underlying
+		// LDAP error indicates the object could not be located. This keeps
+		// the raw LDAP wire error out of the Summary while preserving it in
+		// the Detail for debugging.
+		if ldapclient.IsNotFoundError(err) {
+			resp.Diagnostics.AddError(
+				"Group Not Found",
+				fmt.Sprintf(
+					"No Active Directory group was found matching the configured %s.\n\n"+
+						"Underlying error: %s",
+					groupLookupAttributeDescription(&data),
+					err.Error(),
+				),
+			)
+			return
+		}
 		resp.Diagnostics.AddError(
 			"Error Reading Group",
 			fmt.Sprintf("Could not read Active Directory group: %s", err.Error()),
@@ -270,7 +285,10 @@ func (d *GroupDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	if group == nil {
 		resp.Diagnostics.AddError(
 			"Group Not Found",
-			"The specified Active Directory group could not be found.",
+			fmt.Sprintf(
+				"No Active Directory group was found matching the configured %s.",
+				groupLookupAttributeDescription(&data),
+			),
 		)
 		return
 	}
@@ -361,7 +379,11 @@ func (d *GroupDataSource) retrieveGroup(ctx context.Context, data *GroupDataSour
 		}
 
 		if len(groups) == 0 {
-			return nil, fmt.Errorf("no group found with SAM account name: %s", samAccountName)
+			return nil, ldapclient.NewNotFoundError(
+				"search_group_by_sam",
+				"no group found with SAM account name: %s",
+				samAccountName,
+			)
 		}
 
 		if len(groups) > 1 {
@@ -392,32 +414,13 @@ func (d *GroupDataSource) mapGroupToModel(ctx context.Context, group *ldapclient
 	data.Description = types.StringValue(group.Description)
 	data.Scope = types.StringValue(string(group.Scope))
 	data.Category = types.StringValue(string(group.Category))
-	// Normalize DN case to ensure uppercase attribute types
-	normalizedDN, err := ldapclient.NormalizeDNCase(group.DistinguishedName)
-	if err != nil {
-		// Log error but use original DN as fallback
-		tflog.Warn(ctx, "Failed to normalize group DN case", map[string]any{
-			"original_dn": group.DistinguishedName,
-			"error":       err.Error(),
-		})
-		normalizedDN = group.DistinguishedName
-	}
-	data.DistinguishedName = types.StringValue(normalizedDN)
+	// Normalize DN case
+	data.DistinguishedName = types.StringValue(helpers.NormalizeDN(ctx, group.DistinguishedName))
 	data.SID = types.StringValue(group.ObjectSid)
 
-	// ManagedBy information
+	// ManagedBy information (normalize DN if present)
 	if group.ManagedBy != "" {
-		// Normalize managedBy DN case
-		normalizedManagedBy, err := ldapclient.NormalizeDNCase(group.ManagedBy)
-		if err != nil {
-			// Log error but use original DN as fallback
-			tflog.Warn(ctx, "Failed to normalize managedBy DN case", map[string]any{
-				"original_managed_by": group.ManagedBy,
-				"error":               err.Error(),
-			})
-			normalizedManagedBy = group.ManagedBy
-		}
-		data.ManagedBy = types.StringValue(normalizedManagedBy)
+		data.ManagedBy = types.StringValue(helpers.NormalizeDN(ctx, group.ManagedBy))
 	} else {
 		data.ManagedBy = types.StringNull()
 	}
@@ -448,67 +451,11 @@ func (d *GroupDataSource) mapGroupToModel(ctx context.Context, group *ldapclient
 	memberCount = int64(len(memberDNs))
 	data.MemberCount = types.Int64Value(memberCount)
 
-	// Convert member DNs to a Set, normalizing DN case
-	if len(memberDNs) > 0 {
-		memberElements := make([]attr.Value, len(memberDNs))
-		for i, memberDN := range memberDNs {
-			// Normalize member DN case
-			normalizedMemberDN, err := ldapclient.NormalizeDNCase(memberDN)
-			if err != nil {
-				// Log error but use original DN as fallback
-				tflog.Warn(ctx, "Failed to normalize member DN case", map[string]any{
-					"original_member_dn": memberDN,
-					"error":              err.Error(),
-				})
-				normalizedMemberDN = memberDN
-			}
-			memberElements[i] = types.StringValue(normalizedMemberDN)
-		}
+	// Convert member DNs to a Set with normalization
+	data.Members = helpers.DNSetOrNull(ctx, memberDNs, diags)
 
-		memberSet, memberDiags := types.SetValue(types.StringType, memberElements)
-		diags.Append(memberDiags...)
-		if !memberDiags.HasError() {
-			data.Members = memberSet
-		}
-	} else {
-		// Empty set for no members
-		emptySet, memberDiags := types.SetValue(types.StringType, []attr.Value{})
-		diags.Append(memberDiags...)
-		if !memberDiags.HasError() {
-			data.Members = emptySet
-		}
-	}
-
-	// Convert memberOf DNs to a Set, normalizing DN case
-	if len(group.MemberOf) > 0 {
-		memberOfElements := make([]attr.Value, len(group.MemberOf))
-		for i, memberOfDN := range group.MemberOf {
-			// Normalize member of DN case
-			normalizedMemberOfDN, err := ldapclient.NormalizeDNCase(memberOfDN)
-			if err != nil {
-				// Log error but use original DN as fallback
-				tflog.Warn(ctx, "Failed to normalize member of DN case", map[string]any{
-					"original_member_of_dn": memberOfDN,
-					"error":                 err.Error(),
-				})
-				normalizedMemberOfDN = memberOfDN
-			}
-			memberOfElements[i] = types.StringValue(normalizedMemberOfDN)
-		}
-
-		memberOfSet, memberOfDiags := types.SetValue(types.StringType, memberOfElements)
-		diags.Append(memberOfDiags...)
-		if !memberOfDiags.HasError() {
-			data.MemberOf = memberOfSet
-		}
-	} else {
-		// Empty set for no member of
-		emptySet, memberOfDiags := types.SetValue(types.StringType, []attr.Value{})
-		diags.Append(memberOfDiags...)
-		if !memberOfDiags.HasError() {
-			data.MemberOf = emptySet
-		}
-	}
+	// Convert memberOf DNs to a Set with normalization
+	data.MemberOf = helpers.DNSetOrNull(ctx, group.MemberOf, diags)
 
 	// Email information
 	data.Mail = types.StringValue(group.Mail)
@@ -516,13 +463,13 @@ func (d *GroupDataSource) mapGroupToModel(ctx context.Context, group *ldapclient
 
 	// Timestamps
 	if !group.WhenCreated.IsZero() {
-		data.WhenCreated = types.StringValue(group.WhenCreated.Format(time.RFC3339))
+		data.WhenCreated = helpers.Timestamp(group.WhenCreated)
 	} else {
 		data.WhenCreated = types.StringNull()
 	}
 
 	if !group.WhenChanged.IsZero() {
-		data.WhenChanged = types.StringValue(group.WhenChanged.Format(time.RFC3339))
+		data.WhenChanged = helpers.Timestamp(group.WhenChanged)
 	} else {
 		data.WhenChanged = types.StringNull()
 	}
@@ -535,4 +482,25 @@ func (d *GroupDataSource) mapGroupToModel(ctx context.Context, group *ldapclient
 		"scope":           group.Scope,
 		"category":        group.Category,
 	})
+}
+
+// groupLookupAttributeDescription returns a human-readable description of the
+// lookup attribute(s) provided in the configuration, used for "Group Not
+// Found" diagnostic detail strings.
+func groupLookupAttributeDescription(data *GroupDataSourceModel) string {
+	switch {
+	case !data.ID.IsNull() && data.ID.ValueString() != "":
+		return fmt.Sprintf("id=%q", data.ID.ValueString())
+	case !data.DistinguishedName.IsNull() && data.DistinguishedName.ValueString() != "":
+		return fmt.Sprintf("dn=%q", data.DistinguishedName.ValueString())
+	case !data.Name.IsNull() && data.Name.ValueString() != "":
+		if !data.Container.IsNull() && data.Container.ValueString() != "" {
+			return fmt.Sprintf("name=%q in container=%q", data.Name.ValueString(), data.Container.ValueString())
+		}
+		return fmt.Sprintf("name=%q", data.Name.ValueString())
+	case !data.SAMAccountName.IsNull() && data.SAMAccountName.ValueString() != "":
+		return fmt.Sprintf("sam_account_name=%q", data.SAMAccountName.ValueString())
+	default:
+		return "lookup attribute"
+	}
 }

@@ -500,28 +500,20 @@ func (c *BuildHierarchyConfig) ToJSON() (string, error) {
 	return string(data), nil
 }
 
-// extractConfigFromDynamic extracts configuration map from a dynamic value.
-// This is a helper function that handles both map and object types.
+// extractConfigFromDynamic extracts a Go map from a dynamic value wrapping
+// either an LDAP map or an object schema, delegating the per-element
+// attr.Value → Go conversion to the shared helpers.
 func (f BuildHierarchyFunction) extractConfigFromDynamic(ctx context.Context, value types.Dynamic) (map[string]any, error) {
-	underlyingVal := value.UnderlyingValue()
-
-	var configAttrs map[string]attr.Value
-
-	// Handle map type
-	if mapVal, ok := underlyingVal.(types.Map); ok {
-		configAttrs = mapVal.Elements()
-	} else if objVal, ok := underlyingVal.(types.Object); ok {
-		// Handle object type
-		configAttrs = objVal.Attributes()
-	} else {
-		return nil, fmt.Errorf("expected map or object type for config, got %T", underlyingVal)
+	configAttrs, err := helpers.ExtractMapFromDynamic(ctx, value)
+	if err != nil {
+		return nil, fmt.Errorf("expected map or object type for config: %w", err)
 	}
 
-	result := make(map[string]any)
+	result := make(map[string]any, len(configAttrs))
 	for key, val := range configAttrs {
-		goVal, err := helpers.TerraformValueToGo(ctx, val)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert config field %s: %w", key, err)
+		goVal, convErr := helpers.TerraformValueToGo(ctx, val)
+		if convErr != nil {
+			return nil, fmt.Errorf("failed to convert config field %s: %w", key, convErr)
 		}
 		result[key] = goVal
 	}

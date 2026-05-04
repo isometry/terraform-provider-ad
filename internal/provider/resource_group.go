@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	"github.com/isometry/terraform-provider-ad/internal/provider/helpers"
 	"github.com/isometry/terraform-provider-ad/internal/provider/planmodifiers"
 	customtypes "github.com/isometry/terraform-provider-ad/internal/provider/types"
 	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
@@ -136,15 +137,10 @@ func (r *GroupResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			"managed_by": schema.StringAttribute{
 				MarkdownDescription: "Distinguished Name (DN) of the user or computer that manages this group. " +
 					"Must be a valid DN format (e.g., `CN=User,OU=Users,DC=example,DC=com`). " +
-					"Set to an empty string (`\"\"`) to clear.",
+					"Omit (or set to `null`) to clear; AD treats an absent attribute as unset.",
 				Optional: true,
-				Computed: true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-					planmodifiers.NullForEmptyString(),
-				},
 				Validators: []validator.String{
-					validators.IsValidDNOrEmpty(),
+					validators.IsValidDN(),
 				},
 			},
 			"dn": schema.StringAttribute{
@@ -294,7 +290,7 @@ func (r *GroupResource) Create(ctx context.Context, req resource.CreateRequest, 
 	})
 
 	// Update the model with the created group data
-	r.updateModelFromGroup(&data, group)
+	r.updateModelFromGroup(ctx, &data, group)
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -346,7 +342,7 @@ func (r *GroupResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	}
 
 	// Update the model with the current group data
-	r.updateModelFromGroup(&data, group)
+	r.updateModelFromGroup(ctx, &data, group)
 
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -445,12 +441,12 @@ func (r *GroupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		hasChanges = true
 	}
 
-	// Check for managedBy changes — only concrete values trigger updates.
-	// Null/unknown are no-ops (UseStateForUnknown preserves state); "" clears; a DN sets.
-	if !data.ManagedBy.Equal(currentData.ManagedBy) &&
-		!data.ManagedBy.IsNull() && !data.ManagedBy.IsUnknown() {
-		managedByValue := data.ManagedBy.ValueString()
-		updateReq.ManagedBy = &managedByValue
+	// Check for managedBy changes. The attribute is Optional only — users
+	// clear it by omitting it (config null), which arrives here as plan-null
+	// against a state holding the prior DN; helpers.StringChanged emits &""
+	// as the LDAP clear signal in that case. plan == state → no-op; plan
+	// has a value → &value.
+	if helpers.StringChanged(data.ManagedBy, currentData.ManagedBy, &updateReq.ManagedBy) {
 		hasChanges = true
 	}
 
@@ -476,7 +472,7 @@ func (r *GroupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	})
 
 	// Update the model with the updated group data
-	r.updateModelFromGroup(&data, group)
+	r.updateModelFromGroup(ctx, &data, group)
 
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -581,7 +577,7 @@ func (r *GroupResource) ImportState(ctx context.Context, req resource.ImportStat
 
 	// Create model from the imported group
 	var data GroupResourceModel
-	r.updateModelFromGroup(&data, group)
+	r.updateModelFromGroup(ctx, &data, group)
 
 	tflog.Info(ctx, "Successfully imported AD group", map[string]any{
 		"import_id":  importID,
@@ -597,7 +593,7 @@ func (r *GroupResource) ImportState(ctx context.Context, req resource.ImportStat
 }
 
 // updateModelFromGroup updates the Terraform model with data from an LDAP Group.
-func (r *GroupResource) updateModelFromGroup(model *GroupResourceModel, group *ldapclient.Group) {
+func (r *GroupResource) updateModelFromGroup(ctx context.Context, model *GroupResourceModel, group *ldapclient.Group) {
 	model.ID = types.StringValue(group.ObjectGUID)
 	model.Name = types.StringValue(group.Name)
 	model.SAMAccountName = types.StringValue(group.SAMAccountName)
@@ -605,43 +601,13 @@ func (r *GroupResource) updateModelFromGroup(model *GroupResourceModel, group *l
 	model.Category = types.StringValue(string(group.Category))
 	model.SID = types.StringValue(group.ObjectSid)
 
-	// Normalize DN case to ensure uppercase attribute types
-	normalizedDN, err := ldapclient.NormalizeDNCase(group.DistinguishedName)
-	if err != nil {
-		// Log error but use original DN as fallback
-		tflog.Warn(context.Background(), "Failed to normalize group DN case", map[string]any{
-			"original_dn": group.DistinguishedName,
-			"error":       err.Error(),
-		})
-		normalizedDN = group.DistinguishedName
-	}
-	model.DistinguishedName = customtypes.DNString(normalizedDN)
+	// Normalize DN and container
+	model.DistinguishedName = customtypes.DNString(helpers.NormalizeDN(ctx, group.DistinguishedName))
+	model.Container = customtypes.DNString(helpers.NormalizeDN(ctx, group.Container))
 
-	// Normalize container DN case
-	normalizedContainer, err := ldapclient.NormalizeDNCase(group.Container)
-	if err != nil {
-		// Log error but use original container as fallback
-		tflog.Warn(context.Background(), "Failed to normalize container DN case", map[string]any{
-			"original_container": group.Container,
-			"error":              err.Error(),
-		})
-		normalizedContainer = group.Container
-	}
-	model.Container = customtypes.DNString(normalizedContainer)
-
-	// Handle optional description
-	if group.Description != "" {
-		model.Description = types.StringValue(group.Description)
-	} else {
-		model.Description = types.StringNull()
-	}
-
-	// Handle optional managedBy
-	if group.ManagedBy != "" {
-		model.ManagedBy = types.StringValue(group.ManagedBy)
-	} else {
-		model.ManagedBy = types.StringNull()
-	}
+	// Handle optional description and managedBy
+	model.Description = helpers.StringOrNull(group.Description)
+	model.ManagedBy = helpers.StringOrNull(group.ManagedBy)
 }
 
 // getGroupManager creates a GroupManager instance with base DN lookup.

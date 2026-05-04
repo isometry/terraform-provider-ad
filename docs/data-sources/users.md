@@ -266,7 +266,7 @@ output "sample_users" {
 Optional:
 
 - `company` (String) Filter by company name (exact match, case-insensitive).
-- `department` (String) Filter by department. Case-insensitive partial match.
+- `department` (String) Filter by department. Case-insensitive exact match.
 - `email_domain` (String) Filter by email domain (e.g., `example.com`). Only returns users whose email addresses end with the specified domain.
 - `enabled` (Boolean) Filter by account status. `true` returns only enabled accounts, `false` returns only disabled accounts. If not specified, returns all accounts.
 - `has_email` (Boolean) Filter by email presence. `true` returns only users with email addresses, `false` returns only users without email addresses. If not specified, returns all users.
@@ -276,7 +276,7 @@ Optional:
 - `name_prefix` (String) Users whose common name starts with this string. Case-insensitive.
 - `name_suffix` (String) Users whose common name ends with this string. Case-insensitive.
 - `office` (String) Filter by office location (exact match, case-insensitive).
-- `title` (String) Filter by job title. Case-insensitive partial match.
+- `title` (String) Filter by job title. Case-insensitive exact match.
 
 
 <a id="nestedatt--users"></a>

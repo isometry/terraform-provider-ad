@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -17,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	"github.com/isometry/terraform-provider-ad/internal/provider/helpers"
 	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
 	"github.com/isometry/terraform-provider-ad/internal/utils"
 )
@@ -32,7 +32,7 @@ func NewUsersDataSource() datasource.DataSource {
 type UsersDataSource struct {
 	client       ldapclient.Client
 	cacheManager *ldapclient.CacheManager
-	userReader   *ldapclient.UserReader
+	userManager  *ldapclient.UserManager
 }
 
 // UsersDataSourceModel describes the data source data model.
@@ -232,11 +232,11 @@ func (d *UsersDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 						Optional:            true,
 					},
 					"department": schema.StringAttribute{
-						MarkdownDescription: "Filter by department. Case-insensitive partial match.",
+						MarkdownDescription: "Filter by department. Case-insensitive exact match.",
 						Optional:            true,
 					},
 					"title": schema.StringAttribute{
-						MarkdownDescription: "Filter by job title. Case-insensitive partial match.",
+						MarkdownDescription: "Filter by job title. Case-insensitive exact match.",
 						Optional:            true,
 					},
 					"manager": schema.StringAttribute{
@@ -309,7 +309,7 @@ func (d *UsersDataSource) Configure(ctx context.Context, req datasource.Configur
 		)
 		return
 	}
-	d.userReader = ldapclient.NewUserReader(ctx, d.client, baseDN, d.cacheManager)
+	d.userManager = ldapclient.NewUserManager(ctx, d.client, baseDN, d.cacheManager)
 }
 
 func (d *UsersDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
@@ -335,6 +335,10 @@ func (d *UsersDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	}
 
 	// Log the search parameters
+	searchScopeLog := "unset"
+	if searchFilter.SearchScope != nil {
+		searchScopeLog = searchFilter.SearchScope.String()
+	}
 	tflog.Debug(ctx, "Searching for AD users", map[string]any{
 		"container":     searchFilter.Container,
 		"name_prefix":   searchFilter.NamePrefix,
@@ -349,10 +353,13 @@ func (d *UsersDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 		"has_email":     searchFilter.HasEmail,
 		"email_domain":  searchFilter.EmailDomain,
 		"member_of":     searchFilter.MemberOf,
+		"search_scope":  searchScopeLog,
 	})
 
-	// Perform the search
-	users, err := d.userReader.SearchUsersWithFilter(searchFilter)
+	// Narrow attribute list: data source only projects ~17 fields, so we save
+	// per-page wire payload and side-step per-user primary-group SID lookups.
+	searchFilter.Attributes = ldapclient.DataSourceUsersAttributes()
+	users, err := d.userManager.SearchUsersWithFilter(searchFilter)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Searching Users",
@@ -394,6 +401,14 @@ func (d *UsersDataSource) buildSearchFilter(ctx context.Context, data *UsersData
 	// Set container if specified
 	if !data.Container.IsNull() && data.Container.ValueString() != "" {
 		searchFilter.Container = data.Container.ValueString()
+	}
+
+	// Set LDAP search scope if specified (top-level `scope` attribute). Schema
+	// validation restricts values to "base", "onelevel", or "subtree". The
+	// helper returns a nil pointer for empty/unrecognised values, which the
+	// LDAP layer treats as "unset" and defaults to subtree.
+	if !data.Scope.IsNull() && data.Scope.ValueString() != "" {
+		searchFilter.SearchScope = helpers.MapSearchScope(data.Scope.ValueString())
 	}
 
 	// Parse filter block if present
@@ -502,12 +517,6 @@ func (d *UsersDataSource) mapUsersToModel(ctx context.Context, users []*ldapclie
 	// Convert each user to a Terraform object
 	userElements := make([]attr.Value, len(users))
 	for i, user := range users {
-		// Handle nullable timestamp for last logon
-		lastLogonValue := types.StringNull()
-		if user.LastLogon != nil {
-			lastLogonValue = types.StringValue(user.LastLogon.Format(time.RFC3339))
-		}
-
 		userAttrs := map[string]attr.Value{
 			"id":               types.StringValue(user.ObjectGUID),
 			"dn":               types.StringValue(user.DistinguishedName),
@@ -524,8 +533,8 @@ func (d *UsersDataSource) mapUsersToModel(ctx context.Context, users []*ldapclie
 			"manager":          types.StringValue(user.Manager),
 			"office":           types.StringValue(user.Office),
 			"account_enabled":  types.BoolValue(user.AccountEnabled),
-			"when_created":     types.StringValue(user.WhenCreated.Format(time.RFC3339)),
-			"last_logon":       lastLogonValue,
+			"when_created":     helpers.Timestamp(user.WhenCreated),
+			"last_logon":       helpers.TimestampOrNull(user.LastLogon),
 		}
 
 		userObj, objDiags := types.ObjectValue(userObjectType.AttrTypes, userAttrs)

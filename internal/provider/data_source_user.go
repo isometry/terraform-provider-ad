@@ -3,10 +3,8 @@ package provider
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/datasourcevalidator"
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -15,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	"github.com/isometry/terraform-provider-ad/internal/provider/helpers"
 	"github.com/isometry/terraform-provider-ad/internal/utils"
 )
 
@@ -30,7 +29,7 @@ func NewUserDataSource() datasource.DataSource {
 type UserDataSource struct {
 	client       ldapclient.Client
 	cacheManager *ldapclient.CacheManager
-	userReader   *ldapclient.UserReader
+	userManager  *ldapclient.UserManager
 }
 
 // UserDataSourceModel describes the data source data model with multiple lookup methods.
@@ -90,7 +89,6 @@ type UserDataSourceModel struct {
 	PasswordNeverExpires   types.Bool  `tfsdk:"password_never_expires"`    // Password never expires
 	PasswordNotRequired    types.Bool  `tfsdk:"password_not_required"`     // No password required
 	ChangePasswordAtLogon  types.Bool  `tfsdk:"change_password_at_logon"`  // Must change password at next logon
-	CannotChangePassword   types.Bool  `tfsdk:"cannot_change_password"`    // Cannot change password
 	SmartCardLogonRequired types.Bool  `tfsdk:"smart_card_logon_required"` // Smart card required
 	TrustedForDelegation   types.Bool  `tfsdk:"trusted_for_delegation"`    // Trusted for delegation
 	AccountLockedOut       types.Bool  `tfsdk:"account_locked_out"`        // Account is locked out
@@ -309,10 +307,6 @@ func (d *UserDataSource) Schema(ctx context.Context, req datasource.SchemaReques
 				MarkdownDescription: "Whether the user must change password at next logon.",
 				Computed:            true,
 			},
-			"cannot_change_password": schema.BoolAttribute{
-				MarkdownDescription: "Whether the user cannot change their password.",
-				Computed:            true,
-			},
 			"smart_card_logon_required": schema.BoolAttribute{
 				MarkdownDescription: "Whether the user requires smart card for logon.",
 				Computed:            true,
@@ -407,7 +401,7 @@ func (d *UserDataSource) Configure(ctx context.Context, req datasource.Configure
 		)
 		return
 	}
-	d.userReader = ldapclient.NewUserReader(ctx, d.client, baseDN, d.cacheManager)
+	d.userManager = ldapclient.NewUserManager(ctx, d.client, baseDN, d.cacheManager)
 }
 
 func (d *UserDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
@@ -466,7 +460,7 @@ func (d *UserDataSource) retrieveUser(ctx context.Context, data *UserDataSourceM
 		tflog.Debug(ctx, "Looking up user by objectGUID", map[string]any{
 			"guid": guid,
 		})
-		return d.userReader.GetUserByGUID(guid)
+		return d.userManager.GetUserByGUID(guid)
 	}
 
 	// DN lookup
@@ -475,7 +469,7 @@ func (d *UserDataSource) retrieveUser(ctx context.Context, data *UserDataSourceM
 		tflog.Debug(ctx, "Looking up user by DN", map[string]any{
 			"dn": dn,
 		})
-		return d.userReader.GetUserByDN(dn)
+		return d.userManager.GetUserByDN(dn)
 	}
 
 	// UPN lookup
@@ -484,7 +478,7 @@ func (d *UserDataSource) retrieveUser(ctx context.Context, data *UserDataSourceM
 		tflog.Debug(ctx, "Looking up user by UPN", map[string]any{
 			"upn": upn,
 		})
-		return d.userReader.GetUserByUPN(upn)
+		return d.userManager.GetUserByUPN(upn)
 	}
 
 	// SAM account name lookup
@@ -493,7 +487,7 @@ func (d *UserDataSource) retrieveUser(ctx context.Context, data *UserDataSourceM
 		tflog.Debug(ctx, "Looking up user by SAM account name", map[string]any{
 			"sam_account_name": samAccountName,
 		})
-		return d.userReader.GetUserBySAM(samAccountName)
+		return d.userManager.GetUserBySAM(samAccountName)
 	}
 
 	// SID lookup
@@ -502,7 +496,7 @@ func (d *UserDataSource) retrieveUser(ctx context.Context, data *UserDataSourceM
 		tflog.Debug(ctx, "Looking up user by SID", map[string]any{
 			"sid": sid,
 		})
-		return d.userReader.GetUserBySID(sid)
+		return d.userManager.GetUserBySID(sid)
 	}
 
 	return nil, fmt.Errorf("no valid lookup method provided")
@@ -523,51 +517,50 @@ func (d *UserDataSource) mapUserToModel(ctx context.Context, user *ldapclient.Us
 	data.ObjectGUID = types.StringValue(user.ObjectGUID)
 	data.ObjectSid = types.StringValue(user.ObjectSid)
 	data.Name = types.StringValue(user.CommonName)
-	data.DisplayName = types.StringValue(user.DisplayName)
-	data.GivenName = types.StringValue(user.GivenName)
-	data.Surname = types.StringValue(user.Surname)
-	data.Initials = types.StringValue(user.Initials)
-	data.Description = types.StringValue(user.Description)
+	data.DisplayName = helpers.StringOrNull(user.DisplayName)
+	data.GivenName = helpers.StringOrNull(user.GivenName)
+	data.Surname = helpers.StringOrNull(user.Surname)
+	data.Initials = helpers.StringOrNull(user.Initials)
+	data.Description = helpers.StringOrNull(user.Description)
 
 	// Contact information
-	data.EmailAddress = types.StringValue(user.EmailAddress)
-	data.HomePhone = types.StringValue(user.HomePhone)
-	data.MobilePhone = types.StringValue(user.MobilePhone)
-	data.OfficePhone = types.StringValue(user.OfficePhone)
-	data.Fax = types.StringValue(user.Fax)
-	data.HomePage = types.StringValue(user.HomePage)
+	data.EmailAddress = helpers.StringOrNull(user.EmailAddress)
+	data.HomePhone = helpers.StringOrNull(user.HomePhone)
+	data.MobilePhone = helpers.StringOrNull(user.MobilePhone)
+	data.OfficePhone = helpers.StringOrNull(user.OfficePhone)
+	data.Fax = helpers.StringOrNull(user.Fax)
+	data.HomePage = helpers.StringOrNull(user.HomePage)
 
 	// Address information
-	data.StreetAddress = types.StringValue(user.StreetAddress)
-	data.City = types.StringValue(user.City)
-	data.State = types.StringValue(user.State)
-	data.PostalCode = types.StringValue(user.PostalCode)
-	data.Country = types.StringValue(user.Country)
-	data.POBox = types.StringValue(user.POBox)
+	data.StreetAddress = helpers.StringOrNull(user.StreetAddress)
+	data.City = helpers.StringOrNull(user.City)
+	data.State = helpers.StringOrNull(user.State)
+	data.PostalCode = helpers.StringOrNull(user.PostalCode)
+	data.Country = helpers.StringOrNull(user.Country)
+	data.POBox = helpers.StringOrNull(user.POBox)
 
 	// Organizational information
-	data.Title = types.StringValue(user.Title)
-	data.Department = types.StringValue(user.Department)
-	data.Company = types.StringValue(user.Company)
-	data.Manager = types.StringValue(user.Manager)
-	data.EmployeeID = types.StringValue(user.EmployeeID)
-	data.EmployeeNumber = types.StringValue(user.EmployeeNumber)
-	data.Office = types.StringValue(user.Office)
-	data.Division = types.StringValue(user.Division)
-	data.Organization = types.StringValue(user.Organization)
+	data.Title = helpers.StringOrNull(user.Title)
+	data.Department = helpers.StringOrNull(user.Department)
+	data.Company = helpers.StringOrNull(user.Company)
+	data.Manager = helpers.StringOrNull(user.Manager)
+	data.EmployeeID = helpers.StringOrNull(user.EmployeeID)
+	data.EmployeeNumber = helpers.StringOrNull(user.EmployeeNumber)
+	data.Office = helpers.StringOrNull(user.Office)
+	data.Division = helpers.StringOrNull(user.Division)
+	data.Organization = helpers.StringOrNull(user.Organization)
 
 	// System information
-	data.HomeDirectory = types.StringValue(user.HomeDirectory)
-	data.HomeDrive = types.StringValue(user.HomeDrive)
-	data.ProfilePath = types.StringValue(user.ProfilePath)
-	data.LogonScript = types.StringValue(user.LogonScript)
+	data.HomeDirectory = helpers.StringOrNull(user.HomeDirectory)
+	data.HomeDrive = helpers.StringOrNull(user.HomeDrive)
+	data.ProfilePath = helpers.StringOrNull(user.ProfilePath)
+	data.LogonScript = helpers.StringOrNull(user.LogonScript)
 
 	// Account status and security
 	data.AccountEnabled = types.BoolValue(user.AccountEnabled)
 	data.PasswordNeverExpires = types.BoolValue(user.PasswordNeverExpires)
 	data.PasswordNotRequired = types.BoolValue(user.PasswordNotRequired)
 	data.ChangePasswordAtLogon = types.BoolValue(user.ChangePasswordAtLogon)
-	data.CannotChangePassword = types.BoolValue(user.CannotChangePassword)
 	data.SmartCardLogonRequired = types.BoolValue(user.SmartCardLogonRequired)
 	data.TrustedForDelegation = types.BoolValue(user.TrustedForDelegation)
 	data.AccountLockedOut = types.BoolValue(user.AccountLockedOut)
@@ -575,60 +568,14 @@ func (d *UserDataSource) mapUserToModel(ctx context.Context, user *ldapclient.Us
 
 	// Group memberships
 	data.PrimaryGroup = types.StringValue(user.PrimaryGroup)
+	data.MemberOf = helpers.DNListOrNull(ctx, user.MemberOf, diags)
 
-	// Convert member DNs to a List, normalizing DN case
-	if len(user.MemberOf) > 0 {
-		memberElements := make([]attr.Value, len(user.MemberOf))
-		for i, memberDN := range user.MemberOf {
-			// Normalize member DN case
-			normalizedMemberDN, err := ldapclient.NormalizeDNCase(memberDN)
-			if err != nil {
-				// Log error but use original DN as fallback
-				tflog.Warn(ctx, "Failed to normalize member DN case", map[string]any{
-					"original_member_dn": memberDN,
-					"error":              err.Error(),
-				})
-				normalizedMemberDN = memberDN
-			}
-			memberElements[i] = types.StringValue(normalizedMemberDN)
-		}
-
-		memberList, memberDiags := types.ListValue(types.StringType, memberElements)
-		diags.Append(memberDiags...)
-		if !memberDiags.HasError() {
-			data.MemberOf = memberList
-		}
-	} else {
-		// Empty list for no memberships
-		emptyList, memberDiags := types.ListValue(types.StringType, []attr.Value{})
-		diags.Append(memberDiags...)
-		if !memberDiags.HasError() {
-			data.MemberOf = emptyList
-		}
-	}
-
-	// Timestamps - convert to RFC3339 format
-	data.WhenCreated = types.StringValue(user.WhenCreated.Format(time.RFC3339))
-	data.WhenChanged = types.StringValue(user.WhenChanged.Format(time.RFC3339))
-
-	// Handle nullable timestamps
-	if user.LastLogon != nil {
-		data.LastLogon = types.StringValue(user.LastLogon.Format(time.RFC3339))
-	} else {
-		data.LastLogon = types.StringNull()
-	}
-
-	if user.PasswordLastSet != nil {
-		data.PasswordLastSet = types.StringValue(user.PasswordLastSet.Format(time.RFC3339))
-	} else {
-		data.PasswordLastSet = types.StringNull()
-	}
-
-	if user.AccountExpires != nil {
-		data.AccountExpires = types.StringValue(user.AccountExpires.Format(time.RFC3339))
-	} else {
-		data.AccountExpires = types.StringNull()
-	}
+	// Timestamps - convert to RFC3339 format using shared helpers
+	data.WhenCreated = helpers.Timestamp(user.WhenCreated)
+	data.WhenChanged = helpers.Timestamp(user.WhenChanged)
+	data.LastLogon = helpers.TimestampOrNull(user.LastLogon)
+	data.PasswordLastSet = helpers.TimestampOrNull(user.PasswordLastSet)
+	data.AccountExpires = helpers.TimestampOrNull(user.AccountExpires)
 
 	tflog.Trace(ctx, "Mapped user data to model", map[string]any{
 		"user_guid":    user.ObjectGUID,

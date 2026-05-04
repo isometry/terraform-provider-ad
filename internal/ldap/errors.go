@@ -182,7 +182,24 @@ func categorizeGenericError(err error) ErrorCategory {
 		return ErrorCategoryPermission
 	}
 
+	if strings.Contains(errStr, "not found") ||
+		strings.Contains(errStr, "no such object") ||
+		strings.Contains(errStr, "does not exist") {
+		return ErrorCategoryNotFound
+	}
+
 	return ErrorCategoryUnknown
+}
+
+// NewNotFoundError creates an LDAP error explicitly categorized as not-found.
+// This avoids reliance on string-matching in categorizeGenericError for callers
+// that know the failure is due to a missing object.
+func NewNotFoundError(operation, format string, args ...any) *LDAPError {
+	ldapErr := NewLDAPError(operation, fmt.Errorf(format, args...))
+	if ldapErr != nil {
+		ldapErr.Category = ErrorCategoryNotFound
+	}
+	return ldapErr
 }
 
 // isLDAPCodeRetryable determines if an LDAP error code indicates a retryable condition.

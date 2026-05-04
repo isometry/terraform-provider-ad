@@ -139,6 +139,7 @@ type Client interface {
 
 	// Directory information
 	GetBaseDN(ctx context.Context) (string, error)
+	GetRootDSE(ctx context.Context) (*RootDSEInfo, error)
 
 	// Identity operations
 	WhoAmI(ctx context.Context) (*WhoAmIResult, error)
@@ -153,6 +154,9 @@ type SearchRequest struct {
 	SizeLimit    int
 	TimeLimit    time.Duration
 	DerefAliases DerefAliases
+	// Controls are optional LDAP controls to send with the request
+	// (e.g., LDAP_SERVER_SD_FLAGS_OID).
+	Controls []ldap.Control
 }
 
 // SearchResult contains search results and metadata.
@@ -174,6 +178,9 @@ type ModifyRequest struct {
 	AddAttributes     map[string][]string
 	ReplaceAttributes map[string][]string
 	DeleteAttributes  []string
+	// Controls are optional LDAP controls to send with the request
+	// (e.g., LDAP_SERVER_SD_FLAGS_OID).
+	Controls []ldap.Control
 }
 
 // ModifyDNRequest encapsulates LDAP modify DN (move/rename) parameters.
@@ -187,6 +194,48 @@ type ModifyDNRequest struct {
 // WhoAmIResult contains the result of an LDAP Who Am I? extended operation.
 type WhoAmIResult struct {
 	AuthzID string // Raw authorization ID from server (e.g., "u:CN=User,CN=Users,DC=example,DC=com")
+}
+
+// RootDSEInfo contains Active Directory RootDSE attributes and derived forest configuration.
+type RootDSEInfo struct {
+	// Naming contexts
+	DefaultNamingContext       string
+	ConfigurationNamingContext string
+	SchemaNamingContext        string
+	RootDomainNamingContext    string
+
+	// Derived DNS name
+	DomainName string
+
+	// Server identity
+	DNSHostName     string
+	ServerName      string
+	LDAPServiceName string
+
+	// Functional levels
+	DomainFunctionality           int64
+	ForestFunctionality           int64
+	DomainControllerFunctionality int64
+
+	// Capabilities
+	SupportedLDAPVersions   []int64
+	SupportedSASLMechanisms []string
+
+	// Status
+	IsGlobalCatalogReady bool
+	IsSynchronized       bool
+
+	// Forest configuration (from Configuration partition)
+	Forest ForestInfo
+}
+
+// ForestInfo contains forest-level configuration from the Configuration partition.
+type ForestInfo struct {
+	Name             string   // Forest DNS name (derived from RootDomainNamingContext)
+	DefaultUPNSuffix string   // Domain's default UPN suffix (= DomainName)
+	UPNSuffixes      []string // Additional configured UPN suffixes
+	AllUPNSuffixes   []string // Default + additional, deduplicated
+	SPNSuffixes      []string // Additional configured SPN suffixes
 }
 
 // SearchScope defines LDAP search scope.

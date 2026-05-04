@@ -15,6 +15,7 @@ A modern Terraform provider for managing Active Directory resources via LDAP/LDA
 
 - `ad_group` - Security and distribution groups with scope management
 - `ad_ou` - Organizational Units with nesting and protection
+- `ad_user` - User accounts with password management and account controls
 - `ad_group_membership` - Group membership with flexible member identification
 
 ## Data Sources

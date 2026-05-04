@@ -3,10 +3,13 @@ package provider
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/providervalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -210,35 +213,59 @@ func (p *ActiveDirectoryProvider) Schema(ctx context.Context, req provider.Schem
 			// Connection pool settings
 			"max_connections": schema.Int64Attribute{
 				MarkdownDescription: "Maximum number of connections in the connection pool. Defaults to `10`. " +
+					"Valid range: 1–100. " +
 					"Can be set via the `AD_MAX_CONNECTIONS` environment variable.",
 				Optional: true,
+				Validators: []validator.Int64{
+					int64validator.Between(minMaxConnections, int64(ldapclient.MaxConnectionPoolLimit)),
+				},
 			},
 			"max_idle_time": schema.Int64Attribute{
 				MarkdownDescription: "Maximum idle time for connections in seconds. Defaults to `300` (5 minutes). " +
+					"Valid range: 1–2147483647 seconds. " +
 					"Can be set via the `AD_MAX_IDLE_TIME` environment variable.",
 				Optional: true,
+				Validators: []validator.Int64{
+					int64validator.Between(minMaxIdleTime, math.MaxInt32),
+				},
 			},
 			"connect_timeout": schema.Int64Attribute{
 				MarkdownDescription: "Connection timeout in seconds. Defaults to `30`. " +
+					"Valid range: 1–2147483647 seconds. " +
 					"Can be set via the `AD_CONNECT_TIMEOUT` environment variable.",
 				Optional: true,
+				Validators: []validator.Int64{
+					int64validator.Between(minConnectTimeout, math.MaxInt32),
+				},
 			},
 
 			// Retry settings
 			"max_retries": schema.Int64Attribute{
 				MarkdownDescription: "Maximum number of retry attempts for failed operations. Defaults to `3`. " +
+					"Valid range: 0–2147483647. " +
 					"Can be set via the `AD_MAX_RETRIES` environment variable.",
 				Optional: true,
+				Validators: []validator.Int64{
+					int64validator.Between(minMaxRetries, math.MaxInt32),
+				},
 			},
 			"initial_backoff": schema.Int64Attribute{
 				MarkdownDescription: "Initial backoff delay in milliseconds for retry attempts. Defaults to `500`. " +
+					"Valid range: 1–2147483647 milliseconds. " +
 					"Can be set via the `AD_INITIAL_BACKOFF` environment variable.",
 				Optional: true,
+				Validators: []validator.Int64{
+					int64validator.Between(minInitialBackoff, math.MaxInt32),
+				},
 			},
 			"max_backoff": schema.Int64Attribute{
 				MarkdownDescription: "Maximum backoff delay in seconds for retry attempts. Defaults to `30`. " +
+					"Valid range: 1–2147483647 seconds. " +
 					"Can be set via the `AD_MAX_BACKOFF` environment variable.",
 				Optional: true,
+				Validators: []validator.Int64{
+					int64validator.Between(minMaxBackoff, math.MaxInt32),
+				},
 			},
 
 			// Cache settings
@@ -506,30 +533,24 @@ func (p *ActiveDirectoryProvider) buildLDAPConfig(data *ActiveDirectoryProviderM
 	config.TLSClientKeyFile = p.getStringValue(data.TLSClientKeyFile, "AD_TLS_CLIENT_KEY_FILE")
 
 	// Connection pool settings
-	if maxConnections := p.getInt64Value(data.MaxConnections, "AD_MAX_CONNECTIONS", 10); maxConnections > 0 {
-		config.MaxConnections = int(maxConnections)
-	}
+	config.MaxConnections = p.getIntBounded(data.MaxConnections, "AD_MAX_CONNECTIONS", "max_connections",
+		defaultMaxConnections, minMaxConnections, int64(ldapclient.MaxConnectionPoolLimit), diags)
 
-	if maxIdleTime := p.getInt64Value(data.MaxIdleTime, "AD_MAX_IDLE_TIME", 300); maxIdleTime > 0 {
-		config.MaxIdleTime = time.Duration(maxIdleTime) * time.Second
-	}
+	config.MaxIdleTime = time.Duration(p.getInt64Bounded(data.MaxIdleTime, "AD_MAX_IDLE_TIME", "max_idle_time",
+		defaultMaxIdleTime, minMaxIdleTime, math.MaxInt32, diags)) * time.Second
 
-	if connectTimeout := p.getInt64Value(data.ConnectTimeout, "AD_CONNECT_TIMEOUT", 30); connectTimeout > 0 {
-		config.Timeout = time.Duration(connectTimeout) * time.Second
-	}
+	config.Timeout = time.Duration(p.getInt64Bounded(data.ConnectTimeout, "AD_CONNECT_TIMEOUT", "connect_timeout",
+		defaultConnectTimeout, minConnectTimeout, math.MaxInt32, diags)) * time.Second
 
 	// Retry settings
-	if maxRetries := p.getInt64Value(data.MaxRetries, "AD_MAX_RETRIES", 3); maxRetries >= 0 {
-		config.MaxRetries = int(maxRetries)
-	}
+	config.MaxRetries = p.getIntBounded(data.MaxRetries, "AD_MAX_RETRIES", "max_retries",
+		defaultMaxRetries, minMaxRetries, math.MaxInt32, diags)
 
-	if initialBackoff := p.getInt64Value(data.InitialBackoff, "AD_INITIAL_BACKOFF", 500); initialBackoff > 0 {
-		config.InitialBackoff = time.Duration(initialBackoff) * time.Millisecond
-	}
+	config.InitialBackoff = time.Duration(p.getInt64Bounded(data.InitialBackoff, "AD_INITIAL_BACKOFF", "initial_backoff",
+		defaultInitialBackoff, minInitialBackoff, math.MaxInt32, diags)) * time.Millisecond
 
-	if maxBackoff := p.getInt64Value(data.MaxBackoff, "AD_MAX_BACKOFF", 30); maxBackoff > 0 {
-		config.MaxBackoff = time.Duration(maxBackoff) * time.Second
-	}
+	config.MaxBackoff = time.Duration(p.getInt64Bounded(data.MaxBackoff, "AD_MAX_BACKOFF", "max_backoff",
+		defaultMaxBackoff, minMaxBackoff, math.MaxInt32, diags)) * time.Second
 
 	return config
 }
@@ -575,11 +596,71 @@ func (p *ActiveDirectoryProvider) getInt64Value(configValue types.Int64, envVar 
 	return defaultValue
 }
 
+// Per-field defaults and lower bounds for the provider's numeric configuration
+// attributes. Schema validators (Int64Attribute.Validators) and runtime helpers
+// (getInt64Bounded / getIntBounded) read these so the bounds are declared once.
+// Upper bounds use math.MaxInt32 for duration fields (platform safety; also
+// prevents time.Duration overflow when multiplied by time.Second/Millisecond)
+// and ldapclient.MaxConnectionPoolLimit for max_connections (domain policy).
+const (
+	defaultMaxConnections = 10
+	minMaxConnections     = 1
+
+	defaultMaxIdleTime = 300
+	minMaxIdleTime     = 1
+
+	defaultConnectTimeout = 30
+	minConnectTimeout     = 1
+
+	defaultMaxRetries = 3
+	minMaxRetries     = 0
+
+	defaultInitialBackoff = 500
+	minInitialBackoff     = 1
+
+	defaultMaxBackoff = 30
+	minMaxBackoff     = 1
+)
+
+// getInt64Bounded resolves a configuration value as int64 from schema, env-var,
+// or default, then validates the result is within [min, max]. On out-of-range
+// it adds a configuration error to diags naming the attribute, env var, value,
+// and supported range, then returns defaultValue. The caller is expected to
+// abort configuration on any diagnostic error before the returned value is
+// consumed (Configure exits early via resp.Diagnostics.HasError()).
+func (p *ActiveDirectoryProvider) getInt64Bounded(configValue types.Int64, envVar, fieldName string, defaultValue, lo, hi int64, diags *diag.Diagnostics) int64 {
+	v := p.getInt64Value(configValue, envVar, defaultValue)
+	if v < lo || v > hi {
+		diags.AddError(
+			fmt.Sprintf("%s value out of range", fieldName),
+			fmt.Sprintf("Value %d for %s (or %s) is outside the supported range [%d, %d].",
+				v, fieldName, envVar, lo, hi),
+		)
+		return defaultValue
+	}
+	return v
+}
+
+// getIntBounded is getInt64Bounded plus a platform-narrowing guard that makes
+// the returned int safe on 32-bit Go targets. The in-function comparison
+// against math.MaxInt32 / math.MinInt32 is the standard CodeQL
+// `go/incorrect-integer-conversion` sanitizer pattern. The guard is
+// unreachable when callers pass max <= math.MaxInt32 (which all current
+// callers do); it remains for static-analysis safety.
+func (p *ActiveDirectoryProvider) getIntBounded(configValue types.Int64, envVar, fieldName string, defaultValue int, lo, hi int64, diags *diag.Diagnostics) int {
+	v := p.getInt64Bounded(configValue, envVar, fieldName, int64(defaultValue), lo, hi, diags)
+	if v > math.MaxInt32 || v < math.MinInt32 {
+		return defaultValue
+	}
+	return int(v)
+}
+
 func (p *ActiveDirectoryProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewGroupResource,
 		NewGroupMembershipResource,
 		NewOUResource,
+		NewUserResource,
 	}
 }
 
@@ -594,6 +675,7 @@ func (p *ActiveDirectoryProvider) DataSources(ctx context.Context) []func() data
 		NewGroupDataSource,
 		NewGroupsDataSource,
 		NewOUDataSource,
+		NewRootDSEDataSource,
 		NewUserDataSource,
 		NewUsersDataSource,
 		NewWhoAmIDataSource,

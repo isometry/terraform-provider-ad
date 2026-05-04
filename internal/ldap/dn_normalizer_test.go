@@ -581,6 +581,68 @@ func TestRDNEqual(t *testing.T) {
 	}
 }
 
+func TestDNToDNSName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+		wantErr  bool
+	}{
+		{
+			name:     "simple two-component domain",
+			input:    "DC=example,DC=com",
+			expected: "example.com",
+		},
+		{
+			name:     "three-component subdomain",
+			input:    "DC=sub,DC=example,DC=com",
+			expected: "sub.example.com",
+		},
+		{
+			name:     "mixed case DC components",
+			input:    "dc=Example,DC=COM",
+			expected: "Example.COM",
+		},
+		{
+			name:     "DN with non-DC components",
+			input:    "CN=Partitions,CN=Configuration,DC=example,DC=com",
+			expected: "example.com",
+		},
+		{
+			name:     "DN with OU and DC",
+			input:    "OU=Users,DC=corp,DC=example,DC=com",
+			expected: "corp.example.com",
+		},
+		{
+			name:    "empty string",
+			input:   "",
+			wantErr: true,
+		},
+		{
+			name:    "no DC components",
+			input:   "CN=Something,OU=Else",
+			wantErr: true,
+		},
+		{
+			name:    "invalid DN syntax",
+			input:   "not a valid dn",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := DNToDNSName(tt.input)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 // Benchmark tests for performance validation.
 func BenchmarkNormalizeDNCase(b *testing.B) {
 	testDN := "cn=john doe,ou=test users,dc=example,dc=com"

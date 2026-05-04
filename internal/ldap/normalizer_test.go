@@ -104,6 +104,18 @@ func (m *MockClient) WhoAmI(ctx context.Context) (*WhoAmIResult, error) {
 	return result, args.Error(1)
 }
 
+func (m *MockClient) GetRootDSE(ctx context.Context) (*RootDSEInfo, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	result, ok := args.Get(0).(*RootDSEInfo)
+	if !ok {
+		return nil, args.Error(1)
+	}
+	return result, args.Error(1)
+}
+
 func (m *MockClient) ModifyDN(ctx context.Context, req *ModifyDNRequest) error {
 	args := m.Called(ctx, req)
 	return args.Error(0)
@@ -345,10 +357,12 @@ func TestMemberNormalizer_NormalizeToDN_SID(t *testing.T) {
 	sid := "S-1-5-21-123456789-123456789-123456789-1001"
 	expectedDN := "CN=User,OU=Users,DC=example,DC=com"
 
-	// Mock the SID search
+	// Mock the SID search - filter now uses binary-encoded SID
+	sidHandler := NewSIDHandler()
+	expectedFilter, _ := sidHandler.SIDToSearchFilter(sid)
 	mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 		return req.BaseDN == "dc=example,dc=com" &&
-			req.Filter == fmt.Sprintf("(objectSid=%s)", sid)
+			req.Filter == expectedFilter
 	})).Return(&SearchResult{
 		Entries: []*ldap.Entry{
 			{

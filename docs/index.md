@@ -293,9 +293,9 @@ provider "ad" {
 ### Optional
 
 - `base_dn` (String) Base DN for LDAP searches (e.g., `dc=example,dc=com`). If not specified, will be automatically discovered from the root DSE. Can be set via the `AD_BASE_DN` environment variable.
-- `connect_timeout` (Number) Connection timeout in seconds. Defaults to `30`. Can be set via the `AD_CONNECT_TIMEOUT` environment variable.
+- `connect_timeout` (Number) Connection timeout in seconds. Defaults to `30`. Valid range: 1–2147483647 seconds. Can be set via the `AD_CONNECT_TIMEOUT` environment variable.
 - `domain` (String) Active Directory domain name for SRV-based discovery (e.g., `example.com`). Mutually exclusive with `ldap_url`. Can be set via the `AD_DOMAIN` environment variable.
-- `initial_backoff` (Number) Initial backoff delay in milliseconds for retry attempts. Defaults to `500`. Can be set via the `AD_INITIAL_BACKOFF` environment variable.
+- `initial_backoff` (Number) Initial backoff delay in milliseconds for retry attempts. Defaults to `500`. Valid range: 1–2147483647 milliseconds. Can be set via the `AD_INITIAL_BACKOFF` environment variable.
 - `kerberos_ccache` (String) Path to Kerberos credential cache file for authentication. When specified, existing Kerberos tickets will be used for authentication. Can be set via the `AD_KERBEROS_CCACHE` environment variable.
 - `kerberos_config` (String) Path to Kerberos configuration file (krb5.conf). If not specified but `kerberos_realm` is set, DNS-based auto-discovery will be used to locate KDCs. Can be set via the `AD_KERBEROS_CONFIG` environment variable.
 - `kerberos_dns_lookup_kdc` (Boolean) Enable DNS-based KDC discovery for Kerberos authentication. Defaults to `true` when `kerberos_config` is not specified but `kerberos_realm` is set. Can be set via the `AD_KERBEROS_DNS_LOOKUP_KDC` environment variable.
@@ -304,10 +304,10 @@ provider "ad" {
 - `kerberos_realm` (String) Kerberos realm for GSSAPI authentication (e.g., `EXAMPLE.COM`). Can be set via the `AD_KERBEROS_REALM` environment variable.
 - `kerberos_spn` (String) Override Service Principal Name (SPN) for Kerberos authentication. Use when connecting to a domain controller by IP address where the SPN doesn't match the IP. Format: `ldap/<hostname>` (e.g., `ldap/dc1.example.com`). Can be set via the `AD_KERBEROS_SPN` environment variable.
 - `ldap_url` (String) Direct LDAP/LDAPS URL (e.g., `ldaps://dc1.example.com:636`). Mutually exclusive with `domain`. Can be set via the `AD_LDAP_URL` environment variable.
-- `max_backoff` (Number) Maximum backoff delay in seconds for retry attempts. Defaults to `30`. Can be set via the `AD_MAX_BACKOFF` environment variable.
-- `max_connections` (Number) Maximum number of connections in the connection pool. Defaults to `10`. Can be set via the `AD_MAX_CONNECTIONS` environment variable.
-- `max_idle_time` (Number) Maximum idle time for connections in seconds. Defaults to `300` (5 minutes). Can be set via the `AD_MAX_IDLE_TIME` environment variable.
-- `max_retries` (Number) Maximum number of retry attempts for failed operations. Defaults to `3`. Can be set via the `AD_MAX_RETRIES` environment variable.
+- `max_backoff` (Number) Maximum backoff delay in seconds for retry attempts. Defaults to `30`. Valid range: 1–2147483647 seconds. Can be set via the `AD_MAX_BACKOFF` environment variable.
+- `max_connections` (Number) Maximum number of connections in the connection pool. Defaults to `10`. Valid range: 1–100. Can be set via the `AD_MAX_CONNECTIONS` environment variable.
+- `max_idle_time` (Number) Maximum idle time for connections in seconds. Defaults to `300` (5 minutes). Valid range: 1–2147483647 seconds. Can be set via the `AD_MAX_IDLE_TIME` environment variable.
+- `max_retries` (Number) Maximum number of retry attempts for failed operations. Defaults to `3`. Valid range: 0–2147483647. Can be set via the `AD_MAX_RETRIES` environment variable.
 - `password` (String, Sensitive) Password for LDAP authentication. Can be set via the `AD_PASSWORD` environment variable.
 - `skip_tls_verify` (Boolean) Skip TLS certificate verification. Not recommended for production. Defaults to `false`. Can be set via the `AD_SKIP_TLS_VERIFY` environment variable.
 - `tls_ca_cert` (String, Sensitive) Custom CA certificate content for TLS verification. Can be set via the `AD_TLS_CA_CERT` environment variable.

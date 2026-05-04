@@ -1,6 +1,7 @@
 package ldap
 
 import (
+	"context"
 	"crypto/tls"
 	"os"
 	"strings"
@@ -13,6 +14,7 @@ func TestDefaultConfig(t *testing.T) {
 
 	if config == nil {
 		t.Fatal("DefaultConfig() returned nil")
+		return
 	}
 
 	// Verify security defaults
@@ -425,6 +427,7 @@ func TestTLSConfigServerName(t *testing.T) {
 			} else {
 				if tlsConfig == nil {
 					t.Fatal("TLS config should not be nil")
+					return
 				}
 				if tlsConfig.ServerName != tt.wantServerName {
 					t.Errorf("ServerName = %s, want %s", tlsConfig.ServerName, tt.wantServerName)
@@ -587,5 +590,165 @@ func TestNewConnectionPool_CertPoolSet(t *testing.T) {
 	// Verify that RootCAs was set
 	if config.TLSConfig.RootCAs == nil {
 		t.Error("TLSConfig.RootCAs should be set by NewConnectionPool")
+	}
+}
+
+// TestConnectionPool_ReuseAfterReturn verifies that a healthy connection
+// returned to the pool via PooledConnection.Close() is handed back out by
+// the next call to Get(). Identity is checked via pointer equality to
+// prove the same underlying PooledConnection was reused rather than a
+// fresh one created.
+func TestConnectionPool_ReuseAfterReturn(t *testing.T) {
+	pool := newTestPool(t, 4)
+
+	// Pre-populate the idle channel with a known connection so that Get()
+	// has no reason to dial a real server.
+	pc := newHealthyPooled(t, pool)
+	pool.connections <- pc
+
+	first, err := pool.Get(t.Context())
+	if err != nil {
+		t.Fatalf("first Get() failed: %v", err)
+	}
+	if first != pc {
+		t.Fatalf("expected the pre-populated connection, got %p (want %p)", first, pc)
+	}
+
+	// Return the connection.
+	first.Close()
+
+	// Next Get() should recycle the same connection.
+	second, err := pool.Get(t.Context())
+	if err != nil {
+		t.Fatalf("second Get() failed: %v", err)
+	}
+	if second != first {
+		t.Fatalf("expected connection reuse: got %p, want %p", second, first)
+	}
+
+	// Return again so Close() doesn't leak it on pool shutdown.
+	second.Close()
+}
+
+// TestConnectionPool_MaxConnections_IdleCapOnly documents the pool's
+// actual behaviour when MaxConnections worth of connections have been
+// handed out: the pool does NOT block or return ErrPoolExhausted. Instead,
+// MaxConnections is the cap on the IDLE buffer size — Get() will always
+// attempt to create a new connection when the idle channel is empty.
+//
+// This test captures that contract: if the production behaviour ever
+// changes to (e.g.) bounded concurrency with blocking, this test should
+// be updated to match the new documented semantics.
+func TestConnectionPool_MaxConnections_IdleCapOnly(t *testing.T) {
+	maxConns := 2
+	pool := newTestPool(t, maxConns)
+
+	// Fill the idle channel to capacity with pre-built connections and
+	// hand them all out via Get(). The pool should serve all of them
+	// without attempting to dial a real server.
+	for range maxConns {
+		pool.connections <- newHealthyPooled(t, pool)
+	}
+
+	acquired := make([]*PooledConnection, 0, maxConns)
+	for i := range maxConns {
+		conn, err := pool.Get(t.Context())
+		if err != nil {
+			t.Fatalf("Get #%d failed: %v", i, err)
+		}
+		acquired = append(acquired, conn)
+	}
+
+	// Sanity check: all distinct connections, none nil.
+	seen := make(map[*PooledConnection]struct{}, len(acquired))
+	for i, c := range acquired {
+		if c == nil {
+			t.Fatalf("connection #%d is nil", i)
+		}
+		if _, dup := seen[c]; dup {
+			t.Fatalf("connection #%d (%p) was handed out twice", i, c)
+		}
+		seen[c] = struct{}{}
+	}
+
+	// With the idle channel drained and all MaxConnections worth of
+	// connections outstanding, the next Get() falls into createConnection,
+	// which tries to dial the bogus LDAPURL configured in newTestPool.
+	// That dial MUST fail; the pool MUST NOT block indefinitely.
+	//
+	// We bound the wait with a short context to fail the test rather than
+	// hang if the pool were ever changed to block on max-connections.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	_, err := pool.Get(ctx)
+	if err == nil {
+		t.Fatal("Get() past MaxConnections should not succeed against bogus LDAP URL, but returned no error")
+	}
+	// Error should be about connection creation, not about pool state.
+	if strings.Contains(err.Error(), "pool is closed") {
+		t.Fatalf("unexpected pool-state error: %v", err)
+	}
+
+	// Return everything we acquired so cleanup can close the backing sockets.
+	for _, c := range acquired {
+		c.Close()
+	}
+}
+
+// TestConnectionPool_UnhealthyDiscardedOnGet verifies that a connection
+// marked unhealthy before return is NOT served back to the next caller.
+// Instead, Get() falls through to createConnection (which in this test
+// will fail because the configured server is bogus — the important thing
+// is that the tainted connection is discarded, not reused).
+func TestConnectionPool_UnhealthyDiscardedOnGet(t *testing.T) {
+	pool := newTestPool(t, 4)
+
+	// Seed the idle channel with a connection that claims to be healthy,
+	// then taint it by flipping the flag to simulate a failed health check.
+	bad := newHealthyPooled(t, pool)
+	bad.healthy = false
+	pool.connections <- bad
+
+	// Put a known-good connection in behind the bad one so we can detect
+	// whether the pool skipped past the bad one or not.
+	//
+	// NOTE: the pool's Get() only inspects ONE connection per call (via
+	// non-blocking receive on the channel). So after discarding `bad`, it
+	// proceeds to createConnection rather than peeking at the next idle
+	// entry. That's fine — what we're asserting is that Get() does NOT
+	// return the tainted connection.
+	good := newHealthyPooled(t, pool)
+	pool.connections <- good
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	got, err := pool.Get(ctx)
+
+	if got == bad {
+		t.Fatal("pool returned an unhealthy connection; it should have been discarded")
+	}
+
+	// One of two outcomes is acceptable given the current Get() semantics:
+	//   (a) err != nil, because the dial attempt (after discarding bad)
+	//       failed against the bogus URL — got is nil
+	//   (b) err == nil with got != bad — e.g. if Get() were ever changed
+	//       to loop through idle entries before dialing
+	// Either way: got MUST NOT be the tainted connection.
+	if err == nil && got == nil {
+		t.Fatal("unexpected: no error but nil connection")
+	}
+	if got != nil {
+		// Clean up — return it so the pool manages its lifecycle.
+		got.Close()
+	}
+
+	// Drain the good connection so it doesn't leak its socket.
+	select {
+	case c := <-pool.connections:
+		if c != good {
+			t.Errorf("expected to drain the good connection, got a different one")
+		}
+	default:
+		// No-op; it may have been consumed in a future Get().
 	}
 }

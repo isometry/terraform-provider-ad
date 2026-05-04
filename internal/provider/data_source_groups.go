@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
+	"github.com/isometry/terraform-provider-ad/internal/provider/helpers"
 	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
 	"github.com/isometry/terraform-provider-ad/internal/utils"
 )
@@ -272,6 +273,10 @@ func (d *GroupsDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 	}
 
 	// Log the search parameters
+	searchScopeLog := "unset"
+	if searchFilter.SearchScope != nil {
+		searchScopeLog = searchFilter.SearchScope.String()
+	}
 	tflog.Debug(ctx, "Searching for AD groups", map[string]any{
 		"container":     searchFilter.Container,
 		"name_prefix":   searchFilter.NamePrefix,
@@ -279,6 +284,7 @@ func (d *GroupsDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		"name_contains": searchFilter.NameContains,
 		"category":      searchFilter.Category,
 		"scope":         searchFilter.Scope,
+		"search_scope":  searchScopeLog,
 		"has_members":   searchFilter.HasMembers,
 		"member_of":     searchFilter.MemberOf,
 		"has_member":    searchFilter.HasMember,
@@ -319,6 +325,14 @@ func (d *GroupsDataSource) buildSearchFilter(ctx context.Context, data *GroupsDa
 	// Set container if specified
 	if !data.Container.IsNull() && data.Container.ValueString() != "" {
 		searchFilter.Container = data.Container.ValueString()
+	}
+
+	// Set LDAP search scope if specified (top-level `scope` attribute). Schema
+	// validation restricts values to "base", "onelevel", or "subtree". The
+	// helper returns a nil pointer for empty/unrecognised values, which the
+	// LDAP layer treats as "unset" and defaults to subtree.
+	if !data.Scope.IsNull() && data.Scope.ValueString() != "" {
+		searchFilter.SearchScope = helpers.MapSearchScope(data.Scope.ValueString())
 	}
 
 	// Parse filter block if present

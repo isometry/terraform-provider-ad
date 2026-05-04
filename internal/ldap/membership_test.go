@@ -212,6 +212,13 @@ func (m *MockGroupMembershipClient) WhoAmI(ctx context.Context) (*WhoAmIResult, 
 	}, nil
 }
 
+func (m *MockGroupMembershipClient) GetRootDSE(ctx context.Context) (*RootDSEInfo, error) {
+	return &RootDSEInfo{
+		DefaultNamingContext: "DC=example,DC=com",
+		DomainName:           "example.com",
+	}, nil
+}
+
 func (m *MockGroupMembershipClient) handleGroupGUIDSearch(req *SearchRequest) (*SearchResult, error) {
 	// Extract GUID from filter (simplified)
 	if strings.Contains(req.Filter, "objectGUID") {

@@ -2,8 +2,6 @@ package ldap
 
 import (
 	"context"
-	"encoding/base64"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +11,39 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+// buildTestSecurityDescriptor returns a self-relative security descriptor
+// suitable for ntSecurityDescriptor test fixtures. The DACL includes the
+// deny-delete ACE for Everyone (S-1-1-0) that "protect from accidental
+// deletion" installs, so the resulting fixture represents a protected OU.
+func buildTestSecurityDescriptor(tb testing.TB) []byte {
+	tb.Helper()
+	sd := &SecurityDescriptor{
+		Revision: 1,
+		Control:  SESelfRelative | SEDACLPresent,
+		DACL: &ACL{
+			AclRevision: 2,
+			ACEs: []ACE{
+				{
+					AceType:    AccessAllowedACEType,
+					AceFlags:   ContainerInheritACE,
+					AccessMask: 0x000F01FF, // generic full, arbitrary
+					SID: SID{
+						RevisionLevel:  1,
+						Authority:      5,
+						SubAuthorities: []uint32{18}, // Local System
+					},
+				},
+			},
+		},
+	}
+	sd.AddDenyDeleteEveryoneACE()
+	raw, err := sd.Marshal()
+	if err != nil {
+		tb.Fatalf("marshal test security descriptor: %v", err)
+	}
+	return raw
+}
 
 // MockOUClient implements the Client interface for testing OU operations.
 type MockOUClient struct {
@@ -105,6 +136,18 @@ func (m *MockOUClient) WhoAmI(ctx context.Context) (*WhoAmIResult, error) {
 		return nil, args.Error(1)
 	}
 	result, ok := args.Get(0).(*WhoAmIResult)
+	if !ok {
+		return nil, args.Error(1)
+	}
+	return result, args.Error(1)
+}
+
+func (m *MockOUClient) GetRootDSE(ctx context.Context) (*RootDSEInfo, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	result, ok := args.Get(0).(*RootDSEInfo)
 	if !ok {
 		return nil, args.Error(1)
 	}
@@ -666,8 +709,10 @@ func TestOUManager_DeleteOU_Protected(t *testing.T) {
 			{Name: "distinguishedName", Values: []string{"OU=TestOU,dc=example,dc=com"}},
 			{Name: "ou", Values: []string{"TestOU"}},
 			{Name: "description", Values: []string{"Test OU"}},
-			// Mock a large security descriptor to simulate protection (base64 encoded)
-			{Name: "ntSecurityDescriptor", Values: []string{base64.StdEncoding.EncodeToString(make([]byte, 200))}},
+			// Real security descriptor with deny-delete ACE for Everyone.
+			{Name: "nTSecurityDescriptor",
+				Values:     []string{string(buildTestSecurityDescriptor(t))},
+				ByteValues: [][]byte{buildTestSecurityDescriptor(t)}},
 		},
 	}
 
@@ -802,7 +847,9 @@ func TestOUManager_GetOUStats(t *testing.T) {
 			{Name: "objectGUID", Values: []string{string(testGUIDBytes1)}, ByteValues: [][]byte{testGUIDBytes1}},
 			{Name: "distinguishedName", Values: []string{"OU=ProtectedOU,dc=example,dc=com"}},
 			{Name: "ou", Values: []string{"ProtectedOU"}},
-			{Name: "ntSecurityDescriptor", Values: []string{base64.StdEncoding.EncodeToString(make([]byte, 200))}}, // Large descriptor = protected
+			{Name: "nTSecurityDescriptor",
+				Values:     []string{string(buildTestSecurityDescriptor(t))},
+				ByteValues: [][]byte{buildTestSecurityDescriptor(t)}}, // Deny-delete ACE = protected
 		},
 	}
 
@@ -890,66 +937,8 @@ func TestOUManager_EntryToOU_NilEntry(t *testing.T) {
 	assert.Contains(t, err.Error(), "cannot be nil")
 }
 
-// Performance tests for nested OU operations.
-func TestOUManager_PerformanceNestedOUs(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping performance test in short mode")
-	}
-
-	client := &MockOUClient{}
-	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
-
-	// Simulate creating and searching through nested OU structures
-	startTime := time.Now()
-
-	// Mock search for deep hierarchy (up to 10 levels)
-	for i := range 10 {
-		var ouDN strings.Builder
-		fmt.Fprintf(&ouDN, "OU=Level%d", i)
-		for j := i - 1; j >= 0; j-- {
-			fmt.Fprintf(&ouDN, ",OU=Level%d", j)
-		}
-		ouDN.WriteString(",dc=example,dc=com")
-
-		testGUIDBytes := []byte{0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x12, 0x34, byte(i), 0x34, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12}
-
-		entry := &ldap.Entry{
-			DN: ouDN.String(),
-			Attributes: []*ldap.EntryAttribute{
-				{Name: "objectGUID", Values: []string{string(testGUIDBytes)}, ByteValues: [][]byte{testGUIDBytes}},
-				{Name: "distinguishedName", Values: []string{ouDN.String()}},
-				{Name: "ou", Values: []string{fmt.Sprintf("Level%d", i)}},
-			},
-		}
-
-		searchResult := &SearchResult{
-			Entries: []*ldap.Entry{entry},
-			Total:   1,
-			HasMore: false,
-		}
-
-		client.On("Search", mock.Anything, mock.AnythingOfType("*ldap.SearchRequest")).Return(searchResult, nil).Once()
-
-		// Test DN building for each level
-		parentDN := "dc=example,dc=com"
-		if i > 0 {
-			for j := range i {
-				if j == 0 {
-					parentDN = fmt.Sprintf("OU=Level%d,dc=example,dc=com", j)
-				} else {
-					parentDN = fmt.Sprintf("OU=Level%d,%s", j, parentDN)
-				}
-			}
-		}
-
-		builtDN := manager.BuildOUDN(fmt.Sprintf("Level%d", i), parentDN)
-		assert.Contains(t, builtDN, fmt.Sprintf("Level%d", i))
-	}
-
-	elapsed := time.Since(startTime)
-
-	// Performance should complete within reasonable time for 10 levels
-	assert.Less(t, elapsed, 100*time.Millisecond, "Nested OU operations took too long")
-
-	// Note: Not calling client.AssertExpectations() due to complex mock setup
-}
+// Note: TestOUManager_PerformanceNestedOUs was removed. It set up mock
+// search expectations that were never triggered (BuildOUDN is a pure
+// string-construction function that never calls the LDAP client) and
+// asserted only that building 10 DNs took less than 100ms. Its actual
+// coverage is subsumed by TestOUManager_BuildOUDN.

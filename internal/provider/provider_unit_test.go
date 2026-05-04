@@ -71,6 +71,7 @@ func TestProviderResources(t *testing.T) {
 		"ad_group",
 		"ad_group_membership",
 		"ad_ou",
+		"ad_user",
 	}
 
 	if len(resources) != len(expectedResources) {
@@ -96,6 +97,7 @@ func TestProviderDataSources(t *testing.T) {
 		"ad_group",
 		"ad_groups",
 		"ad_ou",
+		"ad_rootdse",
 		"ad_user",
 		"ad_users",
 		"ad_whoami",

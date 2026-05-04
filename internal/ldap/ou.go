@@ -10,34 +10,6 @@ import (
 	"github.com/go-ldap/ldap/v3"
 )
 
-// OU Protection using Security Descriptor.
-// Deny delete and delete subtree to Everyone (World).
-const (
-	// SDDL for deny delete operations to Everyone.
-	DenyDeleteSDDL = "(D;;DTSD;;;WD)" // Deny Delete Tree/Delete to World (Everyone)
-
-	// Security descriptor flags for Active Directory.
-	SDFlagDACL  = 0x00000004 // Discretionary Access Control List
-	SDFlagSACL  = 0x00000008 // System Access Control List
-	SDFlagOwner = 0x00000001 // Owner SID
-	SDFlagGroup = 0x00000002 // Primary group SID
-
-	// ProtectedOUDescriptorMinLength is the minimum length threshold for security descriptors.
-	//
-	// Protected OUs in Active Directory have additional Access Control Entries (ACEs) that
-	// prevent accidental deletion. These ACEs significantly increase the security descriptor
-	// size compared to unprotected OUs.
-	//
-	// Typical size patterns:
-	//   - Unprotected OU: ~50-80 bytes (basic inheritance ACEs only)
-	//   - Protected OU: 150-300+ bytes (includes deny delete ACEs)
-	//
-	// This heuristic provides a simple way to detect protection status when the
-	// security descriptor cannot be fully parsed. A threshold of 100 bytes provides
-	// a reasonable balance between false positives and detection accuracy.
-	ProtectedOUDescriptorMinLength = 100
-)
-
 // OU represents an Active Directory Organizational Unit.
 type OU struct {
 	// Core identification
@@ -77,18 +49,6 @@ type UpdateOURequest struct {
 	Protected   *bool   `json:"protected,omitempty"`   // Optional: Change protection status
 	ManagedBy   *string `json:"managedBy,omitempty"`   // Optional: DN of manager (nil = no change, empty string = clear)
 	Path        *string `json:"path,omitempty"`        // Optional: New parent DN (triggers OU move)
-}
-
-// OUEntry represents a simplified OU entry for the interface.
-type OUEntry struct {
-	DN           string
-	Name         string
-	Description  string
-	Protected    bool
-	CreatedDate  time.Time
-	ModifiedDate time.Time
-	ObjectGUID   string
-	Children     []string
 }
 
 // OUManager handles Active Directory organizational unit operations.
@@ -226,11 +186,16 @@ func (om *OUManager) CreateOU(req *CreateOURequest) (*OU, error) {
 		return nil, WrapError("retrieve_created_ou", err)
 	}
 
-	// Set protection if requested
+	// Set protection if requested. Re-read so Protected reflects server state.
 	if req.Protected {
-		// Try to set protection, but don't fail OU creation if this fails
-		_ = om.SetOUProtection(ouDN, true)
-		ou.Protected = true
+		if err := om.SetOUProtection(ouDN, true); err != nil {
+			return nil, WrapError("set_ou_protection", err)
+		}
+		refreshed, err := om.getOUByDN(ouDN)
+		if err != nil {
+			return nil, WrapError("refresh_ou_after_protection", err)
+		}
+		ou = refreshed
 	}
 
 	return ou, nil
@@ -269,7 +234,7 @@ func (om *OUManager) GetOU(guid string) (*OU, error) {
 	}
 
 	if len(result.Entries) == 0 {
-		return nil, NewLDAPError("get_ou", fmt.Errorf("OU with GUID %s not found", guid))
+		return nil, NewNotFoundError("get_ou", "OU with GUID %s not found", guid)
 	}
 
 	ou, err := om.entryToOU(result.Entries[0])
@@ -309,7 +274,7 @@ func (om *OUManager) getOUByDN(dn string) (*OU, error) {
 	}
 
 	if len(result.Entries) == 0 {
-		return nil, NewLDAPError("get_ou_by_dn", fmt.Errorf("OU not found at DN: %s", dn))
+		return nil, NewNotFoundError("get_ou_by_dn", "OU not found at DN: %s", dn)
 	}
 
 	ou, err := om.entryToOU(result.Entries[0])
@@ -502,52 +467,97 @@ func (om *OUManager) DeleteOU(guid string) error {
 	return nil
 }
 
-// SetOUProtection toggles the protection flag on an OU using ntSecurityDescriptor.
+// SetOUProtection toggles protect-from-accidental-deletion on an OU by
+// updating the DACL in nTSecurityDescriptor. It reads and writes only the
+// DACL using LDAP_SERVER_SD_FLAGS_OID so owner/group/SACL are not altered.
 func (om *OUManager) SetOUProtection(ouDN string, protected bool) error {
 	if ouDN == "" {
 		return fmt.Errorf("OU DN cannot be empty")
 	}
 
-	// This is a simplified implementation. In a full implementation, you would:
-	// 1. Read the current ntSecurityDescriptor
-	// 2. Parse the binary security descriptor
-	// 3. Add or remove the deny ACE for delete operations
-	// 4. Write the modified security descriptor back
+	sdFlags := &ldap.ControlMicrosoftSDFlags{
+		Criticality:  true,
+		ControlValue: int32(SDFlagsDACLSecurityInformation),
+	}
 
-	// For demonstration purposes, we'll use a placeholder approach
-	// In practice, you'd need to manipulate the binary security descriptor format
-
-	// Get current security descriptor
 	searchReq := &SearchRequest{
 		BaseDN:     ouDN,
 		Scope:      ScopeBaseObject,
 		Filter:     "(objectClass=organizationalUnit)",
-		Attributes: []string{"ntSecurityDescriptor"},
+		Attributes: []string{"nTSecurityDescriptor"},
 		SizeLimit:  1,
 		TimeLimit:  om.timeout,
+		Controls:   []ldap.Control{sdFlags},
 	}
 
 	result, err := om.client.Search(om.ctx, searchReq)
 	if err != nil {
 		return WrapError("get_security_descriptor", err)
 	}
-
 	if len(result.Entries) == 0 {
 		return fmt.Errorf("OU not found: %s", ouDN)
 	}
 
-	// In a real implementation, you would:
-	// 1. Decode the binary security descriptor
-	// 2. Modify the DACL to add/remove delete protection ACEs
-	// 3. Encode and write back the security descriptor
-	//
-	// This requires implementing the Windows security descriptor format,
-	// which is complex. For now, we'll return success to indicate the
-	// operation was attempted.
+	raw := readSecurityDescriptorBytes(result.Entries[0])
+	if len(raw) == 0 {
+		return fmt.Errorf("OU %s has no nTSecurityDescriptor", ouDN)
+	}
 
-	// Log the operation (in real implementation, modify the actual security descriptor)
-	_ = protected // Use the parameter to avoid unused variable warning
+	sd, err := UnmarshalSecurityDescriptor(raw)
+	if err != nil {
+		return WrapError("parse_security_descriptor", err)
+	}
 
+	has := sd.HasDenyDeleteEveryoneACE()
+	switch {
+	case protected && !has:
+		sd.AddDenyDeleteEveryoneACE()
+	case !protected && has:
+		sd.RemoveDenyDeleteEveryoneACE()
+	default:
+		return nil // already in desired state
+	}
+
+	newRaw, err := sd.Marshal()
+	if err != nil {
+		return WrapError("marshal_security_descriptor", err)
+	}
+
+	modReq := &ModifyRequest{
+		DN: ouDN,
+		ReplaceAttributes: map[string][]string{
+			"nTSecurityDescriptor": {string(newRaw)},
+		},
+		Controls: []ldap.Control{sdFlags},
+	}
+	if err := om.client.Modify(om.ctx, modReq); err != nil {
+		return WrapError("write_security_descriptor", err)
+	}
+	return nil
+}
+
+// readSecurityDescriptorBytes extracts raw nTSecurityDescriptor bytes. Real
+// LDAP responses carry the descriptor in ByteValues, but tests may supply
+// base64 strings in Values; handle both.
+func readSecurityDescriptorBytes(entry *ldap.Entry) []byte {
+	if entry == nil {
+		return nil
+	}
+	// GetRawAttributeValue is case-sensitive. Try both common casings.
+	for _, name := range []string{"nTSecurityDescriptor", "ntSecurityDescriptor"} {
+		if b := entry.GetRawAttributeValue(name); len(b) > 0 {
+			return b
+		}
+	}
+	// Fallback for string-based test fixtures (base64-encoded).
+	for _, name := range []string{"nTSecurityDescriptor", "ntSecurityDescriptor"} {
+		if v := entry.GetAttributeValue(name); v != "" {
+			if decoded, err := base64.StdEncoding.DecodeString(v); err == nil {
+				return decoded
+			}
+			return []byte(v)
+		}
+	}
 	return nil
 }
 
@@ -659,10 +669,9 @@ func (om *OUManager) entryToOU(entry *ldap.Entry) (*OU, error) {
 		}
 	}
 
-	// Check protection status from security descriptor
-	// This is a simplified check - in practice, you'd parse the binary descriptor
-	if secDescriptor := entry.GetAttributeValues("ntSecurityDescriptor"); len(secDescriptor) > 0 {
-		ou.Protected = om.isOUProtected(secDescriptor[0])
+	// Check protection status by parsing the DACL of the security descriptor.
+	if raw := readSecurityDescriptorBytes(entry); len(raw) > 0 {
+		ou.Protected = om.isOUProtected(raw)
 	}
 
 	// Parse timestamps
@@ -681,27 +690,17 @@ func (om *OUManager) entryToOU(entry *ldap.Entry) (*OU, error) {
 	return ou, nil
 }
 
-// isOUProtected checks if an OU is protected based on its security descriptor.
-// This is a simplified implementation - in practice, you'd parse the binary format.
-func (om *OUManager) isOUProtected(securityDescriptor string) bool {
-	// In a real implementation, you would:
-	// 1. Decode the base64 security descriptor
-	// 2. Parse the Windows security descriptor binary format
-	// 3. Check the DACL for deny ACEs with delete permissions for Everyone
-
-	// For now, we'll do a basic check
-	if securityDescriptor == "" {
+// isOUProtected returns true when the OU's DACL carries the specific deny ACE
+// that Windows installs for "protect from accidental deletion".
+func (om *OUManager) isOUProtected(raw []byte) bool {
+	if len(raw) == 0 {
 		return false
 	}
-
-	// Try to decode base64 (security descriptors are often base64 encoded in LDAP)
-	if decoded, err := base64.StdEncoding.DecodeString(securityDescriptor); err == nil {
-		// Look for patterns that might indicate protection
-		// This is a very simplified heuristic - protected OUs have additional ACLs
-		return len(decoded) > ProtectedOUDescriptorMinLength
+	sd, err := UnmarshalSecurityDescriptor(raw)
+	if err != nil {
+		return false
 	}
-
-	return false
+	return sd.HasDenyDeleteEveryoneACE()
 }
 
 // ListOUsByContainer lists all OUs in a specific container.

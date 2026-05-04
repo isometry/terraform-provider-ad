@@ -2,11 +2,15 @@ package provider_test
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 )
 
 func TestAccGroupResource_basic(t *testing.T) {
@@ -32,6 +36,13 @@ func TestAccGroupResource_basic(t *testing.T) {
 				ResourceName:      "ad_group.test",
 				ImportState:       true,
 				ImportStateVerify: true,
+			},
+			// Idempotency spot-check: replanning the same config must produce
+			// an empty diff. Guards against computed-attribute drift.
+			{
+				Config:             testAccGroupResourceConfig_basic("tf-test-group-basic", "TFTestGroupBasic"),
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: false,
 			},
 		},
 	})
@@ -184,12 +195,13 @@ func TestAccGroupResource_update(t *testing.T) {
 					resource.TestCheckResourceAttr("ad_group.test", "category", "security"),
 				),
 			},
-			// Remove description
+			// Remove description — Read surfaces a cleared description as null
+			// via helpers.StringOrNull, so assert absence rather than "".
 			{
 				Config: testAccGroupResourceConfig_basic("tf-test-group-updated", "TFTestGroupUpd"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-group-updated"),
-					resource.TestCheckResourceAttr("ad_group.test", "description", ""),
+					resource.TestCheckNoResourceAttr("ad_group.test", "description"),
 				),
 			},
 		},
@@ -353,11 +365,11 @@ func testAccGroupResourceConfig_basic(name, samName string) string {
 %s
 
 resource "ad_group" "test" {
-  name             = %[1]q
-  sam_account_name = %[2]q
-  container        = "%[3]s,${data.ad_domain.test.dn}"
+  name             = %[3]q
+  sam_account_name = %[4]q
+  container        = "%[5]s,${data.ad_rootdse.test.default_naming_context}"
 }
-`, testProviderConfig(), testDomainDataSource(), name, samName, DefaultTestContainer)
+`, testProviderConfig(), testRootDSEDataSource(), name, samName, DefaultTestContainer)
 }
 
 func testAccGroupResourceConfig_withDescription(name, samName, description string) string {
@@ -367,12 +379,12 @@ func testAccGroupResourceConfig_withDescription(name, samName, description strin
 %s
 
 resource "ad_group" "test" {
-  name             = %[1]q
-  sam_account_name = %[2]q
-  container        = "%[4]s,${data.ad_domain.test.dn}"
-  description      = %[3]q
+  name             = %[3]q
+  sam_account_name = %[4]q
+  container        = "%[6]s,${data.ad_rootdse.test.default_naming_context}"
+  description      = %[5]q
 }
-`, testProviderConfig(), testDomainDataSource(), name, samName, description, DefaultTestContainer)
+`, testProviderConfig(), testRootDSEDataSource(), name, samName, description, DefaultTestContainer)
 }
 
 func testAccGroupResourceConfig_scopeCategory(name, samName, scope, category string) string {
@@ -382,13 +394,13 @@ func testAccGroupResourceConfig_scopeCategory(name, samName, scope, category str
 %s
 
 resource "ad_group" "test" {
-  name             = %[1]q
-  sam_account_name = %[2]q
-  container        = "%[5]s,${data.ad_domain.test.dn}"
-  scope            = %[3]q
-  category         = %[4]q
+  name             = %[3]q
+  sam_account_name = %[4]q
+  container        = "%[7]s,${data.ad_rootdse.test.default_naming_context}"
+  scope            = %[5]q
+  category         = %[6]q
 }
-`, testProviderConfig(), testDomainDataSource(), name, samName, scope, category, DefaultTestContainer)
+`, testProviderConfig(), testRootDSEDataSource(), name, samName, scope, category, DefaultTestContainer)
 }
 
 // Helper functions for import testing.
@@ -529,11 +541,11 @@ func testAccGroupResourceConfig_withContainer(name, samName, container string) s
 %s
 
 resource "ad_group" "test" {
-  name             = %[1]q
-  sam_account_name = %[2]q
-  container        = "%[3]s,${data.ad_domain.test.dn}"
+  name             = %[3]q
+  sam_account_name = %[4]q
+  container        = "%[5]s,${data.ad_rootdse.test.default_naming_context}"
 }
-`, testProviderConfig(), testDomainDataSource(), name, samName, container)
+`, testProviderConfig(), testRootDSEDataSource(), name, samName, container)
 }
 
 func testAccGroupResourceConfig_withContainerAndDescription(name, samName, container, description string) string {
@@ -543,17 +555,18 @@ func testAccGroupResourceConfig_withContainerAndDescription(name, samName, conta
 %s
 
 resource "ad_group" "test" {
-  name             = %[1]q
-  sam_account_name = %[2]q
-  container        = "%[3]s,${data.ad_domain.test.dn}"
-  description      = %[4]q
+  name             = %[3]q
+  sam_account_name = %[4]q
+  container        = "%[5]s,${data.ad_rootdse.test.default_naming_context}"
+  description      = %[6]q
 }
-`, testProviderConfig(), testDomainDataSource(), name, samName, container, description)
+`, testProviderConfig(), testRootDSEDataSource(), name, samName, container, description)
 }
 
 // Test helper to store the initial GUID for comparison.
 var storedGUID string
 
+//nolint:unparam // resourceName kept for call-site readability across tests
 func testAccStoreGroupGUID(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[resourceName]
@@ -616,13 +629,14 @@ func TestAccGroupResource_managedByNotSpecified(t *testing.T) {
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
-			// Create group without managed_by (computed field should be empty)
+			// Create group without managed_by — Read surfaces an unset
+			// managedBy as null via helpers.StringOrNull; assert absence.
 			{
 				Config: testAccGroupResourceConfig_basic("tf-test-group-no-manager", "TFTestGroupNoMgr"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-group-no-manager"),
 					resource.TestCheckResourceAttr("ad_group.test", "sam_account_name", "TFTestGroupNoMgr"),
-					resource.TestCheckResourceAttr("ad_group.test", "managed_by", ""),
+					resource.TestCheckNoResourceAttr("ad_group.test", "managed_by"),
 				),
 			},
 		},
@@ -649,6 +663,24 @@ func TestAccGroupResource_managedByUpdate(t *testing.T) {
 					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-group-mgr-update"),
 					resource.TestCheckResourceAttrPair("ad_group.test", "managed_by", "ad_group.manager2", "dn"),
 				),
+			},
+			// Clear managed_by by omitting the attribute. The Optional-only
+			// schema turns config-null into plan-null; the Update path's
+			// helpers.StringChanged converts plan-null + non-null state into
+			// an LDAP clear (&"").
+			{
+				Config: testAccGroupResourceConfig_basic("tf-test-group-mgr-update", "TFTestGroupMgrUpd"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "name", "tf-test-group-mgr-update"),
+					resource.TestCheckNoResourceAttr("ad_group.test", "managed_by"),
+				),
+			},
+			// Confirm idempotency: re-planning the managed_by-absent config
+			// yields an empty diff.
+			{
+				Config:             testAccGroupResourceConfig_basic("tf-test-group-mgr-update", "TFTestGroupMgrUpd"),
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: false,
 			},
 		},
 	})
@@ -691,18 +723,18 @@ func testAccGroupResourceConfig_withManagedBy(name, samName string) string {
 
 # Create a manager group to use as managed_by
 resource "ad_group" "manager" {
-  name             = "%[1]s-manager"
-  sam_account_name = "%[2]sManager"
-  container        = "%[3]s,${data.ad_domain.test.dn}"
+  name             = "%[3]s-manager"
+  sam_account_name = "%[4]sManager"
+  container        = "%[5]s,${data.ad_rootdse.test.default_naming_context}"
 }
 
 resource "ad_group" "test" {
-  name             = %[1]q
-  sam_account_name = %[2]q
-  container        = "%[3]s,${data.ad_domain.test.dn}"
+  name             = %[3]q
+  sam_account_name = %[4]q
+  container        = "%[5]s,${data.ad_rootdse.test.default_naming_context}"
   managed_by       = ad_group.manager.dn
 }
-`, testProviderConfig(), testDomainDataSource(), name, samName, DefaultTestContainer)
+`, testProviderConfig(), testRootDSEDataSource(), name, samName, DefaultTestContainer)
 }
 
 func testAccGroupResourceConfig_withDifferentManagedBy(name, samName string) string {
@@ -713,25 +745,25 @@ func testAccGroupResourceConfig_withDifferentManagedBy(name, samName string) str
 
 # Create first manager group (not used in this step)
 resource "ad_group" "manager" {
-  name             = "%[1]s-manager"
-  sam_account_name = "%[2]sManager"
-  container        = "%[3]s,${data.ad_domain.test.dn}"
+  name             = "%[3]s-manager"
+  sam_account_name = "%[4]sManager"
+  container        = "%[5]s,${data.ad_rootdse.test.default_naming_context}"
 }
 
 # Create second manager group to use as managed_by
 resource "ad_group" "manager2" {
-  name             = "%[1]s-manager2"
-  sam_account_name = "%[2]sManager2"
-  container        = "%[3]s,${data.ad_domain.test.dn}"
+  name             = "%[3]s-manager2"
+  sam_account_name = "%[4]sManager2"
+  container        = "%[5]s,${data.ad_rootdse.test.default_naming_context}"
 }
 
 resource "ad_group" "test" {
-  name             = %[1]q
-  sam_account_name = %[2]q
-  container        = "%[3]s,${data.ad_domain.test.dn}"
+  name             = %[3]q
+  sam_account_name = %[4]q
+  container        = "%[5]s,${data.ad_rootdse.test.default_naming_context}"
   managed_by       = ad_group.manager2.dn
 }
-`, testProviderConfig(), testDomainDataSource(), name, samName, DefaultTestContainer)
+`, testProviderConfig(), testRootDSEDataSource(), name, samName, DefaultTestContainer)
 }
 
 func testAccGroupResourceConfig_withManagedByAndDescription(name, samName, description string) string {
@@ -742,19 +774,19 @@ func testAccGroupResourceConfig_withManagedByAndDescription(name, samName, descr
 
 # Create a manager group to use as managed_by
 resource "ad_group" "manager" {
-  name             = "%[1]s-manager"
-  sam_account_name = "%[2]sManager"
-  container        = "%[4]s,${data.ad_domain.test.dn}"
+  name             = "%[3]s-manager"
+  sam_account_name = "%[4]sManager"
+  container        = "%[6]s,${data.ad_rootdse.test.default_naming_context}"
 }
 
 resource "ad_group" "test" {
-  name             = %[1]q
-  sam_account_name = %[2]q
-  container        = "%[4]s,${data.ad_domain.test.dn}"
-  description      = %[3]q
+  name             = %[3]q
+  sam_account_name = %[4]q
+  container        = "%[6]s,${data.ad_rootdse.test.default_naming_context}"
+  description      = %[5]q
   managed_by       = ad_group.manager.dn
 }
-`, testProviderConfig(), testDomainDataSource(), name, samName, description, DefaultTestContainer)
+`, testProviderConfig(), testRootDSEDataSource(), name, samName, description, DefaultTestContainer)
 }
 
 func testAccGroupResourceConfig_withDifferentManagedByAndDescription(name, samName, description string) string {
@@ -765,26 +797,408 @@ func testAccGroupResourceConfig_withDifferentManagedByAndDescription(name, samNa
 
 # Create first manager group (not used in this step)
 resource "ad_group" "manager" {
-  name             = "%[1]s-manager"
-  sam_account_name = "%[2]sManager"
-  container        = "%[4]s,${data.ad_domain.test.dn}"
+  name             = "%[3]s-manager"
+  sam_account_name = "%[4]sManager"
+  container        = "%[6]s,${data.ad_rootdse.test.default_naming_context}"
 }
 
 # Create second manager group to use as managed_by
 resource "ad_group" "manager2" {
-  name             = "%[1]s-manager2"
-  sam_account_name = "%[2]sManager2"
-  container        = "%[4]s,${data.ad_domain.test.dn}"
+  name             = "%[3]s-manager2"
+  sam_account_name = "%[4]sManager2"
+  container        = "%[6]s,${data.ad_rootdse.test.default_naming_context}"
 }
 
 resource "ad_group" "test" {
-  name             = %[1]q
-  sam_account_name = %[2]q
-  container        = "%[4]s,${data.ad_domain.test.dn}"
-  description      = %[3]q
+  name             = %[3]q
+  sam_account_name = %[4]q
+  container        = "%[6]s,${data.ad_rootdse.test.default_naming_context}"
+  description      = %[5]q
   managed_by       = ad_group.manager2.dn
 }
-`, testProviderConfig(), testDomainDataSource(), name, samName, description, DefaultTestContainer)
+`, testProviderConfig(), testRootDSEDataSource(), name, samName, description, DefaultTestContainer)
+}
+
+// TestAccGroupResource_updateFlow drives a sequence of updates against a
+// single ad_group resource and verifies that:
+//
+//   - the description can be added, changed, and removed;
+//   - the managed_by DN can be set, swapped to a different principal, and
+//     cleared;
+//   - the group's scope can be changed (global -> universal is a legal AD
+//     transition; direct global <-> domainlocal changes would be rejected
+//     by AD, so the test avoids them);
+//   - the objectGUID (resource ID) is preserved across every update — the
+//     resource is updated in place, never replaced.
+func TestAccGroupResource_updateFlow(t *testing.T) {
+	name := GenerateTestName("tf-test-grp-updflow-")
+	samName := GenerateTestSAMName("TFGUpdFlow")
+	managerName := name + "-manager"
+	managerSAM := samName + "Mgr"
+	managerName2 := name + "-manager2"
+	managerSAM2 := samName + "Mg2"
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Step 1: baseline global/security group with no description and
+			// no manager. Capture the initial GUID for later comparison.
+			{
+				Config: testAccGroupResourceConfig_updFlowBase(name, samName, managerName, managerSAM, managerName2, managerSAM2),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "name", name),
+					resource.TestCheckResourceAttr("ad_group.test", "scope", "global"),
+					resource.TestCheckResourceAttr("ad_group.test", "category", "security"),
+					testAccStoreGroupGUID("ad_group.test"),
+				),
+			},
+			// Step 2: add description and managed_by in one apply.
+			{
+				Config: testAccGroupResourceConfig_updFlowWithDescAndManager(
+					name, samName, managerName, managerSAM, managerName2, managerSAM2,
+					"initial description",
+				),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "description", "initial description"),
+					resource.TestCheckResourceAttrPair("ad_group.test", "managed_by", "ad_group.manager", "dn"),
+					testAccCheckGroupGUIDUnchanged(),
+				),
+			},
+			// Step 3: change both description and managed_by in one apply.
+			{
+				Config: testAccGroupResourceConfig_updFlowWithDescAndManager2(
+					name, samName, managerName, managerSAM, managerName2, managerSAM2,
+					"updated description",
+				),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "description", "updated description"),
+					resource.TestCheckResourceAttrPair("ad_group.test", "managed_by", "ad_group.manager2", "dn"),
+					testAccCheckGroupGUIDUnchanged(),
+				),
+			},
+			// Step 4: change scope global -> universal (legal AD transition)
+			// while keeping description and managed_by.
+			{
+				Config: testAccGroupResourceConfig_updFlowScopeUniversal(
+					name, samName, managerName, managerSAM, managerName2, managerSAM2,
+					"updated description",
+				),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "scope", "universal"),
+					resource.TestCheckResourceAttr("ad_group.test", "description", "updated description"),
+					resource.TestCheckResourceAttrPair("ad_group.test", "managed_by", "ad_group.manager2", "dn"),
+					testAccCheckGroupGUIDUnchanged(),
+				),
+			},
+			// Step 5: drop description and managed_by back to baseline while
+			// keeping the now-universal scope. Confirms clearing optional
+			// attributes works and GUID is still preserved.
+			{
+				Config: testAccGroupResourceConfig_updFlowScopeUniversalBare(
+					name, samName, managerName, managerSAM, managerName2, managerSAM2,
+				),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "scope", "universal"),
+					testAccCheckGroupGUIDUnchanged(),
+				),
+			},
+		},
+	})
+}
+
+// Helper: common manager-group block used by every updFlow config. Emitting
+// both manager groups in every step keeps the resource graph stable so that
+// only ad_group.test's own fields change between steps.
+func updFlowManagersBlock(managerName, managerSAM, managerName2, managerSAM2 string) string {
+	return fmt.Sprintf(`
+resource "ad_group" "manager" {
+  name             = %[1]q
+  sam_account_name = %[2]q
+  container        = "%[5]s,${data.ad_rootdse.test.default_naming_context}"
+}
+
+resource "ad_group" "manager2" {
+  name             = %[3]q
+  sam_account_name = %[4]q
+  container        = "%[5]s,${data.ad_rootdse.test.default_naming_context}"
+}
+`, managerName, managerSAM, managerName2, managerSAM2, DefaultTestContainer)
+}
+
+func testAccGroupResourceConfig_updFlowBase(name, samName, mgrName, mgrSAM, mgrName2, mgrSAM2 string) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+%s
+
+resource "ad_group" "test" {
+  name             = %[4]q
+  sam_account_name = %[5]q
+  container        = "%[6]s,${data.ad_rootdse.test.default_naming_context}"
+}
+`, testProviderConfig(), testRootDSEDataSource(),
+		updFlowManagersBlock(mgrName, mgrSAM, mgrName2, mgrSAM2),
+		name, samName, DefaultTestContainer)
+}
+
+func testAccGroupResourceConfig_updFlowWithDescAndManager(name, samName, mgrName, mgrSAM, mgrName2, mgrSAM2, description string) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+%s
+
+resource "ad_group" "test" {
+  name             = %[4]q
+  sam_account_name = %[5]q
+  container        = "%[6]s,${data.ad_rootdse.test.default_naming_context}"
+  description      = %[7]q
+  managed_by       = ad_group.manager.dn
+}
+`, testProviderConfig(), testRootDSEDataSource(),
+		updFlowManagersBlock(mgrName, mgrSAM, mgrName2, mgrSAM2),
+		name, samName, DefaultTestContainer, description)
+}
+
+func testAccGroupResourceConfig_updFlowWithDescAndManager2(name, samName, mgrName, mgrSAM, mgrName2, mgrSAM2, description string) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+%s
+
+resource "ad_group" "test" {
+  name             = %[4]q
+  sam_account_name = %[5]q
+  container        = "%[6]s,${data.ad_rootdse.test.default_naming_context}"
+  description      = %[7]q
+  managed_by       = ad_group.manager2.dn
+}
+`, testProviderConfig(), testRootDSEDataSource(),
+		updFlowManagersBlock(mgrName, mgrSAM, mgrName2, mgrSAM2),
+		name, samName, DefaultTestContainer, description)
+}
+
+func testAccGroupResourceConfig_updFlowScopeUniversal(name, samName, mgrName, mgrSAM, mgrName2, mgrSAM2, description string) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+%s
+
+resource "ad_group" "test" {
+  name             = %[4]q
+  sam_account_name = %[5]q
+  container        = "%[6]s,${data.ad_rootdse.test.default_naming_context}"
+  scope            = "universal"
+  category         = "security"
+  description      = %[7]q
+  managed_by       = ad_group.manager2.dn
+}
+`, testProviderConfig(), testRootDSEDataSource(),
+		updFlowManagersBlock(mgrName, mgrSAM, mgrName2, mgrSAM2),
+		name, samName, DefaultTestContainer, description)
+}
+
+func testAccGroupResourceConfig_updFlowScopeUniversalBare(name, samName, mgrName, mgrSAM, mgrName2, mgrSAM2 string) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+%s
+
+resource "ad_group" "test" {
+  name             = %[4]q
+  sam_account_name = %[5]q
+  container        = "%[6]s,${data.ad_rootdse.test.default_naming_context}"
+  scope            = "universal"
+  category         = "security"
+}
+`, testProviderConfig(), testRootDSEDataSource(),
+		updFlowManagersBlock(mgrName, mgrSAM, mgrName2, mgrSAM2),
+		name, samName, DefaultTestContainer)
+}
+
+// TestAccGroupResource_specialCharsInName exercises the DN-escaping path
+// through ldap.EscapeDN for group RDNs (CN=). The group-name schema only
+// rejects `"`, so characters that require RFC 4514 escaping in the RDN —
+// comma, plus, semicolon, less-than, greater-than, backslash, equals,
+// leading `#`, and leading/trailing spaces — are all valid inputs.
+//
+// Verifies:
+//   - Create succeeds and the DN contains the properly-escaped RDN.
+//   - Import-by-DN works (exercises unescape-on-read + re-escape-on-build).
+//
+// Covers TEST_PLAN.md #4: DN Escaping Fix (group side).
+func TestAccGroupResource_specialCharsInName(t *testing.T) {
+	cases := []struct {
+		label string
+		name  string
+	}{
+		{label: "comma", name: "tf-test-grp-comma," + groupUniqueSuffix()},
+		{label: "plus", name: "tf-test-grp-plus+" + groupUniqueSuffix()},
+		{label: "semicolon", name: "tf-test-grp-semi;" + groupUniqueSuffix()},
+		{label: "leading_space", name: " tf-test-grp-ls-" + groupUniqueSuffix()},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			// SAM account names can't contain the special chars we're testing,
+			// so derive a SAM that uses only [a-zA-Z0-9._-].
+			samName := GenerateTestSAMName("g")
+			expectedEscaped := escapeGroupNameForDN(tc.name)
+			expectedDNPrefix := "CN=" + expectedEscaped + ","
+
+			resource.Test(t, resource.TestCase{
+				PreCheck:                 func() { testAccPreCheck(t) },
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+				CheckDestroy: func(s *terraform.State) error {
+					return testCheckGroupDestroy(t.Context(), s)
+				},
+				Steps: []resource.TestStep{
+					// Create: DN contains the properly-escaped RDN.
+					{
+						Config: testAccGroupResourceConfig_basic(tc.name, samName),
+						Check: resource.ComposeAggregateTestCheckFunc(
+							testCheckGroupExists(t.Context(), "ad_group.test"),
+							resource.TestCheckResourceAttr("ad_group.test", "name", tc.name),
+							resource.TestCheckResourceAttrWith("ad_group.test", "dn", func(value string) error {
+								if !strings.HasPrefix(value, expectedDNPrefix) {
+									return fmt.Errorf("expected DN to start with %q, got: %s", expectedDNPrefix, value)
+								}
+								return nil
+							}),
+						),
+					},
+					// Import-by-DN: exercises unescape on read + re-escape on build.
+					{
+						ResourceName: "ad_group.test",
+						ImportState:  true,
+						ImportStateIdFunc: func(s *terraform.State) (string, error) {
+							rs, ok := s.RootModule().Resources["ad_group.test"]
+							if !ok {
+								return "", fmt.Errorf("resource not found: ad_group.test")
+							}
+							return rs.Primary.Attributes["dn"], nil
+						},
+						ImportStateVerify: true,
+					},
+				},
+			})
+		})
+	}
+}
+
+// TestAccGroupResource_dnPredictedAtPlan guards the ComputeDN plan modifier
+// for ad_group (TEST_PLAN.md #2). Without this modifier, `dn` would be
+// unknown during plan and the provider could report "inconsistent result
+// after apply" when AD normalises the RDN case. With it, the predicted DN
+// must be known at plan time and match the canonical form.
+//
+// The concrete domain suffix is unknown ahead of time (it depends on the
+// test AD), so we assert the *shape* of the predicted DN via a regex rather
+// than an exact string match.
+func TestAccGroupResource_dnPredictedAtPlan(t *testing.T) {
+	name1 := GenerateTestName(TestGroupPrefix + "plandn-")
+	name2 := GenerateTestName(TestGroupPrefix + "plandn2-")
+	samName := GenerateTestSAMName("g")
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy: func(s *terraform.State) error {
+			return testCheckGroupDestroy(t.Context(), s)
+		},
+		Steps: []resource.TestStep{
+			// Step 1: create. The predicted `dn` must be known at plan time
+			// and match CN=<name>,... (RDN type is upper-cased by the
+			// ComputeDN modifier).
+			{
+				Config: testAccGroupResourceConfig_basic(name1, samName),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectKnownValue(
+							"ad_group.test",
+							tfjsonpath.New("dn"),
+							knownvalue.StringRegexp(regexp.MustCompile(
+								`^CN=`+regexp.QuoteMeta(name1)+`,.+$`,
+							)),
+						),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "name", name1),
+					resource.TestCheckResourceAttrSet("ad_group.test", "dn"),
+				),
+			},
+			// Step 2: rename. The predicted DN must shift to reflect the new
+			// RDN while remaining known at plan time.
+			{
+				Config: testAccGroupResourceConfig_basic(name2, samName),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectKnownValue(
+							"ad_group.test",
+							tfjsonpath.New("dn"),
+							knownvalue.StringRegexp(regexp.MustCompile(
+								`^CN=`+regexp.QuoteMeta(name2)+`,.+$`,
+							)),
+						),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group.test", "name", name2),
+				),
+			},
+		},
+	})
+}
+
+// escapeGroupNameForDN mirrors ldap.EscapeDN for the characters exercised by
+// TestAccGroupResource_specialCharsInName (RFC 4514: `"`, `+`, `,`, `;`,
+// `<`, `>`, `\`, plus leading `#` and leading/trailing space). Replicated
+// here to keep the expected value obvious at the call site without pulling
+// go-ldap into the test package just for this helper.
+func escapeGroupNameForDN(s string) string {
+	if s == "" {
+		return ""
+	}
+	runes := []rune(s)
+	var b strings.Builder
+	for i, r := range runes {
+		if (i == 0 || i == len(runes)-1) && r == ' ' {
+			b.WriteRune('\\')
+			b.WriteRune(r)
+			continue
+		}
+		if i == 0 && r == '#' {
+			b.WriteRune('\\')
+			b.WriteRune(r)
+			continue
+		}
+		switch r {
+		case '"', '+', ',', ';', '<', '>', '\\':
+			b.WriteRune('\\')
+			b.WriteRune(r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// groupUniqueSuffix returns a short suffix suitable for embedding in group
+// test names. Uses GenerateTestName with an empty prefix so the call sites
+// can focus on the interesting (special-character) part of the name.
+func groupUniqueSuffix() string {
+	return GenerateTestName("")
 }
 
 // Note: testAccPreCheck is defined in provider_test.go
