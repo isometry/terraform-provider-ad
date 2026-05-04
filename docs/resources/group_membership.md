@@ -86,6 +86,12 @@ resource "ad_group_membership" "admin_members" {
 - `group_id` (String) The objectGUID of the group whose membership is being managed. This must be the GUID of an existing Active Directory group.
 - `members` (Set of String) Set of group member identifiers. Members can be specified using any supported identifier format: Distinguished Name (DN), Object GUID, User Principal Name (UPN), SAM Account Name, or Security Identifier (SID). This attribute preserves your original configuration exactly as specified. **Note**: This resource manages the complete membership set - members not listed here will be removed from the group.
 
+### Optional
+
+- `ignore_missing_members` (Boolean) When `true`, member identifiers that cannot be resolved (e.g., deleted AD objects) emit warnings instead of errors during planning, and the unresolvable members are excluded from the group. When `false` (strict mode), unresolvable members cause a planning error.
+
+If not specified, inherits from the provider-level `ignore_missing_members` setting. The effective default is `false` when neither resource nor provider specifies a value.
+
 ### Read-Only
 
 - `id` (String) The resource identifier, which is the objectGUID of the group. This is the same value as `group_id`.

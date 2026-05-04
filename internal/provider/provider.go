@@ -82,6 +82,9 @@ type ActiveDirectoryProviderModel struct {
 
 	// Cache settings
 	WarmCache types.Bool `tfsdk:"warm_cache"`
+
+	// Member normalization settings
+	IgnoreMissingMembers types.Bool `tfsdk:"ignore_missing_members"`
 }
 
 // Metadata returns the provider type name and version.
@@ -275,6 +278,14 @@ func (p *ActiveDirectoryProvider) Schema(ctx context.Context, req provider.Schem
 					"Can be set via the `AD_WARM_CACHE` environment variable.",
 				Optional: true,
 			},
+
+			// Member normalization settings
+			"ignore_missing_members": schema.BoolAttribute{
+				MarkdownDescription: "When `true`, member identifiers that cannot be resolved " +
+					"(e.g., deleted AD objects) emit warnings instead of errors during planning. " +
+					"Defaults to `false`. Can be set via the `AD_IGNORE_MISSING_MEMBERS` environment variable.",
+				Optional: true,
+			},
 		},
 	}
 }
@@ -432,8 +443,14 @@ func (p *ActiveDirectoryProvider) Configure(ctx context.Context, req provider.Co
 
 	tflog.Info(ctx, "Active Directory provider configured successfully")
 
+	// Read member normalization settings
+	ignoreMissingMembers := p.getBoolValue(data.IgnoreMissingMembers, "AD_IGNORE_MISSING_MEMBERS", false)
+	if ignoreMissingMembers {
+		tflog.Info(ctx, "Ignore missing members mode enabled - unresolvable members will emit warnings instead of errors")
+	}
+
 	// Create provider data wrapper with both client and cache manager
-	providerData := ldapclient.NewProviderData(client, p.cacheManager)
+	providerData := ldapclient.NewProviderData(client, p.cacheManager, ignoreMissingMembers)
 
 	// Make provider data available to resources and data sources
 	resp.DataSourceData = providerData

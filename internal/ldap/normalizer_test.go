@@ -517,11 +517,116 @@ func TestMemberNormalizer_NormalizeToDNBatch(t *testing.T) {
 		Total:   1,
 	}, nil)
 
-	results, err := normalizer.NormalizeToDNBatch(identifiers)
+	results, failures := normalizer.NormalizeToDNBatch(identifiers)
 
-	require.NoError(t, err)
+	assert.Empty(t, failures, "expected no failures")
 	assert.Equal(t, expectedResults, results)
 	mockClient.AssertExpectations(t)
+}
+
+func TestMemberNormalizer_NormalizeToDNBatch_PartialFailures(t *testing.T) {
+	mockClient := &MockClient{}
+	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
+
+	identifiers := []string{
+		"CN=User1,OU=Users,DC=example,DC=com", // Will succeed
+		"nonexistent@example.com",             // Will fail
+		"CN=User2,OU=Users,DC=example,DC=com", // Will succeed
+	}
+
+	// Mock DN validation for User1 - success
+	mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
+		return req.BaseDN == "CN=User1,OU=Users,DC=example,DC=com" && req.Scope == ScopeBaseObject
+	})).Return(&SearchResult{
+		Entries: []*ldap.Entry{{DN: "CN=User1,OU=Users,DC=example,DC=com"}},
+		Total:   1,
+	}, nil)
+
+	// Mock DN validation for User2 - success
+	mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
+		return req.BaseDN == "CN=User2,OU=Users,DC=example,DC=com" && req.Scope == ScopeBaseObject
+	})).Return(&SearchResult{
+		Entries: []*ldap.Entry{{DN: "CN=User2,OU=Users,DC=example,DC=com"}},
+		Total:   1,
+	}, nil)
+
+	// Mock UPN search for nonexistent - not found
+	mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
+		return req.Filter == "(userPrincipalName=nonexistent@example.com)"
+	})).Return(&SearchResult{
+		Entries: []*ldap.Entry{},
+		Total:   0,
+	}, nil)
+
+	// Mock SAM search for nonexistent - also not found
+	mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
+		return req.Filter == "(sAMAccountName=nonexistent@example.com)"
+	})).Return(&SearchResult{
+		Entries: []*ldap.Entry{},
+		Total:   0,
+	}, nil)
+
+	results, failures := normalizer.NormalizeToDNBatch(identifiers)
+
+	// Should have 2 successful results
+	assert.Len(t, results, 2)
+	assert.Equal(t, "CN=User1,OU=Users,DC=example,DC=com", results["CN=User1,OU=Users,DC=example,DC=com"])
+	assert.Equal(t, "CN=User2,OU=Users,DC=example,DC=com", results["CN=User2,OU=Users,DC=example,DC=com"])
+
+	// Should have 1 failure
+	assert.Len(t, failures, 1)
+	assert.Contains(t, failures, "nonexistent@example.com")
+	assert.Contains(t, failures["nonexistent@example.com"].Error(), "nonexistent@example.com")
+}
+
+func TestMemberNormalizer_NormalizeToDNBatch_AllFail(t *testing.T) {
+	mockClient := &MockClient{}
+	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
+
+	identifiers := []string{
+		"bad1@example.com",
+		"bad2@example.com",
+	}
+
+	// Mock searches for bad1 - not found
+	mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
+		return req.Filter == "(userPrincipalName=bad1@example.com)"
+	})).Return(&SearchResult{
+		Entries: []*ldap.Entry{},
+		Total:   0,
+	}, nil)
+
+	mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
+		return req.Filter == "(sAMAccountName=bad1@example.com)"
+	})).Return(&SearchResult{
+		Entries: []*ldap.Entry{},
+		Total:   0,
+	}, nil)
+
+	// Mock searches for bad2 - not found
+	mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
+		return req.Filter == "(userPrincipalName=bad2@example.com)"
+	})).Return(&SearchResult{
+		Entries: []*ldap.Entry{},
+		Total:   0,
+	}, nil)
+
+	mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
+		return req.Filter == "(sAMAccountName=bad2@example.com)"
+	})).Return(&SearchResult{
+		Entries: []*ldap.Entry{},
+		Total:   0,
+	}, nil)
+
+	results, failures := normalizer.NormalizeToDNBatch(identifiers)
+
+	// Should have no successful results
+	assert.Empty(t, results, "expected no successful normalizations")
+
+	// Should have 2 failures
+	assert.Len(t, failures, 2)
+	assert.Contains(t, failures, "bad1@example.com")
+	assert.Contains(t, failures, "bad2@example.com")
 }
 
 func TestMemberNormalizer_GetSupportedFormats(t *testing.T) {
@@ -682,9 +787,9 @@ func TestMemberNormalizer_IntegrationScenarios(t *testing.T) {
 		Total:   1,
 	}, nil)
 
-	results, err := normalizer.NormalizeToDNBatch(identifiers)
+	results, failures := normalizer.NormalizeToDNBatch(identifiers)
 
-	require.NoError(t, err)
+	assert.Empty(t, failures, "expected no failures")
 	assert.Len(t, results, 5)
 
 	// Verify all identifiers were resolved

@@ -3,6 +3,7 @@ package ldap
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -772,9 +773,17 @@ func (gm *GroupManager) AddMembers(groupGUID string, members []string) error {
 	}
 
 	// Normalize member identifiers to DNs
-	memberDNs, err := gm.normalizer.NormalizeToDNBatch(members)
-	if err != nil {
-		return WrapError("normalize_member_identifiers", err)
+	memberDNs, failures := gm.normalizer.NormalizeToDNBatch(members)
+
+	// In LDAP operations, any normalization failure is an error
+	if len(failures) > 0 {
+		var errMsgs []string
+		for identifier, err := range failures {
+			errMsgs = append(errMsgs, fmt.Sprintf("'%s': %s", identifier, err.Error()))
+		}
+		sort.Strings(errMsgs) // deterministic order
+		return WrapError("normalize_member_identifiers",
+			fmt.Errorf("failed to normalize members: %s", strings.Join(errMsgs, ", ")))
 	}
 
 	// Extract just the DN values
@@ -818,9 +827,17 @@ func (gm *GroupManager) RemoveMembers(groupGUID string, members []string) error 
 	}
 
 	// Normalize member identifiers to DNs
-	memberDNs, err := gm.normalizer.NormalizeToDNBatch(members)
-	if err != nil {
-		return WrapError("normalize_member_identifiers", err)
+	memberDNs, failures := gm.normalizer.NormalizeToDNBatch(members)
+
+	// In LDAP operations, any normalization failure is an error
+	if len(failures) > 0 {
+		var errMsgs []string
+		for identifier, err := range failures {
+			errMsgs = append(errMsgs, fmt.Sprintf("'%s': %s", identifier, err.Error()))
+		}
+		sort.Strings(errMsgs) // deterministic order
+		return WrapError("normalize_member_identifiers",
+			fmt.Errorf("failed to normalize members: %s", strings.Join(errMsgs, ", ")))
 	}
 
 	// Extract just the DN values
