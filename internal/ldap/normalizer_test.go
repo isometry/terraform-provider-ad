@@ -629,6 +629,208 @@ func TestMemberNormalizer_NormalizeToDNBatch_AllFail(t *testing.T) {
 	assert.Contains(t, failures, "bad2@example.com")
 }
 
+// TestMemberNormalizer_NormalizeToDNBatch_WhitespacePreservation asserts the
+// external contract: result and failure maps are keyed by the caller's
+// original identifier (whitespace preserved), while internal cache and LDAP
+// lookups use the trimmed value. Empty/whitespace-only entries are skipped.
+func TestMemberNormalizer_NormalizeToDNBatch_WhitespacePreservation(t *testing.T) {
+	t.Run("padded_DN_success", func(t *testing.T) {
+		mockClient := &MockClient{}
+		normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
+
+		paddedDN := "  CN=alice,DC=ex,DC=com  "
+		canonicalDN := "CN=alice,DC=ex,DC=com"
+
+		// LDAP base-object search uses the trimmed DN.
+		mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
+			return req.BaseDN == canonicalDN && req.Scope == ScopeBaseObject
+		})).Return(&SearchResult{
+			Entries: []*ldap.Entry{{
+				DN: canonicalDN,
+				Attributes: []*ldap.EntryAttribute{
+					{Name: "distinguishedName", Values: []string{canonicalDN}},
+				},
+			}},
+			Total: 1,
+		}, nil).Once()
+
+		results, failures := normalizer.NormalizeToDNBatch([]string{paddedDN})
+
+		assert.Empty(t, failures, "expected no failures")
+		assert.Contains(t, results, paddedDN)
+		assert.NotContains(t, results, canonicalDN)
+		assert.Equal(t, canonicalDN, results[paddedDN])
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("padded_UPN_success", func(t *testing.T) {
+		mockClient := &MockClient{}
+		normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
+
+		paddedUPN := "\talice@ex.com\n"
+		trimmedUPN := "alice@ex.com"
+		canonicalDN := "CN=Alice,OU=Users,DC=ex,DC=com"
+
+		// LDAP UPN search uses the trimmed value.
+		mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
+			return req.BaseDN == "dc=example,dc=com" &&
+				req.Filter == fmt.Sprintf("(userPrincipalName=%s)", trimmedUPN)
+		})).Return(&SearchResult{
+			Entries: []*ldap.Entry{{DN: canonicalDN}},
+			Total:   1,
+		}, nil).Once()
+
+		results, failures := normalizer.NormalizeToDNBatch([]string{paddedUPN})
+
+		assert.Empty(t, failures, "expected no failures")
+		assert.Contains(t, results, paddedUPN)
+		assert.NotContains(t, results, trimmedUPN)
+		assert.Equal(t, canonicalDN, results[paddedUPN])
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("padded_unknown_failure", func(t *testing.T) {
+		mockClient := &MockClient{}
+		normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
+
+		paddedBad := "  bad  "
+		trimmedBad := "bad"
+
+		// Trimmed "bad" matches the SAM regex (no @, no whitespace), so the
+		// normalizer issues a sAMAccountName search that returns no results.
+		mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
+			return req.BaseDN == "dc=example,dc=com" &&
+				req.Filter == fmt.Sprintf("(sAMAccountName=%s)", trimmedBad)
+		})).Return(&SearchResult{
+			Entries: []*ldap.Entry{},
+			Total:   0,
+		}, nil).Once()
+
+		results, failures := normalizer.NormalizeToDNBatch([]string{paddedBad})
+
+		assert.Empty(t, results, "expected no successful normalizations")
+		assert.Contains(t, failures, paddedBad)
+		assert.NotContains(t, failures, trimmedBad)
+		require.NotNil(t, failures[paddedBad])
+		mockClient.AssertExpectations(t)
+	})
+
+	// Cache lookup keys on the trimmed value but the result map keys on
+	// the padded original. UPN is used because the cache's SAM lookup
+	// gates on a "DOMAIN\" or "sam:" prefix, which a bare username lacks.
+	t.Run("cache_hit_padded_key", func(t *testing.T) {
+		mockClient := &MockClient{}
+		cacheManager := NewCacheManager()
+		normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", cacheManager)
+
+		paddedUPN := "  alice@ex.com  "
+		trimmedUPN := "alice@ex.com"
+		canonicalDN := "CN=Alice,OU=Users,DC=ex,DC=com"
+
+		// Pre-populate the cache so a Get on the trimmed value succeeds.
+		require.NoError(t, cacheManager.Put(&LDAPCacheEntry{
+			DN: canonicalDN,
+			Attributes: map[string][]string{
+				"userPrincipalName": {trimmedUPN},
+			},
+		}))
+
+		// Sanity-check: the cache really does serve the trimmed key.
+		cached, found := cacheManager.Get(trimmedUPN)
+		require.True(t, found, "cache must serve the trimmed UPN lookup")
+		require.Equal(t, canonicalDN, cached.DN)
+
+		results, failures := normalizer.NormalizeToDNBatch([]string{paddedUPN})
+
+		assert.Empty(t, failures, "expected no failures")
+		assert.Contains(t, results, paddedUPN)
+		assert.NotContains(t, results, trimmedUPN)
+		assert.Equal(t, canonicalDN, results[paddedUPN])
+		// Verify no LDAP search was issued (cache served the request).
+		mockClient.AssertNotCalled(t, "Search", mock.Anything, mock.Anything)
+	})
+
+	t.Run("empty_and_whitespace_skipped", func(t *testing.T) {
+		mockClient := &MockClient{}
+		normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
+
+		identifiers := []string{"", "   ", "\t\n"}
+
+		results, failures := normalizer.NormalizeToDNBatch(identifiers)
+
+		assert.Empty(t, results, "skipped entries must not appear in results")
+		assert.Empty(t, failures, "skipped entries must not appear in failures")
+		// Verify no LDAP search was issued for skipped entries.
+		mockClient.AssertNotCalled(t, "Search", mock.Anything, mock.Anything)
+	})
+
+	// Mirror the resource_group_membership lookup pattern: walk the
+	// caller's original slice and index into results/failures by the
+	// original string. Mix padded, unpadded and a missing entry.
+	t.Run("lookup_by_original_identifier", func(t *testing.T) {
+		mockClient := &MockClient{}
+		normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
+
+		members := []string{
+			"  CN=User1,OU=Users,DC=example,DC=com  ", // padded DN
+			"user2@example.com",                       // unpadded UPN
+			"  missing  ",                             // padded, not found
+		}
+
+		// Padded DN -> base-object search uses the trimmed DN.
+		mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
+			return req.BaseDN == "CN=User1,OU=Users,DC=example,DC=com" &&
+				req.Scope == ScopeBaseObject
+		})).Return(&SearchResult{
+			Entries: []*ldap.Entry{{
+				DN: "CN=User1,OU=Users,DC=example,DC=com",
+				Attributes: []*ldap.EntryAttribute{
+					{Name: "distinguishedName", Values: []string{"CN=User1,OU=Users,DC=example,DC=com"}},
+				},
+			}},
+			Total: 1,
+		}, nil).Once()
+
+		// UPN search.
+		mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
+			return req.Filter == "(userPrincipalName=user2@example.com)"
+		})).Return(&SearchResult{
+			Entries: []*ldap.Entry{{DN: "CN=User2,OU=Users,DC=example,DC=com"}},
+			Total:   1,
+		}, nil).Once()
+
+		// "missing" -> SAM search returns nothing.
+		mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
+			return req.Filter == "(sAMAccountName=missing)"
+		})).Return(&SearchResult{
+			Entries: []*ldap.Entry{},
+			Total:   0,
+		}, nil).Once()
+
+		results, failures := normalizer.NormalizeToDNBatch(members)
+
+		var found, missing []string
+		for _, member := range members {
+			if dn, ok := results[member]; ok {
+				found = append(found, dn)
+				continue
+			}
+			if _, ok := failures[member]; ok {
+				missing = append(missing, member)
+			}
+		}
+
+		assert.Len(t, found, 2, "padded DN and unpadded UPN must round-trip")
+		assert.Equal(t, []string{
+			"CN=User1,OU=Users,DC=example,DC=com",
+			"CN=User2,OU=Users,DC=example,DC=com",
+		}, found)
+		assert.Equal(t, []string{"  missing  "}, missing,
+			"failure must be reported under the caller's padded key")
+		mockClient.AssertExpectations(t)
+	})
+}
+
 func TestMemberNormalizer_GetSupportedFormats(t *testing.T) {
 	mockClient := &MockClient{}
 	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)

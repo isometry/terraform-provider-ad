@@ -182,50 +182,32 @@ func (m *MemberNormalizer) NormalizeToDN(identifier string) (string, error) {
 // NormalizeToDNBatch normalizes multiple identifiers in a single operation for better performance.
 // Returns two maps: successful normalizations (identifier -> DN) and failures (identifier -> error).
 // This allows callers to decide how to handle partial failures based on configuration.
+//
+// Results and failures are keyed by the caller's original identifier (whitespace
+// preserved); internal cache and LDAP lookups use the trimmed value. Identifiers
+// that are empty or whitespace-only are skipped and appear in neither map.
 func (m *MemberNormalizer) NormalizeToDNBatch(identifiers []string) (map[string]string, map[string]error) {
-	if len(identifiers) == 0 {
-		return make(map[string]string), make(map[string]error)
-	}
+	results := make(map[string]string, len(identifiers))
+	failures := make(map[string]error, len(identifiers))
 
-	results := make(map[string]string)
-	failures := make(map[string]error)
-	uncached := make([]string, 0)
-
-	// Check cache for all identifiers first
-	if m.cacheManager != nil {
-		for _, identifier := range identifiers {
-			if identifier == "" {
+	for _, original := range identifiers {
+		trimmed := strings.TrimSpace(original)
+		if trimmed == "" {
+			continue
+		}
+		if m.cacheManager != nil {
+			if cached, found := m.cacheManager.Get(trimmed); found {
+				results[original] = cached.DN
 				continue
 			}
-
-			identifier = strings.TrimSpace(identifier)
-			if cachedEntry, found := m.cacheManager.Get(identifier); found {
-				results[identifier] = cachedEntry.DN
-			} else {
-				uncached = append(uncached, identifier)
-			}
 		}
-	} else {
-		// No cache available, all identifiers need processing
-		for _, identifier := range identifiers {
-			if identifier == "" {
-				continue
-			}
-			uncached = append(uncached, strings.TrimSpace(identifier))
-		}
-	}
-
-	// Process uncached identifiers
-	for _, identifier := range uncached {
-		dn, err := m.NormalizeToDN(identifier)
+		dn, err := m.NormalizeToDN(trimmed)
 		if err != nil {
-			// Don't double-wrap - NormalizeToDN already includes identifier context
-			failures[identifier] = err
+			failures[original] = err
 		} else {
-			results[identifier] = dn
+			results[original] = dn
 		}
 	}
-
 	return results, failures
 }
 

@@ -29,6 +29,9 @@ func TestDefaultChangePasswordAtLogon_Descriptions(t *testing.T) {
 	if !strings.Contains(desc, "password") {
 		t.Errorf("expected description to mention password, got %q", desc)
 	}
+	if !strings.Contains(strings.ToLower(desc), "update") {
+		t.Errorf("expected description to mention update semantics, got %q", desc)
+	}
 
 	md := m.MarkdownDescription(t.Context())
 	if md == "" {
@@ -36,6 +39,9 @@ func TestDefaultChangePasswordAtLogon_Descriptions(t *testing.T) {
 	}
 	if !strings.Contains(md, "change_password_at_logon") {
 		t.Errorf("expected markdown description to mention change_password_at_logon, got %q", md)
+	}
+	if !strings.Contains(strings.ToLower(md), "update") {
+		t.Errorf("expected markdown description to mention update semantics, got %q", md)
 	}
 }
 
@@ -77,6 +83,7 @@ func TestDefaultChangePasswordAtLogon_PlanModifyBool(t *testing.T) {
 		return tftypes.NewValue(tftypes.Bool, *v)
 	}
 	unknownString := tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
+	unknownBool := tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue)
 
 	makeObj := func(password, change tftypes.Value) tftypes.Value {
 		return tftypes.NewValue(objType, map[string]tftypes.Value{
@@ -87,135 +94,112 @@ func TestDefaultChangePasswordAtLogon_PlanModifyBool(t *testing.T) {
 	nullRaw := tftypes.NewValue(objType, nil)
 
 	ptrStr := func(s string) *string { return &s }
+	ptrBool := func(b bool) *bool { return &b }
 
-	tests := map[string]struct {
-		// Inputs to the plan modifier
+	const concretePassword = "Sekret!1"
+
+	type testCase struct {
 		configRaw   tftypes.Value
 		planRaw     tftypes.Value
 		stateRaw    tftypes.Value
 		configValue types.Bool
 		stateValue  types.Bool
 		planValue   types.Bool
+		expected    types.Bool
+	}
 
-		// Expected output
-		expected types.Bool
-	}{
-		"create_with_password_defaults_false": {
-			configRaw:   makeObj(stringValue(ptrStr("Sekret!1")), boolValue(nil)),
-			planRaw:     makeObj(stringValue(ptrStr("Sekret!1")), tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue)),
-			stateRaw:    nullRaw,
-			configValue: types.BoolNull(),
-			stateValue:  types.BoolNull(),
-			planValue:   types.BoolUnknown(),
-			expected:    types.BoolValue(false),
-		},
-		"create_without_password_defaults_true": {
-			configRaw:   makeObj(stringValue(nil), boolValue(nil)),
-			planRaw:     makeObj(stringValue(nil), tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue)),
-			stateRaw:    nullRaw,
-			configValue: types.BoolNull(),
-			stateValue:  types.BoolNull(),
-			planValue:   types.BoolUnknown(),
-			expected:    types.BoolValue(true),
-		},
-		"create_with_empty_password_defaults_true": {
-			configRaw:   makeObj(stringValue(ptrStr("")), boolValue(nil)),
-			planRaw:     makeObj(stringValue(ptrStr("")), tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue)),
-			stateRaw:    nullRaw,
-			configValue: types.BoolNull(),
-			stateValue:  types.BoolNull(),
-			planValue:   types.BoolUnknown(),
-			expected:    types.BoolValue(true),
-		},
-		"user_explicit_true_preserved_with_password": {
-			configRaw:   makeObj(stringValue(ptrStr("Sekret!1")), boolValue(new(true))),
-			planRaw:     makeObj(stringValue(ptrStr("Sekret!1")), boolValue(new(true))),
+	tests := map[string]testCase{
+		"passthrough_explicit_config_value_create": {
+			configRaw:   makeObj(stringValue(ptrStr(concretePassword)), boolValue(ptrBool(true))),
+			planRaw:     makeObj(stringValue(ptrStr(concretePassword)), boolValue(ptrBool(true))),
 			stateRaw:    nullRaw,
 			configValue: types.BoolValue(true),
 			stateValue:  types.BoolNull(),
 			planValue:   types.BoolValue(true),
 			expected:    types.BoolValue(true),
 		},
-		"user_explicit_false_preserved_with_password": {
-			configRaw:   makeObj(stringValue(ptrStr("Sekret!1")), boolValue(new(false))),
-			planRaw:     makeObj(stringValue(ptrStr("Sekret!1")), boolValue(new(false))),
-			stateRaw:    nullRaw,
+		"passthrough_explicit_config_false_update": {
+			configRaw:   makeObj(stringValue(nil), boolValue(ptrBool(false))),
+			planRaw:     makeObj(stringValue(nil), boolValue(ptrBool(false))),
+			stateRaw:    makeObj(stringValue(nil), boolValue(ptrBool(true))),
 			configValue: types.BoolValue(false),
-			stateValue:  types.BoolNull(),
+			stateValue:  types.BoolValue(true),
 			planValue:   types.BoolValue(false),
 			expected:    types.BoolValue(false),
 		},
-		"user_explicit_true_preserved_without_password": {
-			configRaw:   makeObj(stringValue(nil), boolValue(new(true))),
-			planRaw:     makeObj(stringValue(nil), boolValue(new(true))),
+		"create_null_password_defaults_true": {
+			configRaw:   makeObj(stringValue(nil), boolValue(nil)),
+			planRaw:     makeObj(stringValue(nil), unknownBool),
 			stateRaw:    nullRaw,
-			configValue: types.BoolValue(true),
+			configValue: types.BoolNull(),
 			stateValue:  types.BoolNull(),
-			planValue:   types.BoolValue(true),
+			planValue:   types.BoolUnknown(),
 			expected:    types.BoolValue(true),
 		},
-		"update_no_config_no_password_defaults_true": {
-			// Update phase: state exists, config still leaves change null.
-			// Modifier still applies (it is not gated to Create).
+		"create_empty_password_defaults_true": {
+			configRaw:   makeObj(stringValue(ptrStr("")), boolValue(nil)),
+			planRaw:     makeObj(stringValue(ptrStr("")), unknownBool),
+			stateRaw:    nullRaw,
+			configValue: types.BoolNull(),
+			stateValue:  types.BoolNull(),
+			planValue:   types.BoolUnknown(),
+			expected:    types.BoolValue(true),
+		},
+		"create_concrete_password_defaults_false": {
+			configRaw:   makeObj(stringValue(ptrStr(concretePassword)), boolValue(nil)),
+			planRaw:     makeObj(stringValue(ptrStr(concretePassword)), unknownBool),
+			stateRaw:    nullRaw,
+			configValue: types.BoolNull(),
+			stateValue:  types.BoolNull(),
+			planValue:   types.BoolUnknown(),
+			expected:    types.BoolValue(false),
+		},
+		// Unknown password (ephemeral source) defers to apply.
+		"create_unknown_password_defers_unknown": {
+			configRaw:   makeObj(unknownString, boolValue(nil)),
+			planRaw:     makeObj(unknownString, unknownBool),
+			stateRaw:    nullRaw,
+			configValue: types.BoolNull(),
+			stateValue:  types.BoolNull(),
+			planValue:   types.BoolUnknown(),
+			expected:    types.BoolUnknown(),
+		},
+		"update_state_false_null_password_preserved": {
 			configRaw:   makeObj(stringValue(nil), boolValue(nil)),
-			planRaw:     makeObj(stringValue(nil), tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue)),
-			stateRaw:    makeObj(stringValue(nil), boolValue(new(true))),
+			planRaw:     makeObj(stringValue(nil), unknownBool),
+			stateRaw:    makeObj(stringValue(nil), boolValue(ptrBool(false))),
+			configValue: types.BoolNull(),
+			stateValue:  types.BoolValue(false),
+			planValue:   types.BoolUnknown(),
+			expected:    types.BoolValue(false),
+		},
+		"update_state_true_null_password_preserved": {
+			configRaw:   makeObj(stringValue(nil), boolValue(nil)),
+			planRaw:     makeObj(stringValue(nil), unknownBool),
+			stateRaw:    makeObj(stringValue(nil), boolValue(ptrBool(true))),
 			configValue: types.BoolNull(),
 			stateValue:  types.BoolValue(true),
 			planValue:   types.BoolUnknown(),
 			expected:    types.BoolValue(true),
 		},
-		"update_no_config_with_password_defaults_false": {
-			configRaw:   makeObj(stringValue(ptrStr("Sekret!1")), boolValue(nil)),
-			planRaw:     makeObj(stringValue(ptrStr("Sekret!1")), tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue)),
-			stateRaw:    makeObj(stringValue(ptrStr("Sekret!1")), boolValue(new(false))),
+		// On Update the modifier must never consult config.password —
+		// preserve state regardless of password presence.
+		"update_state_false_concrete_password_preserved": {
+			configRaw:   makeObj(stringValue(ptrStr(concretePassword)), boolValue(nil)),
+			planRaw:     makeObj(stringValue(ptrStr(concretePassword)), unknownBool),
+			stateRaw:    makeObj(stringValue(ptrStr(concretePassword)), boolValue(ptrBool(false))),
 			configValue: types.BoolNull(),
 			stateValue:  types.BoolValue(false),
 			planValue:   types.BoolUnknown(),
 			expected:    types.BoolValue(false),
 		},
-		"unknown_config_with_password_defaults_false": {
-			// Only explicit (non-null, non-unknown) user config values are
-			// respected; an Unknown ConfigValue falls through to the
-			// password-based default. With a password set, default is false.
-			configRaw:   makeObj(stringValue(ptrStr("Sekret!1")), tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue)),
-			planRaw:     makeObj(stringValue(ptrStr("Sekret!1")), tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue)),
-			stateRaw:    nullRaw,
-			configValue: types.BoolUnknown(),
-			stateValue:  types.BoolNull(),
-			planValue:   types.BoolUnknown(),
-			expected:    types.BoolValue(false),
-		},
-		"unknown_config_without_password_defaults_true": {
-			// Mirror of the above but without a password: defaults to true.
-			configRaw:   makeObj(stringValue(nil), tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue)),
-			planRaw:     makeObj(stringValue(nil), tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue)),
-			stateRaw:    nullRaw,
-			configValue: types.BoolUnknown(),
-			stateValue:  types.BoolNull(),
-			planValue:   types.BoolUnknown(),
-			expected:    types.BoolValue(true),
-		},
-		"unknown_password_defaults_true": {
-			// Unknown password is treated as "not set" for defaulting purposes.
-			configRaw:   makeObj(unknownString, boolValue(nil)),
-			planRaw:     makeObj(unknownString, tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue)),
-			stateRaw:    nullRaw,
+		"update_state_true_concrete_password_preserved": {
+			configRaw:   makeObj(stringValue(ptrStr(concretePassword)), boolValue(nil)),
+			planRaw:     makeObj(stringValue(ptrStr(concretePassword)), unknownBool),
+			stateRaw:    makeObj(stringValue(ptrStr(concretePassword)), boolValue(ptrBool(true))),
 			configValue: types.BoolNull(),
-			stateValue:  types.BoolNull(),
+			stateValue:  types.BoolValue(true),
 			planValue:   types.BoolUnknown(),
-			expected:    types.BoolValue(true),
-		},
-		"destroy_leaves_plan_value_alone": {
-			// Destroy: plan.Raw is null. The modifier's config read returns
-			// null for password -> defaults to true. We document the current
-			// behaviour; callers typically skip destroy at the resource level.
-			configRaw:   nullRaw,
-			planRaw:     nullRaw,
-			stateRaw:    makeObj(stringValue(ptrStr("Sekret!1")), boolValue(new(false))),
-			configValue: types.BoolNull(),
-			stateValue:  types.BoolValue(false),
-			planValue:   types.BoolNull(),
 			expected:    types.BoolValue(true),
 		},
 	}

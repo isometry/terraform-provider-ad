@@ -1608,3 +1608,268 @@ resource "ad_user" "test" {
 }
 `, testProviderConfig(), testRootDSEDataSource(), name, upn, sam, DefaultTestContainer, password)
 }
+
+// An imported enabled user whose password is not managed through Terraform
+// must not produce a destructive plan flipping enabled=true → enabled=false:
+// password is WriteOnly (only present in req.Config), so its absence on
+// Update cannot be used as a "no credential" proxy.
+func TestAccUserResource_ImportedAccountNoPasswordInConfig(t *testing.T) {
+	name := GenerateTestName(TestUserPrefix + "noPwdCfg-")
+	samName := GenerateTestSAMName("npc")
+	upn := fmt.Sprintf("%s@%s", samName, GetTestConfig().Domain)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy: func(s *terraform.State) error {
+			return testCheckUserDestroy(t.Context(), s)
+		},
+		Steps: []resource.TestStep{
+			{
+				Config: testAccUserResourceConfig_enabledWithPassword(name, upn, samName, "ComplexP@ssw0rd!#2024"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testCheckUserExists(t.Context(), "ad_user.test"),
+					resource.TestCheckResourceAttr("ad_user.test", "enabled", "true"),
+				),
+			},
+			{
+				ResourceName:            "ad_user.test",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"password"},
+			},
+			{
+				Config:             testAccUserResourceConfig_enabledNoPassword(name, upn, samName),
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: false,
+			},
+		},
+	})
+}
+
+func testAccUserResourceConfig_enabledNoPassword(name, upn, sam string) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+resource "ad_user" "test" {
+  name             = %[3]q
+  principal_name   = %[4]q
+  sam_account_name = %[5]q
+  container        = "%[6]s,${data.ad_rootdse.test.default_naming_context}"
+  enabled          = true
+}
+`, testProviderConfig(), testRootDSEDataSource(), name, upn, sam, DefaultTestContainer)
+}
+
+// Bumping password_version without supplying a password must fail at plan
+// time. Otherwise the Update would silently advance password_version in state
+// without rotating, masking subsequent rotations against the bumped value.
+func TestAccUserResource_RotationWithoutPassword_PlanError(t *testing.T) {
+	name := GenerateTestName(TestUserPrefix + "rotErr-")
+	samName := GenerateTestSAMName("re")
+	upn := fmt.Sprintf("%s@%s", samName, GetTestConfig().Domain)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy: func(s *terraform.State) error {
+			return testCheckUserDestroy(t.Context(), s)
+		},
+		Steps: []resource.TestStep{
+			{
+				Config: testAccUserResourceConfig_withPasswordVersion(name, upn, samName, "InitialPass123!", 1),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testCheckUserExists(t.Context(), "ad_user.test"),
+					resource.TestCheckResourceAttr("ad_user.test", "password_version", "1"),
+				),
+			},
+			{
+				Config:      testAccUserResourceConfig_passwordVersionNoPassword(name, upn, samName, 2),
+				PlanOnly:    true,
+				ExpectError: regexp.MustCompile(`(?s)Password Required For Rotation`),
+			},
+		},
+	})
+}
+
+func testAccUserResourceConfig_passwordVersionNoPassword(name, upn, sam string, version int) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+resource "ad_user" "test" {
+  name             = %[3]q
+  principal_name   = %[4]q
+  sam_account_name = %[5]q
+  container        = "%[7]s,${data.ad_rootdse.test.default_naming_context}"
+  password_version = %[6]d
+}
+`, testProviderConfig(), testRootDSEDataSource(), name, upn, sam, version, DefaultTestContainer)
+}
+
+// AD's unicodePwd modify auto-bumps pwdLastSet, silently clearing the
+// must-change-at-logon flag. After a rotation with change_password_at_logon
+// still true in plan, the provider must re-issue pwdLastSet=0; otherwise AD
+// state diverges from Terraform state.
+func TestAccUserResource_RotationReappliesMustChangeAtLogon(t *testing.T) {
+	name := GenerateTestName(TestUserPrefix + "rotMust-")
+	samName := GenerateTestSAMName("rm")
+	upn := fmt.Sprintf("%s@%s", samName, GetTestConfig().Domain)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy: func(s *terraform.State) error {
+			return testCheckUserDestroy(t.Context(), s)
+		},
+		Steps: []resource.TestStep{
+			{
+				Config: testAccUserResourceConfig_rotationMustChange(name, upn, samName, "InitialPass123!", 1),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testCheckUserExists(t.Context(), "ad_user.test"),
+					resource.TestCheckResourceAttr("ad_user.test", "password_version", "1"),
+					resource.TestCheckResourceAttr("ad_user.test", "change_password_at_logon", "true"),
+					testCheckUserPwdLastSetZero(t.Context(), "ad_user.test"),
+				),
+			},
+			{
+				Config: testAccUserResourceConfig_rotationMustChange(name, upn, samName, "RotatedPass456!", 2),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_user.test", "password_version", "2"),
+					resource.TestCheckResourceAttr("ad_user.test", "change_password_at_logon", "true"),
+					testCheckUserPwdLastSetZero(t.Context(), "ad_user.test"),
+				),
+			},
+		},
+	})
+}
+
+func testAccUserResourceConfig_rotationMustChange(name, upn, sam, password string, version int) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+resource "ad_user" "test" {
+  name                     = %[3]q
+  principal_name           = %[4]q
+  sam_account_name         = %[5]q
+  container                = "%[8]s,${data.ad_rootdse.test.default_naming_context}"
+  password                 = %[6]q
+  password_version         = %[7]d
+  change_password_at_logon = true
+}
+`, testProviderConfig(), testRootDSEDataSource(), name, upn, sam, password, version, DefaultTestContainer)
+}
+
+// testCheckUserPwdLastSetZero asserts the AD user has pwdLastSet=0
+// (must-change-at-next-logon set). The provider models this as
+// ChangePasswordAtLogon=true on the User struct.
+func testCheckUserPwdLastSetZero(ctx context.Context, resourceName string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[resourceName]
+		if !ok {
+			return fmt.Errorf("resource not found: %s", resourceName)
+		}
+		if rs.Primary.ID == "" {
+			return fmt.Errorf("resource ID not set")
+		}
+
+		config := GetTestConfig()
+		ldapConfig := newTestLDAPConfig(config)
+
+		client, err := ldapclient.NewClient(ctx, ldapConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create LDAP client: %v", err)
+		}
+		defer client.Close()
+
+		cacheManager := ldapclient.NewCacheManager()
+		userManager := ldapclient.NewUserManager(ctx, client, config.BaseDN, cacheManager)
+
+		user, err := userManager.GetUserByGUID(rs.Primary.ID)
+		if err != nil {
+			return fmt.Errorf("failed to fetch user from AD: %v", err)
+		}
+		if !user.ChangePasswordAtLogon {
+			return fmt.Errorf("expected user.ChangePasswordAtLogon = true (pwdLastSet = 0), got false; " +
+				"AD lost the must-change-at-logon flag after the password rotation")
+		}
+		return nil
+	}
+}
+
+// On Update for an imported user, change_password_at_logon must be preserved
+// from prior state when both it and password are omitted from config; the
+// attribute is only meaningful when paired with a password write.
+func TestAccUserResource_ImportedAccountChangePasswordAtLogonPreserved(t *testing.T) {
+	name := GenerateTestName(TestUserPrefix + "chgPreserve-")
+	samName := GenerateTestSAMName("cpp")
+	upn := fmt.Sprintf("%s@%s", samName, GetTestConfig().Domain)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy: func(s *terraform.State) error {
+			return testCheckUserDestroy(t.Context(), s)
+		},
+		Steps: []resource.TestStep{
+			{
+				Config: testAccUserResourceConfig_changePasswordAtLogonFalse(name, upn, samName, "ComplexP@ssw0rd!#2024"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testCheckUserExists(t.Context(), "ad_user.test"),
+					resource.TestCheckResourceAttr("ad_user.test", "enabled", "true"),
+					resource.TestCheckResourceAttr("ad_user.test", "change_password_at_logon", "false"),
+				),
+			},
+			{
+				ResourceName:            "ad_user.test",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"password"},
+			},
+			{
+				Config:             testAccUserResourceConfig_changePasswordAtLogonNoPassword(name, upn, samName),
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: false,
+			},
+		},
+	})
+}
+
+func testAccUserResourceConfig_changePasswordAtLogonFalse(name, upn, sam, password string) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+resource "ad_user" "test" {
+  name                     = %[3]q
+  principal_name           = %[4]q
+  sam_account_name         = %[5]q
+  container                = "%[6]s,${data.ad_rootdse.test.default_naming_context}"
+  password                 = %[7]q
+  enabled                  = true
+  change_password_at_logon = false
+}
+`, testProviderConfig(), testRootDSEDataSource(), name, upn, sam, DefaultTestContainer, password)
+}
+
+func testAccUserResourceConfig_changePasswordAtLogonNoPassword(name, upn, sam string) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+resource "ad_user" "test" {
+  name             = %[3]q
+  principal_name   = %[4]q
+  sam_account_name = %[5]q
+  container        = "%[6]s,${data.ad_rootdse.test.default_naming_context}"
+  enabled          = true
+}
+`, testProviderConfig(), testRootDSEDataSource(), name, upn, sam, DefaultTestContainer)
+}
