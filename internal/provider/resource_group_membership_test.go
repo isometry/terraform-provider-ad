@@ -276,6 +276,32 @@ func TestAccGroupMembershipResource_dnCaseNormalization(t *testing.T) {
 	})
 }
 
+// Members declared with surrounding whitespace must apply cleanly, populate
+// members_normalized with the trimmed canonical DNs, and produce zero diff on
+// re-plan.
+func TestAccGroupMembershipResource_WhitespaceTolerantMembers(t *testing.T) {
+	n := newGMTestNames(0)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccGroupMembershipResourceConfig_whitespacePadded(n),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "2"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members_normalized.#", "2"),
+				),
+			},
+			{
+				Config:             testAccGroupMembershipResourceConfig_whitespacePadded(n),
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: false,
+			},
+		},
+	})
+}
+
 func TestAccGroupMembershipResource_largeSet(t *testing.T) {
 	// 3 base users + 7 extras = 10 total members
 	n := newGMTestNames(7)
@@ -500,6 +526,20 @@ resource "ad_group_membership" "test" {
       ),
       "DC=", "Dc="
     ), # Mixed case DN format
+  ]
+}
+`, prerequisiteConfig(n))
+}
+
+func testAccGroupMembershipResourceConfig_whitespacePadded(n gmTestNames) string {
+	return fmt.Sprintf(`
+%s
+
+resource "ad_group_membership" "test" {
+  group_id = ad_group.test.id
+  members = [
+    format("  %%s  ", ad_user.testuser1.dn), # padded DN
+    format("\t%%s\n", ad_user.testuser2.dn), # tab/newline padded DN
   ]
 }
 `, prerequisiteConfig(n))

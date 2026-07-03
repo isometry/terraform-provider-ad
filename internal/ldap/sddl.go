@@ -3,6 +3,7 @@ package ldap
 import (
 	"encoding/binary"
 	"fmt"
+	"slices"
 )
 
 // Windows SECURITY_DESCRIPTOR self-relative binary format.
@@ -429,12 +430,7 @@ func (sd *SecurityDescriptor) HasDenyDeleteEveryoneACE() bool {
 	if sd == nil || sd.DACL == nil {
 		return false
 	}
-	for _, ace := range sd.DACL.ACEs {
-		if isDenyDeleteEveryoneACE(ace) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(sd.DACL.ACEs, isDenyDeleteEveryoneACE)
 }
 
 // AddDenyDeleteEveryoneACE inserts the deny-delete ACE at the front of the

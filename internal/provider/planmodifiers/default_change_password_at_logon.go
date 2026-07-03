@@ -12,31 +12,42 @@ import (
 var _ planmodifier.Bool = &defaultChangePasswordAtLogon{}
 
 // defaultChangePasswordAtLogon implements the plan modifier for the
-// change_password_at_logon attribute. Its default value depends on whether
-// a password is set in the configuration:
-//   - When no password is set, AD effectively requires the user to change
-//     the password at next logon, so the default is true.
-//   - When a password is set, the default is false.
+// change_password_at_logon attribute. The password-conditional default is a
+// Create-time concept: AD ties the initial value of pwdLastSet to whether a
+// password was supplied at object creation, so we emulate that on Create.
 //
-// This matches Active Directory's actual behavior and avoids "Provider
-// produced inconsistent result after apply" errors for passwordless accounts.
+// Behaviour:
+//
+//   - If the user explicitly configures a value, respect it.
+//   - On Update (the prior state is non-null), preserve the prior state value.
+//     The WriteOnly password attribute is generally null on Update for users
+//     not managing the password through Terraform, so synthesising a value
+//     from config.password would override real AD state and force destructive
+//     diffs (e.g. pwdLastSet = 0) on every plan for imported users.
+//   - On Create with Unknown config.password (e.g. sourced from an ephemeral
+//     resource), defer the default to apply time by marking the plan value
+//     Unknown.
+//   - On Create with null/empty config.password, default to true (AD will
+//     require the user to change their password at next logon for a
+//     passwordless account).
+//   - On Create with a concrete config.password, default to false.
 type defaultChangePasswordAtLogon struct{}
 
 // DefaultChangePasswordAtLogon returns a plan modifier that defaults the
-// change_password_at_logon attribute based on whether a password is set
-// in the configuration.
+// change_password_at_logon attribute on Create based on whether a password is
+// set in the configuration, and preserves the prior state value on Update.
 func DefaultChangePasswordAtLogon() planmodifier.Bool {
 	return defaultChangePasswordAtLogon{}
 }
 
 // Description returns a human-readable description of the plan modifier.
 func (m defaultChangePasswordAtLogon) Description(_ context.Context) string {
-	return "Defaults change_password_at_logon to true when no password is set, false otherwise."
+	return "On Create, defaults change_password_at_logon to true when no password is set, false otherwise. On Update, preserves the prior state value."
 }
 
 // MarkdownDescription returns a markdown description of the plan modifier.
 func (m defaultChangePasswordAtLogon) MarkdownDescription(_ context.Context) string {
-	return "Defaults `change_password_at_logon` to `true` when no `password` is set, `false` otherwise."
+	return "On Create, defaults `change_password_at_logon` to `true` when no `password` is set, `false` otherwise. On Update, preserves the prior state value."
 }
 
 // PlanModifyBool implements the plan modification logic.
@@ -46,8 +57,16 @@ func (m defaultChangePasswordAtLogon) PlanModifyBool(ctx context.Context, req pl
 		return
 	}
 
-	// Read the password attribute from config (WriteOnly attributes are
-	// only accessible through Config, never Plan or State).
+	// Update phase: the prior state is non-null. Preserve the existing state
+	// value rather than synthesising a new value from the WriteOnly password
+	// attribute (which is typically null on Update for imported users not
+	// managing their password through Terraform).
+	if !req.State.Raw.IsNull() {
+		resp.PlanValue = req.StateValue
+		return
+	}
+
+	// Create phase: read the WriteOnly password attribute from Config.
 	var password types.String
 	diags := req.Config.GetAttribute(ctx, path.Root("password"), &password)
 	resp.Diagnostics.Append(diags...)
@@ -55,7 +74,15 @@ func (m defaultChangePasswordAtLogon) PlanModifyBool(ctx context.Context, req pl
 		return
 	}
 
-	if password.IsNull() || password.IsUnknown() || password.ValueString() == "" {
+	// Unknown config.password (e.g. sourced from an ephemeral resource) defers
+	// the default to apply time so the value is resolved once the password is
+	// known.
+	if password.IsUnknown() {
+		resp.PlanValue = types.BoolUnknown()
+		return
+	}
+
+	if password.IsNull() || password.ValueString() == "" {
 		resp.PlanValue = types.BoolValue(true)
 		return
 	}

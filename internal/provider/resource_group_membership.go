@@ -311,13 +311,15 @@ func (r *GroupMembershipResource) ModifyPlan(ctx context.Context, req resource.M
 					trimmed := strings.TrimSpace(planMember)
 
 					// Determine the DN to compare against state members.
-					// DN-shaped inputs compare directly; other identifier
+					// DN-shaped inputs compare directly (using the trimmed
+					// value, which is what AD will see). Other identifier
 					// formats use the canonical DN resolved earlier by
-					// NormalizeToDNBatch (keyed by trimmed identifier).
+					// NormalizeToDNBatch, whose result map is keyed by the
+					// caller's original identifier (whitespace preserved).
 					var compareDN string
 					if normalizer.DetectIdentifierType(trimmed) == ldapclient.IdentifierTypeDN {
 						compareDN = trimmed
-					} else if dn, ok := normalizedMap[trimmed]; ok {
+					} else if dn, ok := normalizedMap[planMember]; ok {
 						compareDN = dn
 					}
 

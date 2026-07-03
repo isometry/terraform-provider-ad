@@ -261,7 +261,7 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Default:             booldefault.StaticBool(false),
 			},
 			"change_password_at_logon": schema.BoolAttribute{
-				MarkdownDescription: "Whether the user must change their password at next logon. Defaults to `true` when no password is set, `false` otherwise.",
+				MarkdownDescription: "Whether the user must change their password at next logon. On Create, defaults to `true` when no `password` is set and `false` otherwise. On Update, the prior state value is preserved when this attribute is omitted from configuration.",
 				Optional:            true,
 				Computed:            true,
 				PlanModifiers: []planmodifier.Bool{
@@ -648,7 +648,7 @@ func (r *UserResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRe
 		return
 	}
 
-	var plan, state UserResourceModel
+	var plan, state, config UserResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -656,6 +656,18 @@ func (r *UserResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRe
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if evaluatePasswordRotation(plan.PasswordVersion, state.PasswordVersion, config.Password) == rotationOutcomeMissingPassword {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("password"),
+			passwordRotationMissingTitle,
+			passwordRotationMissingDetail,
+		)
 	}
 
 	// Mark user_account_control Unknown when any UAC driver differs between
@@ -678,6 +690,45 @@ func (r *UserResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRe
 	}
 
 	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
+}
+
+type rotationOutcome int
+
+const (
+	rotationOutcomeNone rotationOutcome = iota
+	rotationOutcomeDefer
+	rotationOutcomeReady
+	rotationOutcomeMissingPassword
+)
+
+const (
+	passwordRotationMissingTitle  = "Password Required For Rotation"
+	passwordRotationMissingDetail = "Incrementing password_version triggers a password rotation, but no password is provided in configuration. " +
+		"Provide a non-empty password attribute (e.g. via an ephemeral resource) when rotating."
+	passwordRotationUnknownDetail = "Incrementing password_version triggers a password rotation, but the password value is unknown at apply time. " +
+		"Provide a concrete password attribute when rotating."
+)
+
+// evaluatePasswordRotation classifies a possible password rotation triggered
+// by a change to password_version. The apply path additionally gates on
+// version > 0; this helper does not.
+func evaluatePasswordRotation(planVersion, stateVersion types.Int64, configPassword types.String) rotationOutcome {
+	if planVersion.IsUnknown() {
+		return rotationOutcomeDefer
+	}
+
+	if planVersion.Equal(stateVersion) {
+		return rotationOutcomeNone
+	}
+
+	// Rotation is triggered. Examine the password.
+	if configPassword.IsUnknown() {
+		return rotationOutcomeDefer
+	}
+	if configPassword.IsNull() || configPassword.ValueString() == "" {
+		return rotationOutcomeMissingPassword
+	}
+	return rotationOutcomeReady
 }
 
 // userAccountControlDriversDiffer reports whether any of the boolean driver
@@ -835,7 +886,11 @@ func (r *UserResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
-	// Check if password should be reset (version > 0 AND version changed)
+	// Check if password should be reset (version > 0 AND version changed).
+	// evaluatePasswordRotation is reused here as a defence-in-depth check:
+	// ModifyPlan may have deferred when config.password was Unknown (e.g.
+	// sourced from an ephemeral resource) and the value could resolve to
+	// empty at apply time.
 	passwordReset := false
 	if !data.PasswordVersion.IsNull() &&
 		data.PasswordVersion.ValueInt64() > 0 &&
@@ -848,7 +903,22 @@ func (r *UserResource) Update(ctx context.Context, req resource.UpdateRequest, r
 			return
 		}
 
-		if !config.Password.IsNull() && config.Password.ValueString() != "" {
+		switch evaluatePasswordRotation(data.PasswordVersion, currentData.PasswordVersion, config.Password) {
+		case rotationOutcomeMissingPassword:
+			resp.Diagnostics.AddAttributeError(
+				path.Root("password"),
+				passwordRotationMissingTitle,
+				passwordRotationMissingDetail,
+			)
+			return
+		case rotationOutcomeDefer:
+			resp.Diagnostics.AddAttributeError(
+				path.Root("password"),
+				passwordRotationMissingTitle,
+				passwordRotationUnknownDetail,
+			)
+			return
+		case rotationOutcomeReady:
 			tflog.Debug(ctx, "Password version changed, resetting password", map[string]any{
 				"old_version": currentData.PasswordVersion.ValueInt64(),
 				"new_version": data.PasswordVersion.ValueInt64(),
@@ -867,23 +937,40 @@ func (r *UserResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		}
 	}
 
+	// AD's unicodePwd modify side-effect bumps pwdLastSet to the current time,
+	// silently clearing the "must change at next logon" flag. Re-read the user
+	// before diffing so buildUpdateRequest sees the post-reset state; otherwise
+	// an unchanged change_password_at_logon=true on both plan and prior state
+	// would compare equal and the pwdLastSet=0 write would never be re-issued.
+	if passwordReset {
+		refreshed, err := userManager.GetUserByGUID(data.ID.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Error Reading User After Password Reset",
+				fmt.Sprintf("Could not refresh user with ID %s after password reset: %s", data.ID.ValueString(), err.Error()),
+			)
+			return
+		}
+		r.userToModel(ctx, refreshed, &currentData, &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
 	// Build update request by comparing plan to current state
 	updateReq := r.buildUpdateRequest(&data, &currentData)
 
 	if updateReq == nil {
 		tflog.Debug(ctx, "No changes detected for AD user")
-		// Plan == state for AD-tracked attrs; only re-read when SetPassword
-		// ran (which mutates pwdLastSet/PasswordLastSet on the server).
+		// Plan == state for AD-tracked attrs. After a rotation, currentData
+		// already reflects the post-reset server state from the refresh above;
+		// copy the server-computed fields onto data without a second round trip.
 		if passwordReset {
-			user, err := userManager.GetUserByGUID(data.ID.ValueString())
-			if err != nil {
-				resp.Diagnostics.AddError(
-					"Error Reading User",
-					fmt.Sprintf("Could not read user with ID %s: %s", data.ID.ValueString(), err.Error()),
-				)
-				return
-			}
-			r.userToModel(ctx, user, &data, &resp.Diagnostics)
+			data.WhenChanged = currentData.WhenChanged
+			data.PasswordLastSet = currentData.PasswordLastSet
+			data.UserAccountControl = currentData.UserAccountControl
+			data.PasswordNotRequired = currentData.PasswordNotRequired
+			data.AccountLockedOut = currentData.AccountLockedOut
 		}
 		resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 		return
