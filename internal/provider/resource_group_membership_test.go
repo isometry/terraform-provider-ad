@@ -178,6 +178,13 @@ func TestAccGroupMembershipResource_basic(t *testing.T) {
 	})
 }
 
+// TestAccGroupMembershipResource_antiDrift verifies that `members` is a
+// strictly verbatim passthrough of configuration: switching an existing
+// member's identifier format (DN -> UPN -> GUID) for the very same AD
+// principal is a real, expected plan diff on `members` (never silently
+// reconciled), while `members_normalized` (and therefore actual AD
+// membership) does not change across the format switch. Each format switch
+// converges to an empty plan on the next apply.
 func TestAccGroupMembershipResource_antiDrift(t *testing.T) {
 	n := newGMTestNames(0)
 
@@ -190,27 +197,61 @@ func TestAccGroupMembershipResource_antiDrift(t *testing.T) {
 				Config: testAccGroupMembershipResourceConfig_antiDriftDN(n),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "1"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members_normalized.#", "1"),
 				),
 			},
-			// Update with UPN format (same user) - should be no-op
+			// Switching to UPN format for the same user is a real change to
+			// the verbatim `members` attribute, even though the UPN
+			// normalizes to the same DN. A non-empty plan is expected.
 			{
-				Config:   testAccGroupMembershipResourceConfig_antiDriftUPN(n),
-				PlanOnly: true,
-				// This should not show any changes because the UPN should normalize to the same DN
-				ExpectNonEmptyPlan: false,
+				Config:             testAccGroupMembershipResourceConfig_antiDriftUPN(n),
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: true,
 			},
-			// Apply with UPN format to verify it works
+			// Apply the UPN format: `members` must now hold the UPN
+			// verbatim, while `members_normalized` (actual AD membership) is
+			// unchanged.
 			{
 				Config: testAccGroupMembershipResourceConfig_antiDriftUPN(n),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "1"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members_normalized.#", "1"),
+					resource.TestCheckTypeSetElemAttrPair(
+						"ad_group_membership.test", "members.*",
+						"ad_user.testuser1", "principal_name",
+					),
 				),
 			},
-			// Test with GUID format (same user) - should be no-op
+			// Re-planning the same UPN config converges to an empty plan.
 			{
-				Config:   testAccGroupMembershipResourceConfig_antiDriftGUID(n),
-				PlanOnly: true,
-				// This should not show any changes because the GUID should normalize to the same DN
+				Config:             testAccGroupMembershipResourceConfig_antiDriftUPN(n),
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: false,
+			},
+			// Switching to GUID format is again a real change to `members`.
+			{
+				Config:             testAccGroupMembershipResourceConfig_antiDriftGUID(n),
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: true,
+			},
+			// Apply the GUID format: `members` must now hold the GUID
+			// verbatim, while `members_normalized` (actual AD membership) is
+			// unchanged.
+			{
+				Config: testAccGroupMembershipResourceConfig_antiDriftGUID(n),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "1"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members_normalized.#", "1"),
+					resource.TestCheckTypeSetElemAttrPair(
+						"ad_group_membership.test", "members.*",
+						"ad_user.testuser1", "id",
+					),
+				),
+			},
+			// Re-planning the same GUID config converges to an empty plan.
+			{
+				Config:             testAccGroupMembershipResourceConfig_antiDriftGUID(n),
+				PlanOnly:           true,
 				ExpectNonEmptyPlan: false,
 			},
 		},
@@ -237,8 +278,32 @@ func TestAccGroupMembershipResource_mixedIdentifiers(t *testing.T) {
 	})
 }
 
+// mangleDNCase mimics the attribute-type case mangling performed by
+// testAccGroupMembershipResourceConfig_mixedCaseDN's HCL `replace()` chain,
+// so the Go test can compute the exact verbatim value expected in `members`
+// without needing to read it back from a Terraform expression.
+func mangleDNCase(dn string) string {
+	out := dn
+	for _, pair := range [][2]string{
+		{"CN=", "Cn="},
+		{"OU=", "Ou="},
+		{"DC=", "Dc="},
+	} {
+		out = strings.ReplaceAll(out, pair[0], pair[1])
+	}
+	return out
+}
+
+// TestAccGroupMembershipResource_dnCaseNormalization verifies that `members`
+// is a strictly verbatim passthrough of configuration: changing only the DN
+// attribute-type case (e.g. `cn=` -> `Cn=`) for the same member is a real,
+// expected plan diff on `members` (never silently reconciled), even though
+// the underlying AD principal - and therefore `members_normalized` - is
+// unchanged. Each case change converges to an empty plan on the next apply.
 func TestAccGroupMembershipResource_dnCaseNormalization(t *testing.T) {
 	n := newGMTestNames(0)
+
+	var testUser1DN string
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
@@ -249,31 +314,177 @@ func TestAccGroupMembershipResource_dnCaseNormalization(t *testing.T) {
 				Config: testAccGroupMembershipResourceConfig_lowercaseDN(n),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "1"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members_normalized.#", "1"),
+					captureStateAttr("ad_user.testuser1", "dn", &testUser1DN),
 				),
 			},
-			// Update with mixed case DN (same member) - should be no-op
+			// Switching to a mixed-case DN for the same member is a real
+			// change to the verbatim `members` attribute, even though DN
+			// semantic-equality means the same AD principal is referenced. A
+			// non-empty plan is expected.
 			{
-				Config:   testAccGroupMembershipResourceConfig_mixedCaseDN(n),
-				PlanOnly: true,
-				// This should not show any changes because DN normalization should recognize they're the same
-				ExpectNonEmptyPlan: false,
+				Config:             testAccGroupMembershipResourceConfig_mixedCaseDN(n),
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: true,
 			},
-			// Apply with mixed case DN to verify normalization
+			// Apply the mixed-case DN: `members` must now hold the
+			// mixed-case value verbatim, while `members_normalized` (actual
+			// AD membership) is unchanged.
 			{
 				Config: testAccGroupMembershipResourceConfig_mixedCaseDN(n),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "1"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members_normalized.#", "1"),
+					func(s *terraform.State) error {
+						return resource.TestCheckTypeSetElemAttr(
+							"ad_group_membership.test", "members.*", mangleDNCase(testUser1DN),
+						)(s)
+					},
 				),
 			},
-			// Change from uppercase to lowercase (same member) - should be no-op
+			// Re-planning the same mixed-case config converges to an empty plan.
 			{
-				Config:   testAccGroupMembershipResourceConfig_lowercaseDN(n),
-				PlanOnly: true,
-				// This should not show any changes due to DN case normalization
+				Config:             testAccGroupMembershipResourceConfig_mixedCaseDN(n),
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: false,
+			},
+			// Switching back to the lowercase DN is again a real change to
+			// `members`.
+			{
+				Config:             testAccGroupMembershipResourceConfig_lowercaseDN(n),
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: true,
+			},
+			// Apply the lowercase DN again: `members` reflects it verbatim,
+			// and `members_normalized` (actual AD membership) is unchanged.
+			{
+				Config: testAccGroupMembershipResourceConfig_lowercaseDN(n),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "1"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members_normalized.#", "1"),
+					func(s *terraform.State) error {
+						return resource.TestCheckTypeSetElemAttr(
+							"ad_group_membership.test", "members.*", strings.ToLower(testUser1DN),
+						)(s)
+					},
+				),
+			},
+			// Re-planning the same lowercase config converges to an empty plan.
+			{
+				Config:             testAccGroupMembershipResourceConfig_lowercaseDN(n),
+				PlanOnly:           true,
 				ExpectNonEmptyPlan: false,
 			},
 		},
 	})
+}
+
+// TestAccGroupMembershipResource_membersVerbatimNoInvalidPlan is an
+// end-to-end, protocol-level regression test for the exact bug shape that
+// broke CI on PR #5017 (github.com/nexthink/rbac4engineering): an existing
+// membership established with DN-based members is reconfigured to reference
+// the same principals - plus one newly added member - using GUIDs. Before
+// the fix, ModifyPlan partially rewrote `members` against prior state
+// (reusing state's DN literal for members that resolved to the same
+// principal, while leaving the new member in its configured GUID format),
+// producing a planned value that matched neither config nor prior state and
+// triggering "Provider produced invalid plan". This test exercises the full
+// plan+apply protocol path (not just ModifyPlan in isolation) to confirm the
+// framework accepts the plan.
+func TestAccGroupMembershipResource_membersVerbatimNoInvalidPlan(t *testing.T) {
+	n := newGMTestNames(0)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Establish membership with DN-based members (simulates
+			// legacy/imported prior state).
+			{
+				Config: testAccGroupMembershipResourceConfig_verbatimTransitionDN(n),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "2"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members_normalized.#", "2"),
+				),
+			},
+			// Reconfigure using GUIDs for the existing two members plus a
+			// newly added third member, also as a GUID. This is the exact
+			// shape of the CI failure: existing members changing format at
+			// the same time a new member is added in the differing format,
+			// against DN-based prior state. If the framework rejects this
+			// plan with "Provider produced invalid plan", this step fails
+			// with that protocol error.
+			{
+				Config: testAccGroupMembershipResourceConfig_verbatimTransitionGUID(n),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "3"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members_normalized.#", "3"),
+					// `members` must equal the configured GUIDs verbatim.
+					resource.TestCheckTypeSetElemAttrPair(
+						"ad_group_membership.test", "members.*",
+						"ad_user.testuser1", "id",
+					),
+					resource.TestCheckTypeSetElemAttrPair(
+						"ad_group_membership.test", "members.*",
+						"ad_user.testuser2", "id",
+					),
+					resource.TestCheckTypeSetElemAttrPair(
+						"ad_group_membership.test", "members.*",
+						"ad_user.testuser3", "id",
+					),
+					// `members_normalized` must equal the resolved DNs for
+					// all three members (old + new).
+					resource.TestCheckTypeSetElemAttrPair(
+						"ad_group_membership.test", "members_normalized.*",
+						"ad_user.testuser1", "dn",
+					),
+					resource.TestCheckTypeSetElemAttrPair(
+						"ad_group_membership.test", "members_normalized.*",
+						"ad_user.testuser2", "dn",
+					),
+					resource.TestCheckTypeSetElemAttrPair(
+						"ad_group_membership.test", "members_normalized.*",
+						"ad_user.testuser3", "dn",
+					),
+				),
+			},
+			// Re-planning the same GUID config converges to an empty plan.
+			{
+				Config:             testAccGroupMembershipResourceConfig_verbatimTransitionGUID(n),
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: false,
+			},
+		},
+	})
+}
+
+func testAccGroupMembershipResourceConfig_verbatimTransitionDN(n gmTestNames) string {
+	return fmt.Sprintf(`
+%s
+
+resource "ad_group_membership" "test" {
+  group_id = ad_group.test.id
+  members = [
+    ad_user.testuser1.dn,
+    ad_user.testuser2.dn,
+  ]
+}
+`, prerequisiteConfig(n))
+}
+
+func testAccGroupMembershipResourceConfig_verbatimTransitionGUID(n gmTestNames) string {
+	return fmt.Sprintf(`
+%s
+
+resource "ad_group_membership" "test" {
+  group_id = ad_group.test.id
+  members = [
+    ad_user.testuser1.id,
+    ad_user.testuser2.id,
+    ad_user.testuser3.id,
+  ]
+}
+`, prerequisiteConfig(n))
 }
 
 // Members declared with surrounding whitespace must apply cleanly, populate
