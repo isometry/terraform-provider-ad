@@ -773,7 +773,7 @@ func (gm *GroupManager) AddMembers(groupGUID string, members []string) error {
 	}
 
 	// Normalize member identifiers to DNs
-	memberDNs, failures := gm.normalizer.NormalizeToDNBatch(members)
+	resolvedMembers, failures := gm.normalizer.ResolveBatch(members)
 
 	// In LDAP operations, any normalization failure is an error
 	if len(failures) > 0 {
@@ -787,9 +787,9 @@ func (gm *GroupManager) AddMembers(groupGUID string, members []string) error {
 	}
 
 	// Extract just the DN values
-	dnList := make([]string, 0, len(memberDNs))
-	for _, dn := range memberDNs {
-		dnList = append(dnList, dn)
+	dnList := make([]string, 0, len(resolvedMembers))
+	for _, r := range resolvedMembers {
+		dnList = append(dnList, r.DN)
 	}
 
 	// Add members using LDAP modify operation
@@ -827,7 +827,7 @@ func (gm *GroupManager) RemoveMembers(groupGUID string, members []string) error 
 	}
 
 	// Normalize member identifiers to DNs
-	memberDNs, failures := gm.normalizer.NormalizeToDNBatch(members)
+	resolvedMembers, failures := gm.normalizer.ResolveBatch(members)
 
 	// In LDAP operations, any normalization failure is an error
 	if len(failures) > 0 {
@@ -841,9 +841,9 @@ func (gm *GroupManager) RemoveMembers(groupGUID string, members []string) error 
 	}
 
 	// Extract just the DN values
-	dnList := make([]string, 0, len(memberDNs))
-	for _, dn := range memberDNs {
-		dnList = append(dnList, dn)
+	dnList := make([]string, 0, len(resolvedMembers))
+	for _, r := range resolvedMembers {
+		dnList = append(dnList, r.DN)
 	}
 
 	// Remove members using LDAP modify operation

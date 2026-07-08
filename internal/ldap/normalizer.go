@@ -55,6 +55,14 @@ var (
 	samRegex = regexp.MustCompile(`^([^\\@\s]+\\)?[^\\@\s]+$`)
 )
 
+// ResolvedIdentifier is the full result of resolving a DN/GUID/SID/UPN/SAM
+// identifier to the AD object it names. GUID is empty when unavailable
+// (never an error on its own).
+type ResolvedIdentifier struct {
+	DN   string
+	GUID string // canonical hyphenated form
+}
+
 // MemberNormalizer handles normalization of various identifier formats to Distinguished Names.
 type MemberNormalizer struct {
 	client       Client
@@ -118,10 +126,12 @@ func (m *MemberNormalizer) DetectIdentifierType(identifier string) IdentifierTyp
 	return IdentifierTypeUnknown
 }
 
-// NormalizeToDN converts any identifier format to a Distinguished Name.
-func (m *MemberNormalizer) NormalizeToDN(identifier string) (string, error) {
+// Resolve converts any identifier format (DN/GUID/SID/UPN/SAM) to the AD
+// object it names, returning both its Distinguished Name and (when available)
+// its GUID.
+func (m *MemberNormalizer) Resolve(identifier string) (ResolvedIdentifier, error) {
 	if identifier == "" {
-		return "", fmt.Errorf("identifier cannot be empty")
+		return ResolvedIdentifier{}, fmt.Errorf("identifier cannot be empty")
 	}
 
 	identifier = strings.TrimSpace(identifier)
@@ -129,65 +139,67 @@ func (m *MemberNormalizer) NormalizeToDN(identifier string) (string, error) {
 	// Check cache first
 	if m.cacheManager != nil {
 		if cachedEntry, found := m.cacheManager.Get(identifier); found {
-			return cachedEntry.DN, nil
+			return ResolvedIdentifier{DN: cachedEntry.DN, GUID: cachedEntry.ObjectGUID}, nil
 		}
 	}
 
 	// Detect identifier type
 	idType := m.DetectIdentifierType(identifier)
 
-	var dn string
+	var resolved ResolvedIdentifier
 	var err error
 
 	switch idType {
 	case IdentifierTypeDN:
 		// Already a DN, validate and return
-		dn, err = m.validateDN(identifier)
+		resolved, err = m.validateDN(identifier)
 	case IdentifierTypeGUID:
-		dn, err = m.resolveGUIDToDN(identifier)
+		resolved, err = m.resolveGUID(identifier)
 	case IdentifierTypeSID:
-		dn, err = m.ResolveSIDToDN(identifier)
+		resolved, err = m.ResolveSID(identifier)
 	case IdentifierTypeUPN:
-		dn, err = m.resolveUPNToDN(identifier)
+		resolved, err = m.resolveUPN(identifier)
 	case IdentifierTypeSAM:
-		dn, err = m.resolveSAMToDN(identifier)
+		resolved, err = m.resolveSAM(identifier)
 	default:
-		return "", fmt.Errorf("unable to determine identifier type for: %s", identifier)
+		return ResolvedIdentifier{}, fmt.Errorf("unable to determine identifier type for: %s", identifier)
 	}
 
 	if err != nil {
-		return "", fmt.Errorf("failed to normalize identifier '%s' (type: %s): %w", identifier, idType.String(), err)
+		return ResolvedIdentifier{}, fmt.Errorf("failed to normalize identifier '%s' (type: %s): %w", identifier, idType.String(), err)
 	}
 
 	// Apply DN case normalization to ensure uppercase attribute types
-	normalizedDN, err := NormalizeDNCase(dn)
+	normalizedDN, err := NormalizeDNCase(resolved.DN)
 	if err != nil {
-		return "", fmt.Errorf("failed to normalize DN case for '%s': %w", dn, err)
+		return ResolvedIdentifier{}, fmt.Errorf("failed to normalize DN case for '%s': %w", resolved.DN, err)
 	}
+	resolved.DN = normalizedDN
 
 	// Cache the result
 	if m.cacheManager != nil {
 		cacheEntry := &LDAPCacheEntry{
-			DN:         normalizedDN,
-			ObjectGUID: "", // Will be set from LDAP response if available
+			DN:         resolved.DN,
+			ObjectGUID: resolved.GUID,
 			ObjectSID:  "", // Will be set from LDAP response if available
 			Attributes: make(map[string][]string),
 		}
 		_ = m.cacheManager.Put(cacheEntry) // Ignore cache errors - they're not critical
 	}
 
-	return normalizedDN, nil
+	return resolved, nil
 }
 
-// NormalizeToDNBatch normalizes multiple identifiers in a single operation for better performance.
-// Returns two maps: successful normalizations (identifier -> DN) and failures (identifier -> error).
-// This allows callers to decide how to handle partial failures based on configuration.
+// ResolveBatch resolves multiple identifiers in a single operation for better performance.
+// Returns two maps: successful resolutions (identifier -> ResolvedIdentifier) and failures
+// (identifier -> error). This allows callers to decide how to handle partial failures based
+// on configuration.
 //
 // Results and failures are keyed by the caller's original identifier (whitespace
 // preserved); internal cache and LDAP lookups use the trimmed value. Identifiers
 // that are empty or whitespace-only are skipped and appear in neither map.
-func (m *MemberNormalizer) NormalizeToDNBatch(identifiers []string) (map[string]string, map[string]error) {
-	results := make(map[string]string, len(identifiers))
+func (m *MemberNormalizer) ResolveBatch(identifiers []string) (map[string]ResolvedIdentifier, map[string]error) {
+	results := make(map[string]ResolvedIdentifier, len(identifiers))
 	failures := make(map[string]error, len(identifiers))
 
 	for _, original := range identifiers {
@@ -197,29 +209,29 @@ func (m *MemberNormalizer) NormalizeToDNBatch(identifiers []string) (map[string]
 		}
 		if m.cacheManager != nil {
 			if cached, found := m.cacheManager.Get(trimmed); found {
-				results[original] = cached.DN
+				results[original] = ResolvedIdentifier{DN: cached.DN, GUID: cached.ObjectGUID}
 				continue
 			}
 		}
-		dn, err := m.NormalizeToDN(trimmed)
+		resolved, err := m.Resolve(trimmed)
 		if err != nil {
 			failures[original] = err
 		} else {
-			results[original] = dn
+			results[original] = resolved
 		}
 	}
 	return results, failures
 }
 
-// validateDN verifies that a DN exists in Active Directory.
-func (m *MemberNormalizer) validateDN(dn string) (string, error) {
+// validateDN verifies that a DN-shaped input exists in Active Directory.
+func (m *MemberNormalizer) validateDN(dn string) (ResolvedIdentifier, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
 	defer cancel()
 
 	// Normalize DN case before searching to ensure consistent format
 	normalizedSearchDN, err := NormalizeDNCase(dn)
 	if err != nil {
-		return "", fmt.Errorf("failed to normalize DN case for search: %w", err)
+		return ResolvedIdentifier{}, fmt.Errorf("failed to normalize DN case for search: %w", err)
 	}
 
 	// Perform a base object search to verify the DN exists
@@ -227,145 +239,160 @@ func (m *MemberNormalizer) validateDN(dn string) (string, error) {
 		BaseDN:     normalizedSearchDN,
 		Scope:      ScopeBaseObject,
 		Filter:     "(objectClass=*)",
-		Attributes: []string{"distinguishedName"},
+		Attributes: []string{"distinguishedName", "objectGUID"},
 		SizeLimit:  1,
 		TimeLimit:  m.timeout,
 	}
 
 	result, err := m.client.Search(ctx, searchReq)
 	if err != nil {
-		return "", fmt.Errorf("DN validation failed: %w", err)
+		return ResolvedIdentifier{}, fmt.Errorf("DN validation failed: %w", err)
 	}
 
 	if len(result.Entries) == 0 {
-		return "", fmt.Errorf("DN not found: %s", normalizedSearchDN)
+		return ResolvedIdentifier{}, fmt.Errorf("DN not found: %s", normalizedSearchDN)
 	}
+
+	guid := m.guidHandler.ExtractGUIDSafe(result.Entries[0])
 
 	// Return the canonical DN from the server, normalized to uppercase attribute types
 	canonicalDN := result.Entries[0].GetAttributeValue("distinguishedName")
 	if canonicalDN == "" {
-		return normalizedSearchDN, nil // Fallback to normalized input DN if canonical not available
+		return ResolvedIdentifier{DN: normalizedSearchDN, GUID: guid}, nil // Fallback to normalized input DN if canonical not available
 	}
 
 	// Normalize the canonical DN from AD (should already be uppercase, but ensure consistency)
 	normalizedCanonicalDN, err := NormalizeDNCase(canonicalDN)
 	if err != nil {
-		return "", fmt.Errorf("failed to normalize canonical DN case: %w", err)
+		return ResolvedIdentifier{}, fmt.Errorf("failed to normalize canonical DN case: %w", err)
 	}
 
 	// Cache the validated DN result
 	if m.cacheManager != nil {
 		cacheEntry := &LDAPCacheEntry{
 			DN:         normalizedCanonicalDN,
-			Attributes: make(map[string][]string),
-		}
-		_ = m.cacheManager.Put(cacheEntry) // Ignore cache errors - they're not critical
-	}
-
-	return normalizedCanonicalDN, nil
-}
-
-// resolveGUIDToDN resolves a GUID to its Distinguished Name.
-func (m *MemberNormalizer) resolveGUIDToDN(guid string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
-	defer cancel()
-
-	// Create GUID search request
-	searchReq, err := m.guidHandler.GenerateGUIDSearchRequest(m.baseDN, guid)
-	if err != nil {
-		return "", fmt.Errorf("failed to create GUID search request: %w", err)
-	}
-
-	searchReq.TimeLimit = m.timeout
-
-	result, err := m.client.Search(ctx, searchReq)
-	if err != nil {
-		return "", fmt.Errorf("GUID search failed: %w", err)
-	}
-
-	if len(result.Entries) == 0 {
-		return "", fmt.Errorf("object with GUID %s not found", guid)
-	}
-
-	dn := result.Entries[0].DN
-	if dn == "" {
-		return "", fmt.Errorf("DN not found for GUID %s", guid)
-	}
-
-	// Normalize DN case to ensure uppercase attribute types
-	normalizedDN, err := NormalizeDNCase(dn)
-	if err != nil {
-		return "", fmt.Errorf("failed to normalize DN case for GUID %s: %w", guid, err)
-	}
-
-	// Cache the result with GUID for future lookups
-	if m.cacheManager != nil {
-		cacheEntry := &LDAPCacheEntry{
-			DN:         normalizedDN,
 			ObjectGUID: guid,
 			Attributes: make(map[string][]string),
 		}
 		_ = m.cacheManager.Put(cacheEntry) // Ignore cache errors - they're not critical
 	}
 
-	return normalizedDN, nil
+	return ResolvedIdentifier{DN: normalizedCanonicalDN, GUID: guid}, nil
 }
 
-// ResolveSIDToDN resolves a Security Identifier to its Distinguished Name.
-func (m *MemberNormalizer) ResolveSIDToDN(sid string) (string, error) {
+// resolveGUID resolves a GUID to its Distinguished Name.
+func (m *MemberNormalizer) resolveGUID(guid string) (ResolvedIdentifier, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
+	defer cancel()
+
+	// Create GUID search request
+	searchReq, err := m.guidHandler.GenerateGUIDSearchRequest(m.baseDN, guid)
+	if err != nil {
+		return ResolvedIdentifier{}, fmt.Errorf("failed to create GUID search request: %w", err)
+	}
+
+	searchReq.TimeLimit = m.timeout
+
+	result, err := m.client.Search(ctx, searchReq)
+	if err != nil {
+		return ResolvedIdentifier{}, fmt.Errorf("GUID search failed: %w", err)
+	}
+
+	if len(result.Entries) == 0 {
+		return ResolvedIdentifier{}, fmt.Errorf("object with GUID %s not found", guid)
+	}
+
+	dn := result.Entries[0].DN
+	if dn == "" {
+		return ResolvedIdentifier{}, fmt.Errorf("DN not found for GUID %s", guid)
+	}
+
+	// Normalize DN case to ensure uppercase attribute types
+	normalizedDN, err := NormalizeDNCase(dn)
+	if err != nil {
+		return ResolvedIdentifier{}, fmt.Errorf("failed to normalize DN case for GUID %s: %w", guid, err)
+	}
+
+	// Prefer the canonical GUID extracted from the entry itself, falling back
+	// to the (already-canonical, since it matched IdentifierTypeGUID) input.
+	resolvedGUID := m.guidHandler.ExtractGUIDSafe(result.Entries[0])
+	if resolvedGUID == "" {
+		if normalized, normErr := m.guidHandler.NormalizeGUID(guid); normErr == nil {
+			resolvedGUID = normalized
+		}
+	}
+
+	// Cache the result with GUID for future lookups
+	if m.cacheManager != nil {
+		cacheEntry := &LDAPCacheEntry{
+			DN:         normalizedDN,
+			ObjectGUID: resolvedGUID,
+			Attributes: make(map[string][]string),
+		}
+		_ = m.cacheManager.Put(cacheEntry) // Ignore cache errors - they're not critical
+	}
+
+	return ResolvedIdentifier{DN: normalizedDN, GUID: resolvedGUID}, nil
+}
+
+// ResolveSID resolves a Security Identifier to its Distinguished Name.
+func (m *MemberNormalizer) ResolveSID(sid string) (ResolvedIdentifier, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
 	defer cancel()
 
 	// Search by objectSid using binary encoding
 	sidFilter, err := m.sidHandler.SIDToSearchFilter(sid)
 	if err != nil {
-		return "", fmt.Errorf("failed to create SID search filter: %w", err)
+		return ResolvedIdentifier{}, fmt.Errorf("failed to create SID search filter: %w", err)
 	}
 
 	searchReq := &SearchRequest{
 		BaseDN:     m.baseDN,
 		Scope:      ScopeWholeSubtree,
 		Filter:     sidFilter,
-		Attributes: []string{"distinguishedName"},
+		Attributes: []string{"distinguishedName", "objectGUID"},
 		SizeLimit:  1,
 		TimeLimit:  m.timeout,
 	}
 
 	result, err := m.client.Search(ctx, searchReq)
 	if err != nil {
-		return "", fmt.Errorf("SID search failed: %w", err)
+		return ResolvedIdentifier{}, fmt.Errorf("SID search failed: %w", err)
 	}
 
 	if len(result.Entries) == 0 {
-		return "", fmt.Errorf("object with SID %s not found", sid)
+		return ResolvedIdentifier{}, fmt.Errorf("object with SID %s not found", sid)
 	}
 
 	dn := result.Entries[0].DN
 	if dn == "" {
-		return "", fmt.Errorf("DN not found for SID %s", sid)
+		return ResolvedIdentifier{}, fmt.Errorf("DN not found for SID %s", sid)
 	}
 
 	// Normalize DN case to ensure uppercase attribute types
 	normalizedDN, err := NormalizeDNCase(dn)
 	if err != nil {
-		return "", fmt.Errorf("failed to normalize DN case for SID %s: %w", sid, err)
+		return ResolvedIdentifier{}, fmt.Errorf("failed to normalize DN case for SID %s: %w", sid, err)
 	}
+
+	guid := m.guidHandler.ExtractGUIDSafe(result.Entries[0])
 
 	// Cache the result with SID for future lookups
 	if m.cacheManager != nil {
 		cacheEntry := &LDAPCacheEntry{
 			DN:         normalizedDN,
+			ObjectGUID: guid,
 			ObjectSID:  sid,
 			Attributes: make(map[string][]string),
 		}
 		_ = m.cacheManager.Put(cacheEntry) // Ignore cache errors - they're not critical
 	}
 
-	return normalizedDN, nil
+	return ResolvedIdentifier{DN: normalizedDN, GUID: guid}, nil
 }
 
-// resolveUPNToDN resolves a User Principal Name to its Distinguished Name.
-func (m *MemberNormalizer) resolveUPNToDN(upn string) (string, error) {
+// resolveUPN resolves a User Principal Name to its Distinguished Name.
+func (m *MemberNormalizer) resolveUPN(upn string) (ResolvedIdentifier, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
 	defer cancel()
 
@@ -374,35 +401,38 @@ func (m *MemberNormalizer) resolveUPNToDN(upn string) (string, error) {
 		BaseDN:     m.baseDN,
 		Scope:      ScopeWholeSubtree,
 		Filter:     fmt.Sprintf("(userPrincipalName=%s)", ldap.EscapeFilter(upn)),
-		Attributes: []string{"distinguishedName"},
+		Attributes: []string{"distinguishedName", "objectGUID"},
 		SizeLimit:  1,
 		TimeLimit:  m.timeout,
 	}
 
 	result, err := m.client.Search(ctx, searchReq)
 	if err != nil {
-		return "", fmt.Errorf("UPN search failed: %w", err)
+		return ResolvedIdentifier{}, fmt.Errorf("UPN search failed: %w", err)
 	}
 
 	if len(result.Entries) == 0 {
-		return "", fmt.Errorf("object with UPN %s not found", upn)
+		return ResolvedIdentifier{}, fmt.Errorf("object with UPN %s not found", upn)
 	}
 
 	dn := result.Entries[0].DN
 	if dn == "" {
-		return "", fmt.Errorf("DN not found for UPN %s", upn)
+		return ResolvedIdentifier{}, fmt.Errorf("DN not found for UPN %s", upn)
 	}
 
 	// Normalize DN case to ensure uppercase attribute types
 	normalizedDN, err := NormalizeDNCase(dn)
 	if err != nil {
-		return "", fmt.Errorf("failed to normalize DN case for UPN %s: %w", upn, err)
+		return ResolvedIdentifier{}, fmt.Errorf("failed to normalize DN case for UPN %s: %w", upn, err)
 	}
+
+	guid := m.guidHandler.ExtractGUIDSafe(result.Entries[0])
 
 	// Cache the result with UPN for future lookups
 	if m.cacheManager != nil {
 		cacheEntry := &LDAPCacheEntry{
-			DN: normalizedDN,
+			DN:         normalizedDN,
+			ObjectGUID: guid,
 			Attributes: map[string][]string{
 				"userPrincipalName": {upn},
 			},
@@ -410,11 +440,11 @@ func (m *MemberNormalizer) resolveUPNToDN(upn string) (string, error) {
 		_ = m.cacheManager.Put(cacheEntry) // Ignore cache errors - they're not critical
 	}
 
-	return normalizedDN, nil
+	return ResolvedIdentifier{DN: normalizedDN, GUID: guid}, nil
 }
 
-// resolveSAMToDN resolves a SAM Account Name to its Distinguished Name.
-func (m *MemberNormalizer) resolveSAMToDN(sam string) (string, error) {
+// resolveSAM resolves a SAM Account Name to its Distinguished Name.
+func (m *MemberNormalizer) resolveSAM(sam string) (ResolvedIdentifier, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
 	defer cancel()
 
@@ -432,35 +462,38 @@ func (m *MemberNormalizer) resolveSAMToDN(sam string) (string, error) {
 		BaseDN:     m.baseDN,
 		Scope:      ScopeWholeSubtree,
 		Filter:     fmt.Sprintf("(sAMAccountName=%s)", ldap.EscapeFilter(username)),
-		Attributes: []string{"distinguishedName"},
+		Attributes: []string{"distinguishedName", "objectGUID"},
 		SizeLimit:  1,
 		TimeLimit:  m.timeout,
 	}
 
 	result, err := m.client.Search(ctx, searchReq)
 	if err != nil {
-		return "", fmt.Errorf("SAM search failed: %w", err)
+		return ResolvedIdentifier{}, fmt.Errorf("SAM search failed: %w", err)
 	}
 
 	if len(result.Entries) == 0 {
-		return "", fmt.Errorf("object with SAM %s not found", sam)
+		return ResolvedIdentifier{}, fmt.Errorf("object with SAM %s not found", sam)
 	}
 
 	dn := result.Entries[0].DN
 	if dn == "" {
-		return "", fmt.Errorf("DN not found for SAM %s", sam)
+		return ResolvedIdentifier{}, fmt.Errorf("DN not found for SAM %s", sam)
 	}
 
 	// Normalize DN case to ensure uppercase attribute types
 	normalizedDN, err := NormalizeDNCase(dn)
 	if err != nil {
-		return "", fmt.Errorf("failed to normalize DN case for SAM %s: %w", sam, err)
+		return ResolvedIdentifier{}, fmt.Errorf("failed to normalize DN case for SAM %s: %w", sam, err)
 	}
+
+	guid := m.guidHandler.ExtractGUIDSafe(result.Entries[0])
 
 	// Cache the result with SAM for future lookups
 	if m.cacheManager != nil {
 		cacheEntry := &LDAPCacheEntry{
-			DN: normalizedDN,
+			DN:         normalizedDN,
+			ObjectGUID: guid,
 			Attributes: map[string][]string{
 				"sAMAccountName": {username},
 			},
@@ -468,7 +501,7 @@ func (m *MemberNormalizer) resolveSAMToDN(sam string) (string, error) {
 		_ = m.cacheManager.Put(cacheEntry) // Ignore cache errors - they're not critical
 	}
 
-	return normalizedDN, nil
+	return ResolvedIdentifier{DN: normalizedDN, GUID: guid}, nil
 }
 
 // ValidateIdentifier checks if an identifier is valid and can be normalized.

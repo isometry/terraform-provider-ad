@@ -60,7 +60,13 @@ func (gmm *GroupMembershipManager) SetTimeout(timeout time.Duration) {
 
 // SetGroupMembers sets the complete membership of a group, replacing all existing members.
 // All members must be provided as Distinguished Names (DNs).
-func (gmm *GroupMembershipManager) SetGroupMembers(groupGUID string, memberDNs []string) error {
+//
+// memberGUIDs is optional (nil is valid and preserves today's literal-DN
+// write behavior exactly) — DN → canonical GUID, for any member about to
+// be added whose GUID is known. Only consulted by the Add path; Remove
+// already operates on AD's own fresh current DNs via replaceMemberList and
+// has no staleness to guard against.
+func (gmm *GroupMembershipManager) SetGroupMembers(groupGUID string, memberDNs []string, memberGUIDs map[string]string) error {
 	if groupGUID == "" {
 		return fmt.Errorf("group GUID cannot be empty")
 	}
@@ -89,7 +95,7 @@ func (gmm *GroupMembershipManager) SetGroupMembers(groupGUID string, memberDNs [
 	}
 
 	if len(delta.ToAdd) > 0 {
-		if err := gmm.AddGroupMembers(groupGUID, delta.ToAdd); err != nil {
+		if err := gmm.AddGroupMembers(groupGUID, delta.ToAdd, memberGUIDs); err != nil {
 			return WrapError("add_members_for_set", err)
 		}
 	}
@@ -123,7 +129,13 @@ func (gmm *GroupMembershipManager) GetGroupMembers(groupGUID string) ([]string, 
 // AddGroupMembers adds new members to a group using batch operations.
 // All members must be provided as Distinguished Names (DNs).
 // Uses ADMemberBatchSize to respect Active Directory's member operation limits.
-func (gmm *GroupMembershipManager) AddGroupMembers(groupGUID string, memberDNs []string) error {
+//
+// memberGUIDs is optional (nil is valid and preserves today's literal-DN
+// write behavior exactly) — DN → canonical GUID, for any member about to
+// be added whose GUID is known. When present for a given DN, the member is
+// written to AD using its rename-immune "<GUID=...>" alternative-DN form
+// (see GUIDToAltDN) instead of the literal DN.
+func (gmm *GroupMembershipManager) AddGroupMembers(groupGUID string, memberDNs []string, memberGUIDs map[string]string) error {
 	if groupGUID == "" {
 		return fmt.Errorf("group GUID cannot be empty")
 	}
@@ -150,7 +162,7 @@ func (gmm *GroupMembershipManager) AddGroupMembers(groupGUID string, memberDNs [
 	}
 
 	// Perform batch add operations respecting AD limits
-	return gmm.batchAddMembers(group.DistinguishedName, uniqueDNs)
+	return gmm.batchAddMembers(group.DistinguishedName, uniqueDNs, memberGUIDs)
 }
 
 // RemoveGroupMembers removes members from a group using batch operations.
@@ -224,14 +236,14 @@ func (gmm *GroupMembershipManager) CalculateMembershipDelta(groupGUID string, de
 }
 
 // batchAddMembers adds members in batches to respect Active Directory limits.
-func (gmm *GroupMembershipManager) batchAddMembers(groupDN string, memberDNs []string) error {
+func (gmm *GroupMembershipManager) batchAddMembers(groupDN string, memberDNs []string, memberGUIDs map[string]string) error {
 	batchSize := ADMemberBatchSize
 
 	for i := 0; i < len(memberDNs); i += batchSize {
 		end := min(i+batchSize, len(memberDNs))
 
 		batch := memberDNs[i:end]
-		if err := gmm.addMembersBatch(groupDN, batch); err != nil {
+		if err := gmm.addMembersBatch(groupDN, batch, memberGUIDs); err != nil {
 			return fmt.Errorf("failed to add member batch %d-%d: %w", i+1, end, err)
 		}
 	}
@@ -239,22 +251,46 @@ func (gmm *GroupMembershipManager) batchAddMembers(groupDN string, memberDNs []s
 	return nil
 }
 
+// memberWriteValue returns the value to write to AD's member attribute for
+// the given DN: its "<GUID=...>" alternative-DN form when memberGUIDs
+// supplies a GUID for it (falling back to the literal DN if the GUID turns
+// out to be malformed), otherwise the literal DN unchanged.
+func memberWriteValue(dn string, memberGUIDs map[string]string) string {
+	if memberGUIDs == nil {
+		return dn
+	}
+	guid, ok := memberGUIDs[dn]
+	if !ok || guid == "" {
+		return dn
+	}
+	altDN, err := GUIDToAltDN(guid)
+	if err != nil {
+		return dn
+	}
+	return altDN
+}
+
 // addMembersBatch adds a single batch of members with conflict handling.
-func (gmm *GroupMembershipManager) addMembersBatch(groupDN string, memberDNs []string) error {
+func (gmm *GroupMembershipManager) addMembersBatch(groupDN string, memberDNs []string, memberGUIDs map[string]string) error {
 	if len(memberDNs) == 0 {
 		return nil
 	}
 
+	values := make([]string, len(memberDNs))
+	for i, dn := range memberDNs {
+		values[i] = memberWriteValue(dn, memberGUIDs)
+	}
+
 	modReq := &ModifyRequest{
 		DN:            groupDN,
-		AddAttributes: map[string][]string{"member": memberDNs},
+		AddAttributes: map[string][]string{"member": values},
 	}
 
 	err := gmm.client.Modify(gmm.ctx, modReq)
 	if err != nil {
 		// Handle "member already exists" conflicts by adding individually
 		if IsConflictError(err) {
-			return gmm.addMembersIndividually(groupDN, memberDNs)
+			return gmm.addMembersIndividually(groupDN, memberDNs, memberGUIDs)
 		}
 		return err
 	}
@@ -263,14 +299,14 @@ func (gmm *GroupMembershipManager) addMembersBatch(groupDN string, memberDNs []s
 }
 
 // addMembersIndividually adds members one by one to handle conflicts gracefully.
-func (gmm *GroupMembershipManager) addMembersIndividually(groupDN string, memberDNs []string) error {
+func (gmm *GroupMembershipManager) addMembersIndividually(groupDN string, memberDNs []string, memberGUIDs map[string]string) error {
 	var lastNonConflictErr error
 	successCount := 0
 
 	for _, memberDN := range memberDNs {
 		modReq := &ModifyRequest{
 			DN:            groupDN,
-			AddAttributes: map[string][]string{"member": {memberDN}},
+			AddAttributes: map[string][]string{"member": {memberWriteValue(memberDN, memberGUIDs)}},
 		}
 
 		if err := gmm.client.Modify(gmm.ctx, modReq); err != nil {
