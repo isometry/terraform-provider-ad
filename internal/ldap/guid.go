@@ -294,3 +294,40 @@ func (g *GUIDHandler) ParseGUIDFromDN(dn string) (string, bool) {
 
 	return "", false
 }
+
+// altGUIDDNRegex recognises the "<GUID=...>" alternative-DN shape documented
+// by MS-ADTS, without validating the content between the delimiters. Use
+// IsAltGUIDDN for the shape check and GUIDToAltDN to build/validate a real one.
+var altGUIDDNRegex = regexp.MustCompile(`(?i)^<GUID=(.*)>$`)
+
+// GUIDToAltDN builds the AD "alternative DN" form of a GUID: "<GUID=object_guid>".
+//
+// Per MS-ADTS (3.1.1.3.1.3), Active Directory accepts this form anywhere a DN
+// is expected in a client request - including as an AttributeValue in a
+// ModifyRequest - and resolves it to the object with that objectGUID,
+// regardless of the object's current name/location. This makes it immune to
+// concurrent renames that would otherwise invalidate a literal DN captured
+// earlier (e.g. at Terraform plan time).
+//
+// MS-ADTS permits either the hex-encoded binary GUID or, on Windows Server
+// 2003 and later, the standard dashed-string GUID form inside the angle
+// brackets. This implementation always emits the dashed-string form (matching
+// NormalizeGUID's canonical output) for consistency with the rest of this
+// file and for human-readable request/log inspection; both forms are
+// equally valid on the wire.
+func GUIDToAltDN(guid string) (string, error) {
+	handler := NewGUIDHandler()
+	normalized, err := handler.NormalizeGUID(guid)
+	if err != nil {
+		return "", fmt.Errorf("invalid GUID for alternative DN: %w", err)
+	}
+	return fmt.Sprintf("<GUID=%s>", normalized), nil
+}
+
+// IsAltGUIDDN reports whether s has the "<GUID=...>" alternative-DN shape.
+// It only recognises the shape (delimiters present); it does not validate
+// that the enclosed value is actually a well-formed GUID - use GUIDToAltDN
+// or NewGUIDHandler().IsValidGUID on the extracted value for that.
+func IsAltGUIDDN(s string) bool {
+	return altGUIDDNRegex.MatchString(strings.TrimSpace(s))
+}

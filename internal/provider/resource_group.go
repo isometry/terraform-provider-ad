@@ -540,7 +540,7 @@ func (r *GroupResource) ImportState(ctx context.Context, req resource.ImportStat
 
 	// Normalize the import ID to a DN (supports DN, GUID, SID, UPN, SAM formats)
 	normalizer := ldapclient.NewMemberNormalizer(r.client, baseDN, r.cacheManager)
-	groupDN, err := normalizer.NormalizeToDN(importID)
+	resolved, err := normalizer.Resolve(importID)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Resolving Group Identifier",
@@ -548,6 +548,7 @@ func (r *GroupResource) ImportState(ctx context.Context, req resource.ImportStat
 		)
 		return
 	}
+	groupDN := resolved.DN
 
 	tflog.Debug(ctx, "Resolved group identifier to DN", map[string]any{
 		"import_id": importID,

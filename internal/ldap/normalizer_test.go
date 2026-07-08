@@ -290,7 +290,20 @@ func TestMemberNormalizer_ValidateIdentifier(t *testing.T) {
 	}
 }
 
-func TestMemberNormalizer_NormalizeToDN_DN(t *testing.T) {
+// mustGUIDBytes converts a canonical hyphenated GUID string to AD's binary
+// mixed-endian encoding, for use as an entry's raw objectGUID attribute value.
+func mustGUIDBytes(t *testing.T, guid string) []byte {
+	t.Helper()
+	b, err := NewGUIDHandler().StringToGUIDBytes(guid)
+	require.NoError(t, err)
+	return b
+}
+
+// resolvedEntryGUID is the canonical GUID returned in objectGUID for entries
+// in the tests below, distinct from any identifier under test.
+const resolvedEntryGUID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+func TestMemberNormalizer_Resolve_DN(t *testing.T) {
 	mockClient := &MockClient{}
 	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
@@ -310,19 +323,52 @@ func TestMemberNormalizer_NormalizeToDN_DN(t *testing.T) {
 						Values: []string{canonicalDN},
 					},
 				},
+				// objectGUID intentionally omitted to also cover the
+				// "GUID unavailable" fallback (empty, never an error) path.
 			},
 		},
 		Total: 1,
 	}, nil)
 
-	result, err := normalizer.NormalizeToDN(dn)
+	result, err := normalizer.Resolve(dn)
 
 	require.NoError(t, err)
-	assert.Equal(t, canonicalDN, result)
+	assert.Equal(t, canonicalDN, result.DN)
+	assert.Empty(t, result.GUID, "GUID should be empty when objectGUID is unavailable")
 	mockClient.AssertExpectations(t)
 }
 
-func TestMemberNormalizer_NormalizeToDN_GUID(t *testing.T) {
+func TestMemberNormalizer_Resolve_DN_WithGUID(t *testing.T) {
+	mockClient := &MockClient{}
+	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
+
+	dn := "CN=User,OU=Users,DC=example,DC=com"
+	canonicalDN := "CN=User,OU=Users,DC=example,DC=com"
+
+	mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
+		return req.BaseDN == dn && req.Scope == ScopeBaseObject
+	})).Return(&SearchResult{
+		Entries: []*ldap.Entry{
+			{
+				DN: canonicalDN,
+				Attributes: []*ldap.EntryAttribute{
+					{Name: "distinguishedName", Values: []string{canonicalDN}},
+					{Name: "objectGUID", ByteValues: [][]byte{mustGUIDBytes(t, resolvedEntryGUID)}},
+				},
+			},
+		},
+		Total: 1,
+	}, nil)
+
+	result, err := normalizer.Resolve(dn)
+
+	require.NoError(t, err)
+	assert.Equal(t, canonicalDN, result.DN)
+	assert.Equal(t, resolvedEntryGUID, result.GUID)
+	mockClient.AssertExpectations(t)
+}
+
+func TestMemberNormalizer_Resolve_GUID(t *testing.T) {
 	mockClient := &MockClient{}
 	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
@@ -338,19 +384,23 @@ func TestMemberNormalizer_NormalizeToDN_GUID(t *testing.T) {
 		Entries: []*ldap.Entry{
 			{
 				DN: expectedDN,
+				Attributes: []*ldap.EntryAttribute{
+					{Name: "objectGUID", ByteValues: [][]byte{mustGUIDBytes(t, guid)}},
+				},
 			},
 		},
 		Total: 1,
 	}, nil)
 
-	result, err := normalizer.NormalizeToDN(guid)
+	result, err := normalizer.Resolve(guid)
 
 	require.NoError(t, err)
-	assert.Equal(t, expectedDN, result)
+	assert.Equal(t, expectedDN, result.DN)
+	assert.Equal(t, guid, result.GUID)
 	mockClient.AssertExpectations(t)
 }
 
-func TestMemberNormalizer_NormalizeToDN_SID(t *testing.T) {
+func TestMemberNormalizer_Resolve_SID(t *testing.T) {
 	mockClient := &MockClient{}
 	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
@@ -367,19 +417,23 @@ func TestMemberNormalizer_NormalizeToDN_SID(t *testing.T) {
 		Entries: []*ldap.Entry{
 			{
 				DN: expectedDN,
+				Attributes: []*ldap.EntryAttribute{
+					{Name: "objectGUID", ByteValues: [][]byte{mustGUIDBytes(t, resolvedEntryGUID)}},
+				},
 			},
 		},
 		Total: 1,
 	}, nil)
 
-	result, err := normalizer.NormalizeToDN(sid)
+	result, err := normalizer.Resolve(sid)
 
 	require.NoError(t, err)
-	assert.Equal(t, expectedDN, result)
+	assert.Equal(t, expectedDN, result.DN)
+	assert.Equal(t, resolvedEntryGUID, result.GUID)
 	mockClient.AssertExpectations(t)
 }
 
-func TestMemberNormalizer_NormalizeToDN_UPN(t *testing.T) {
+func TestMemberNormalizer_Resolve_UPN(t *testing.T) {
 	mockClient := &MockClient{}
 	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
@@ -394,19 +448,23 @@ func TestMemberNormalizer_NormalizeToDN_UPN(t *testing.T) {
 		Entries: []*ldap.Entry{
 			{
 				DN: expectedDN,
+				Attributes: []*ldap.EntryAttribute{
+					{Name: "objectGUID", ByteValues: [][]byte{mustGUIDBytes(t, resolvedEntryGUID)}},
+				},
 			},
 		},
 		Total: 1,
 	}, nil)
 
-	result, err := normalizer.NormalizeToDN(upn)
+	result, err := normalizer.Resolve(upn)
 
 	require.NoError(t, err)
-	assert.Equal(t, expectedDN, result)
+	assert.Equal(t, expectedDN, result.DN)
+	assert.Equal(t, resolvedEntryGUID, result.GUID)
 	mockClient.AssertExpectations(t)
 }
 
-func TestMemberNormalizer_NormalizeToDN_SAM(t *testing.T) {
+func TestMemberNormalizer_Resolve_SAM(t *testing.T) {
 	mockClient := &MockClient{}
 	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
@@ -439,22 +497,51 @@ func TestMemberNormalizer_NormalizeToDN_SAM(t *testing.T) {
 				Entries: []*ldap.Entry{
 					{
 						DN: expectedDN,
+						Attributes: []*ldap.EntryAttribute{
+							{Name: "objectGUID", ByteValues: [][]byte{mustGUIDBytes(t, resolvedEntryGUID)}},
+						},
 					},
 				},
 				Total: 1,
 			}, nil).Once()
 
-			result, err := normalizer.NormalizeToDN(tt.sam)
+			result, err := normalizer.Resolve(tt.sam)
 
 			require.NoError(t, err)
-			assert.Equal(t, expectedDN, result)
+			assert.Equal(t, expectedDN, result.DN)
+			assert.Equal(t, resolvedEntryGUID, result.GUID)
 		})
 	}
 
 	mockClient.AssertExpectations(t)
 }
 
-func TestMemberNormalizer_NormalizeToDN_NotFound(t *testing.T) {
+func TestMemberNormalizer_Resolve_CacheHit_HasGUID(t *testing.T) {
+	mockClient := &MockClient{}
+	cacheManager := NewCacheManager()
+	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", cacheManager)
+
+	upn := "cached@example.com"
+	cachedDN := "CN=Cached User,OU=Users,DC=example,DC=com"
+
+	require.NoError(t, cacheManager.Put(&LDAPCacheEntry{
+		DN:         cachedDN,
+		ObjectGUID: resolvedEntryGUID,
+		Attributes: map[string][]string{
+			"userPrincipalName": {upn},
+		},
+	}))
+
+	result, err := normalizer.Resolve(upn)
+
+	require.NoError(t, err)
+	assert.Equal(t, cachedDN, result.DN)
+	assert.Equal(t, resolvedEntryGUID, result.GUID)
+	// A cache hit must not issue any LDAP search.
+	mockClient.AssertNotCalled(t, "Search", mock.Anything, mock.Anything)
+}
+
+func TestMemberNormalizer_Resolve_NotFound(t *testing.T) {
 	mockClient := &MockClient{}
 	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
@@ -468,15 +555,16 @@ func TestMemberNormalizer_NormalizeToDN_NotFound(t *testing.T) {
 		Total:   0,
 	}, nil)
 
-	result, err := normalizer.NormalizeToDN(guid)
+	result, err := normalizer.Resolve(guid)
 
 	assert.Error(t, err)
-	assert.Empty(t, result)
+	assert.Empty(t, result.DN)
+	assert.Empty(t, result.GUID)
 	assert.Contains(t, err.Error(), "not found")
 	mockClient.AssertExpectations(t)
 }
 
-func TestMemberNormalizer_NormalizeToDNBatch(t *testing.T) {
+func TestMemberNormalizer_ResolveBatch(t *testing.T) {
 	mockClient := &MockClient{}
 	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
@@ -486,7 +574,7 @@ func TestMemberNormalizer_NormalizeToDNBatch(t *testing.T) {
 		"user2@example.com",
 	}
 
-	expectedResults := map[string]string{
+	expectedDNs := map[string]string{
 		"CN=User1,OU=Users,DC=example,DC=com":  "CN=User1,OU=Users,DC=example,DC=com",
 		"12345678-1234-1234-1234-123456789012": "CN=User2,OU=Users,DC=example,DC=com",
 		"user2@example.com":                    "CN=User2,OU=Users,DC=example,DC=com",
@@ -504,8 +592,13 @@ func TestMemberNormalizer_NormalizeToDNBatch(t *testing.T) {
 	mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 		return req.BaseDN == "dc=example,dc=com" && req.SizeLimit == 1
 	})).Return(&SearchResult{
-		Entries: []*ldap.Entry{{DN: "CN=User2,OU=Users,DC=example,DC=com"}},
-		Total:   1,
+		Entries: []*ldap.Entry{{
+			DN: "CN=User2,OU=Users,DC=example,DC=com",
+			Attributes: []*ldap.EntryAttribute{
+				{Name: "objectGUID", ByteValues: [][]byte{mustGUIDBytes(t, "12345678-1234-1234-1234-123456789012")}},
+			},
+		}},
+		Total: 1,
 	}, nil)
 
 	// Mock UPN search
@@ -517,14 +610,20 @@ func TestMemberNormalizer_NormalizeToDNBatch(t *testing.T) {
 		Total:   1,
 	}, nil)
 
-	results, failures := normalizer.NormalizeToDNBatch(identifiers)
+	results, failures := normalizer.ResolveBatch(identifiers)
 
 	assert.Empty(t, failures, "expected no failures")
-	assert.Equal(t, expectedResults, results)
+	require.Len(t, results, len(expectedDNs))
+	for identifier, expectedDN := range expectedDNs {
+		require.Contains(t, results, identifier)
+		assert.Equal(t, expectedDN, results[identifier].DN, "DN for %s", identifier)
+	}
+	// The GUID identifier's own value must round-trip into the resolved GUID.
+	assert.Equal(t, "12345678-1234-1234-1234-123456789012", results["12345678-1234-1234-1234-123456789012"].GUID)
 	mockClient.AssertExpectations(t)
 }
 
-func TestMemberNormalizer_NormalizeToDNBatch_PartialFailures(t *testing.T) {
+func TestMemberNormalizer_ResolveBatch_PartialFailures(t *testing.T) {
 	mockClient := &MockClient{}
 	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
@@ -566,12 +665,12 @@ func TestMemberNormalizer_NormalizeToDNBatch_PartialFailures(t *testing.T) {
 		Total:   0,
 	}, nil)
 
-	results, failures := normalizer.NormalizeToDNBatch(identifiers)
+	results, failures := normalizer.ResolveBatch(identifiers)
 
 	// Should have 2 successful results
 	assert.Len(t, results, 2)
-	assert.Equal(t, "CN=User1,OU=Users,DC=example,DC=com", results["CN=User1,OU=Users,DC=example,DC=com"])
-	assert.Equal(t, "CN=User2,OU=Users,DC=example,DC=com", results["CN=User2,OU=Users,DC=example,DC=com"])
+	assert.Equal(t, "CN=User1,OU=Users,DC=example,DC=com", results["CN=User1,OU=Users,DC=example,DC=com"].DN)
+	assert.Equal(t, "CN=User2,OU=Users,DC=example,DC=com", results["CN=User2,OU=Users,DC=example,DC=com"].DN)
 
 	// Should have 1 failure
 	assert.Len(t, failures, 1)
@@ -579,7 +678,7 @@ func TestMemberNormalizer_NormalizeToDNBatch_PartialFailures(t *testing.T) {
 	assert.Contains(t, failures["nonexistent@example.com"].Error(), "nonexistent@example.com")
 }
 
-func TestMemberNormalizer_NormalizeToDNBatch_AllFail(t *testing.T) {
+func TestMemberNormalizer_ResolveBatch_AllFail(t *testing.T) {
 	mockClient := &MockClient{}
 	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
 
@@ -618,7 +717,7 @@ func TestMemberNormalizer_NormalizeToDNBatch_AllFail(t *testing.T) {
 		Total:   0,
 	}, nil)
 
-	results, failures := normalizer.NormalizeToDNBatch(identifiers)
+	results, failures := normalizer.ResolveBatch(identifiers)
 
 	// Should have no successful results
 	assert.Empty(t, results, "expected no successful normalizations")
@@ -629,11 +728,11 @@ func TestMemberNormalizer_NormalizeToDNBatch_AllFail(t *testing.T) {
 	assert.Contains(t, failures, "bad2@example.com")
 }
 
-// TestMemberNormalizer_NormalizeToDNBatch_WhitespacePreservation asserts the
+// TestMemberNormalizer_ResolveBatch_WhitespacePreservation asserts the
 // external contract: result and failure maps are keyed by the caller's
 // original identifier (whitespace preserved), while internal cache and LDAP
 // lookups use the trimmed value. Empty/whitespace-only entries are skipped.
-func TestMemberNormalizer_NormalizeToDNBatch_WhitespacePreservation(t *testing.T) {
+func TestMemberNormalizer_ResolveBatch_WhitespacePreservation(t *testing.T) {
 	t.Run("padded_DN_success", func(t *testing.T) {
 		mockClient := &MockClient{}
 		normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
@@ -654,12 +753,12 @@ func TestMemberNormalizer_NormalizeToDNBatch_WhitespacePreservation(t *testing.T
 			Total: 1,
 		}, nil).Once()
 
-		results, failures := normalizer.NormalizeToDNBatch([]string{paddedDN})
+		results, failures := normalizer.ResolveBatch([]string{paddedDN})
 
 		assert.Empty(t, failures, "expected no failures")
 		assert.Contains(t, results, paddedDN)
 		assert.NotContains(t, results, canonicalDN)
-		assert.Equal(t, canonicalDN, results[paddedDN])
+		assert.Equal(t, canonicalDN, results[paddedDN].DN)
 		mockClient.AssertExpectations(t)
 	})
 
@@ -680,12 +779,12 @@ func TestMemberNormalizer_NormalizeToDNBatch_WhitespacePreservation(t *testing.T
 			Total:   1,
 		}, nil).Once()
 
-		results, failures := normalizer.NormalizeToDNBatch([]string{paddedUPN})
+		results, failures := normalizer.ResolveBatch([]string{paddedUPN})
 
 		assert.Empty(t, failures, "expected no failures")
 		assert.Contains(t, results, paddedUPN)
 		assert.NotContains(t, results, trimmedUPN)
-		assert.Equal(t, canonicalDN, results[paddedUPN])
+		assert.Equal(t, canonicalDN, results[paddedUPN].DN)
 		mockClient.AssertExpectations(t)
 	})
 
@@ -706,7 +805,7 @@ func TestMemberNormalizer_NormalizeToDNBatch_WhitespacePreservation(t *testing.T
 			Total:   0,
 		}, nil).Once()
 
-		results, failures := normalizer.NormalizeToDNBatch([]string{paddedBad})
+		results, failures := normalizer.ResolveBatch([]string{paddedBad})
 
 		assert.Empty(t, results, "expected no successful normalizations")
 		assert.Contains(t, failures, paddedBad)
@@ -729,7 +828,8 @@ func TestMemberNormalizer_NormalizeToDNBatch_WhitespacePreservation(t *testing.T
 
 		// Pre-populate the cache so a Get on the trimmed value succeeds.
 		require.NoError(t, cacheManager.Put(&LDAPCacheEntry{
-			DN: canonicalDN,
+			DN:         canonicalDN,
+			ObjectGUID: resolvedEntryGUID,
 			Attributes: map[string][]string{
 				"userPrincipalName": {trimmedUPN},
 			},
@@ -740,12 +840,13 @@ func TestMemberNormalizer_NormalizeToDNBatch_WhitespacePreservation(t *testing.T
 		require.True(t, found, "cache must serve the trimmed UPN lookup")
 		require.Equal(t, canonicalDN, cached.DN)
 
-		results, failures := normalizer.NormalizeToDNBatch([]string{paddedUPN})
+		results, failures := normalizer.ResolveBatch([]string{paddedUPN})
 
 		assert.Empty(t, failures, "expected no failures")
 		assert.Contains(t, results, paddedUPN)
 		assert.NotContains(t, results, trimmedUPN)
-		assert.Equal(t, canonicalDN, results[paddedUPN])
+		assert.Equal(t, canonicalDN, results[paddedUPN].DN)
+		assert.Equal(t, resolvedEntryGUID, results[paddedUPN].GUID, "cache hit must carry the cached GUID for free")
 		// Verify no LDAP search was issued (cache served the request).
 		mockClient.AssertNotCalled(t, "Search", mock.Anything, mock.Anything)
 	})
@@ -756,7 +857,7 @@ func TestMemberNormalizer_NormalizeToDNBatch_WhitespacePreservation(t *testing.T
 
 		identifiers := []string{"", "   ", "\t\n"}
 
-		results, failures := normalizer.NormalizeToDNBatch(identifiers)
+		results, failures := normalizer.ResolveBatch(identifiers)
 
 		assert.Empty(t, results, "skipped entries must not appear in results")
 		assert.Empty(t, failures, "skipped entries must not appear in failures")
@@ -807,12 +908,12 @@ func TestMemberNormalizer_NormalizeToDNBatch_WhitespacePreservation(t *testing.T
 			Total:   0,
 		}, nil).Once()
 
-		results, failures := normalizer.NormalizeToDNBatch(members)
+		results, failures := normalizer.ResolveBatch(members)
 
 		var found, missing []string
 		for _, member := range members {
-			if dn, ok := results[member]; ok {
-				found = append(found, dn)
+			if resolved, ok := results[member]; ok {
+				found = append(found, resolved.DN)
 				continue
 			}
 			if _, ok := failures[member]; ok {
@@ -889,11 +990,12 @@ func TestMemberNormalizer_ErrorHandling(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := normalizer.NormalizeToDN(tt.identifier)
+			result, err := normalizer.Resolve(tt.identifier)
 
 			if tt.wantErr {
 				assert.Error(t, err)
-				assert.Empty(t, result)
+				assert.Empty(t, result.DN)
+				assert.Empty(t, result.GUID)
 				assert.Contains(t, err.Error(), tt.errMsg)
 			} else {
 				assert.NoError(t, err)
@@ -932,10 +1034,11 @@ func TestMemberNormalizer_SearchErrors(t *testing.T) {
 	mockClient.On("Search", mock.Anything, mock.AnythingOfType("*ldap.SearchRequest")).
 		Return((*SearchResult)(nil), fmt.Errorf("connection failed"))
 
-	result, err := normalizer.NormalizeToDN(guid)
+	result, err := normalizer.Resolve(guid)
 
 	assert.Error(t, err)
-	assert.Empty(t, result)
+	assert.Empty(t, result.DN)
+	assert.Empty(t, result.GUID)
 	assert.Contains(t, err.Error(), "failed to normalize identifier")
 	mockClient.AssertExpectations(t)
 }
@@ -989,7 +1092,7 @@ func TestMemberNormalizer_IntegrationScenarios(t *testing.T) {
 		Total:   1,
 	}, nil)
 
-	results, failures := normalizer.NormalizeToDNBatch(identifiers)
+	results, failures := normalizer.ResolveBatch(identifiers)
 
 	assert.Empty(t, failures, "expected no failures")
 	assert.Len(t, results, 5)
@@ -997,7 +1100,7 @@ func TestMemberNormalizer_IntegrationScenarios(t *testing.T) {
 	// Verify all identifiers were resolved
 	for _, identifier := range identifiers {
 		assert.Contains(t, results, identifier)
-		assert.NotEmpty(t, results[identifier])
+		assert.NotEmpty(t, results[identifier].DN)
 	}
 
 	mockClient.AssertExpectations(t)

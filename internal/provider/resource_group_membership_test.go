@@ -182,7 +182,7 @@ func TestAccGroupMembershipResource_basic(t *testing.T) {
 // strictly verbatim passthrough of configuration: switching an existing
 // member's identifier format (DN -> UPN -> GUID) for the very same AD
 // principal is a real, expected plan diff on `members` (never silently
-// reconciled), while `members_normalized` (and therefore actual AD
+// reconciled), while `member_details` (and therefore actual AD
 // membership) does not change across the format switch. Each format switch
 // converges to an empty plan on the next apply.
 func TestAccGroupMembershipResource_antiDrift(t *testing.T) {
@@ -197,7 +197,7 @@ func TestAccGroupMembershipResource_antiDrift(t *testing.T) {
 				Config: testAccGroupMembershipResourceConfig_antiDriftDN(n),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "1"),
-					resource.TestCheckResourceAttr("ad_group_membership.test", "members_normalized.#", "1"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "member_details.#", "1"),
 				),
 			},
 			// Switching to UPN format for the same user is a real change to
@@ -209,13 +209,13 @@ func TestAccGroupMembershipResource_antiDrift(t *testing.T) {
 				ExpectNonEmptyPlan: true,
 			},
 			// Apply the UPN format: `members` must now hold the UPN
-			// verbatim, while `members_normalized` (actual AD membership) is
+			// verbatim, while `member_details` (actual AD membership) is
 			// unchanged.
 			{
 				Config: testAccGroupMembershipResourceConfig_antiDriftUPN(n),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "1"),
-					resource.TestCheckResourceAttr("ad_group_membership.test", "members_normalized.#", "1"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "member_details.#", "1"),
 					resource.TestCheckTypeSetElemAttrPair(
 						"ad_group_membership.test", "members.*",
 						"ad_user.testuser1", "principal_name",
@@ -235,13 +235,13 @@ func TestAccGroupMembershipResource_antiDrift(t *testing.T) {
 				ExpectNonEmptyPlan: true,
 			},
 			// Apply the GUID format: `members` must now hold the GUID
-			// verbatim, while `members_normalized` (actual AD membership) is
+			// verbatim, while `member_details` (actual AD membership) is
 			// unchanged.
 			{
 				Config: testAccGroupMembershipResourceConfig_antiDriftGUID(n),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "1"),
-					resource.TestCheckResourceAttr("ad_group_membership.test", "members_normalized.#", "1"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "member_details.#", "1"),
 					resource.TestCheckTypeSetElemAttrPair(
 						"ad_group_membership.test", "members.*",
 						"ad_user.testuser1", "id",
@@ -271,7 +271,7 @@ func TestAccGroupMembershipResource_mixedIdentifiers(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "3"),
 					// All should normalize to the same set of DNs
-					resource.TestCheckResourceAttr("ad_group_membership.test", "members_normalized.#", "3"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "member_details.#", "3"),
 				),
 			},
 		},
@@ -298,7 +298,7 @@ func mangleDNCase(dn string) string {
 // is a strictly verbatim passthrough of configuration: changing only the DN
 // attribute-type case (e.g. `cn=` -> `Cn=`) for the same member is a real,
 // expected plan diff on `members` (never silently reconciled), even though
-// the underlying AD principal - and therefore `members_normalized` - is
+// the underlying AD principal - and therefore `member_details` - is
 // unchanged. Each case change converges to an empty plan on the next apply.
 func TestAccGroupMembershipResource_dnCaseNormalization(t *testing.T) {
 	n := newGMTestNames(0)
@@ -314,7 +314,7 @@ func TestAccGroupMembershipResource_dnCaseNormalization(t *testing.T) {
 				Config: testAccGroupMembershipResourceConfig_lowercaseDN(n),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "1"),
-					resource.TestCheckResourceAttr("ad_group_membership.test", "members_normalized.#", "1"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "member_details.#", "1"),
 					captureStateAttr("ad_user.testuser1", "dn", &testUser1DN),
 				),
 			},
@@ -328,13 +328,13 @@ func TestAccGroupMembershipResource_dnCaseNormalization(t *testing.T) {
 				ExpectNonEmptyPlan: true,
 			},
 			// Apply the mixed-case DN: `members` must now hold the
-			// mixed-case value verbatim, while `members_normalized` (actual
+			// mixed-case value verbatim, while `member_details` (actual
 			// AD membership) is unchanged.
 			{
 				Config: testAccGroupMembershipResourceConfig_mixedCaseDN(n),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "1"),
-					resource.TestCheckResourceAttr("ad_group_membership.test", "members_normalized.#", "1"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "member_details.#", "1"),
 					func(s *terraform.State) error {
 						return resource.TestCheckTypeSetElemAttr(
 							"ad_group_membership.test", "members.*", mangleDNCase(testUser1DN),
@@ -356,12 +356,12 @@ func TestAccGroupMembershipResource_dnCaseNormalization(t *testing.T) {
 				ExpectNonEmptyPlan: true,
 			},
 			// Apply the lowercase DN again: `members` reflects it verbatim,
-			// and `members_normalized` (actual AD membership) is unchanged.
+			// and `member_details` (actual AD membership) is unchanged.
 			{
 				Config: testAccGroupMembershipResourceConfig_lowercaseDN(n),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "1"),
-					resource.TestCheckResourceAttr("ad_group_membership.test", "members_normalized.#", "1"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "member_details.#", "1"),
 					func(s *terraform.State) error {
 						return resource.TestCheckTypeSetElemAttr(
 							"ad_group_membership.test", "members.*", strings.ToLower(testUser1DN),
@@ -404,7 +404,7 @@ func TestAccGroupMembershipResource_membersVerbatimNoInvalidPlan(t *testing.T) {
 				Config: testAccGroupMembershipResourceConfig_verbatimTransitionDN(n),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "2"),
-					resource.TestCheckResourceAttr("ad_group_membership.test", "members_normalized.#", "2"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "member_details.#", "2"),
 				),
 			},
 			// Reconfigure using GUIDs for the existing two members plus a
@@ -418,7 +418,7 @@ func TestAccGroupMembershipResource_membersVerbatimNoInvalidPlan(t *testing.T) {
 				Config: testAccGroupMembershipResourceConfig_verbatimTransitionGUID(n),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "3"),
-					resource.TestCheckResourceAttr("ad_group_membership.test", "members_normalized.#", "3"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "member_details.#", "3"),
 					// `members` must equal the configured GUIDs verbatim.
 					resource.TestCheckTypeSetElemAttrPair(
 						"ad_group_membership.test", "members.*",
@@ -432,18 +432,18 @@ func TestAccGroupMembershipResource_membersVerbatimNoInvalidPlan(t *testing.T) {
 						"ad_group_membership.test", "members.*",
 						"ad_user.testuser3", "id",
 					),
-					// `members_normalized` must equal the resolved DNs for
+					// `member_details` must contain the resolved DNs for
 					// all three members (old + new).
 					resource.TestCheckTypeSetElemAttrPair(
-						"ad_group_membership.test", "members_normalized.*",
+						"ad_group_membership.test", "member_details.*.dn",
 						"ad_user.testuser1", "dn",
 					),
 					resource.TestCheckTypeSetElemAttrPair(
-						"ad_group_membership.test", "members_normalized.*",
+						"ad_group_membership.test", "member_details.*.dn",
 						"ad_user.testuser2", "dn",
 					),
 					resource.TestCheckTypeSetElemAttrPair(
-						"ad_group_membership.test", "members_normalized.*",
+						"ad_group_membership.test", "member_details.*.dn",
 						"ad_user.testuser3", "dn",
 					),
 				),
@@ -488,7 +488,7 @@ resource "ad_group_membership" "test" {
 }
 
 // Members declared with surrounding whitespace must apply cleanly, populate
-// members_normalized with the trimmed canonical DNs, and produce zero diff on
+// member_details with the trimmed canonical DNs, and produce zero diff on
 // re-plan.
 func TestAccGroupMembershipResource_WhitespaceTolerantMembers(t *testing.T) {
 	n := newGMTestNames(0)
@@ -501,7 +501,7 @@ func TestAccGroupMembershipResource_WhitespaceTolerantMembers(t *testing.T) {
 				Config: testAccGroupMembershipResourceConfig_whitespacePadded(n),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "2"),
-					resource.TestCheckResourceAttr("ad_group_membership.test", "members_normalized.#", "2"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "member_details.#", "2"),
 				),
 			},
 			{
@@ -592,7 +592,7 @@ func TestAccGroupMembershipResource_unknownMembers(t *testing.T) {
 					// The filter group should have 2 member groups
 					resource.TestCheckResourceAttr("ad_group_membership.filter", "members.#", "2"),
 					resource.TestCheckResourceAttrSet("ad_group_membership.filter", "group_id"),
-					resource.TestCheckResourceAttrSet("ad_group_membership.filter", "members_normalized.#"),
+					resource.TestCheckResourceAttrSet("ad_group_membership.filter", "member_details.#"),
 				),
 			},
 		},
@@ -1422,7 +1422,7 @@ func driftGroupMembership(ctx context.Context, groupGUID string, toAdd, toRemove
 	mm := ldapclient.NewGroupMembershipManager(ctx, client, config.BaseDN, cacheManager)
 
 	if len(toAdd) > 0 {
-		if err := mm.AddGroupMembers(groupGUID, toAdd); err != nil {
+		if err := mm.AddGroupMembers(groupGUID, toAdd, nil); err != nil {
 			return fmt.Errorf("failed to add drift members: %w", err)
 		}
 	}
@@ -1442,7 +1442,7 @@ func checkMembershipContains(membershipRes string, userResources ...string) reso
 		if !ok {
 			return fmt.Errorf("resource not found: %s", membershipRes)
 		}
-		normalized := collectNormalizedMembers(membership.Primary.Attributes)
+		normalized := collectMemberDetailDNs(membership.Primary.Attributes)
 		for _, u := range userResources {
 			rs, ok := s.RootModule().Resources[u]
 			if !ok {
@@ -1465,7 +1465,7 @@ func checkMembershipExcludes(membershipRes string, userResources ...string) reso
 		if !ok {
 			return fmt.Errorf("resource not found: %s", membershipRes)
 		}
-		normalized := collectNormalizedMembers(membership.Primary.Attributes)
+		normalized := collectMemberDetailDNs(membership.Primary.Attributes)
 		for _, u := range userResources {
 			rs, ok := s.RootModule().Resources[u]
 			if !ok {
@@ -1480,12 +1480,12 @@ func checkMembershipExcludes(membershipRes string, userResources ...string) reso
 	}
 }
 
-// collectNormalizedMembers returns the members_normalized.* attribute values
+// collectMemberDetailDNs returns the member_details.*.dn attribute values
 // from a flat state-attribute map, lowercased for case-insensitive matching.
-func collectNormalizedMembers(attrs map[string]string) []string {
+func collectMemberDetailDNs(attrs map[string]string) []string {
 	var out []string
 	for k, v := range attrs {
-		if strings.HasPrefix(k, "members_normalized.") && k != "members_normalized.#" {
+		if strings.HasPrefix(k, "member_details.") && strings.HasSuffix(k, ".dn") {
 			out = append(out, strings.ToLower(v))
 		}
 	}

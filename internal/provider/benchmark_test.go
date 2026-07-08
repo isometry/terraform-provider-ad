@@ -91,7 +91,7 @@ func BenchmarkGroupMembership(b *testing.B) {
 	// Add members to first test group
 	mainGroupID := testGroups[0]
 	membershipManager := ldapclient.NewGroupMembershipManager(ctx, helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
-	err = membershipManager.SetGroupMembers(mainGroupID, memberDNs)
+	err = membershipManager.SetGroupMembers(mainGroupID, memberDNs, nil)
 	if err != nil {
 		b.Fatalf("Failed to set members: %v", err)
 	}
@@ -113,7 +113,7 @@ func BenchmarkGroupMembership(b *testing.B) {
 
 		for i := 0; b.Loop(); i++ {
 			// Add member
-			err := membershipManager.AddGroupMembers(targetGroupID, []string{memberDN})
+			err := membershipManager.AddGroupMembers(targetGroupID, []string{memberDN}, nil)
 			if err != nil {
 				b.Logf("AddMember may have failed (expected for duplicate adds): %v", err)
 			}
@@ -272,7 +272,7 @@ func BenchmarkNormalizer(b *testing.B) {
 	// Test normalization of different identifier types
 	b.Run("NormalizeGUID", func(b *testing.B) {
 		for b.Loop() {
-			_, err := normalizer.NormalizeToDN(group.ObjectGUID)
+			_, err := normalizer.Resolve(group.ObjectGUID)
 			if err != nil {
 				b.Fatalf("GUID normalization failed: %v", err)
 			}
@@ -281,7 +281,7 @@ func BenchmarkNormalizer(b *testing.B) {
 
 	b.Run("NormalizeDN", func(b *testing.B) {
 		for b.Loop() {
-			_, err := normalizer.NormalizeToDN(group.DistinguishedName)
+			_, err := normalizer.Resolve(group.DistinguishedName)
 			if err != nil {
 				b.Fatalf("DN normalization failed: %v", err)
 			}
@@ -291,7 +291,7 @@ func BenchmarkNormalizer(b *testing.B) {
 	b.Run("NormalizeSAM", func(b *testing.B) {
 		samName := helper.config.Domain + "\\" + group.SAMAccountName
 		for b.Loop() {
-			_, err := normalizer.NormalizeToDN(samName)
+			_, err := normalizer.Resolve(samName)
 			if err != nil {
 				b.Fatalf("SAM normalization failed: %v", err)
 			}

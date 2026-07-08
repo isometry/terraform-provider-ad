@@ -83,9 +83,21 @@ func NormalizeDNCaseBatch(dns []string) ([]string, error) {
 }
 
 // ValidateDNSyntax validates that a string is a properly formatted Distinguished Name.
+//
+// As a special case, it also accepts AD's "<GUID=...>" alternative-DN form
+// (see GUIDToAltDN): rather than parsing it as an RFC 4514 DN (which it is
+// not), the enclosed GUID's shape is validated directly.
 func ValidateDNSyntax(dn string) error {
 	if dn == "" {
 		return fmt.Errorf("DN cannot be empty")
+	}
+
+	if IsAltGUIDDN(dn) {
+		matches := altGUIDDNRegex.FindStringSubmatch(strings.TrimSpace(dn))
+		if len(matches) != 2 || !NewGUIDHandler().IsValidGUID(matches[1]) {
+			return fmt.Errorf("invalid GUID in alternative DN: %s", dn)
+		}
+		return nil
 	}
 
 	_, err := ldap.ParseDN(dn)

@@ -1036,7 +1036,7 @@ func (r *UserResource) ImportState(ctx context.Context, req resource.ImportState
 
 	// Normalize the import ID to a DN (supports DN, GUID, SID, UPN, SAM formats)
 	normalizer := ldapclient.NewMemberNormalizer(r.client, r.baseDN, r.cacheManager)
-	userDN, err := normalizer.NormalizeToDN(importID)
+	resolved, err := normalizer.Resolve(importID)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Resolving User Identifier",
@@ -1044,6 +1044,7 @@ func (r *UserResource) ImportState(ctx context.Context, req resource.ImportState
 		)
 		return
 	}
+	userDN := resolved.DN
 
 	tflog.Debug(ctx, "Resolved user identifier to DN", map[string]any{
 		"import_id": importID,
