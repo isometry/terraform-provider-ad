@@ -4,7 +4,7 @@ page_title: "ad_group_membership Resource - ad"
 subcategory: ""
 description: |-
   Manages the membership of an Active Directory group. This resource allows you to define the complete set of members for a group, with automatic anti-drift protection through identifier normalization.
-  Anti-Drift Protection: This resource automatically normalizes all member identifiers to distinguished names (DNs) and object GUIDs internally while preserving your original configuration. The members attribute retains exactly what you configure, while member_details shows the resolved (dn, guid) pairs used for Active Directory operations. Resolution happens once, at plan time; because an object's objectGUID never changes for its lifetime (unlike its DN, which changes on rename), that plan-time snapshot is trusted for the rest of the apply.
+  Anti-Drift Protection: This resource automatically normalizes all member identifiers to distinguished names (DNs) and object GUIDs internally while preserving your original configuration. The members attribute retains exactly what you configure, while member_details shows the resolved (dn, id) pairs used for Active Directory operations. Resolution happens once, at plan time; because an object's objectGUID never changes for its lifetime (unlike its DN, which changes on rename), that plan-time snapshot is trusted for the rest of the apply.
   Supported Identifier Formats:
   Distinguished Name (DN): CN=John Doe,OU=Users,DC=example,DC=comObject GUID: 550e8400-e29b-41d4-a716-446655440000User Principal Name (UPN): john@example.comSAM Account Name: DOMAIN\john or johnSecurity Identifier (SID): S-1-5-21-123456789-123456789-123456789-1001
 ---
@@ -13,7 +13,7 @@ description: |-
 
 Manages the membership of an Active Directory group. This resource allows you to define the complete set of members for a group, with automatic anti-drift protection through identifier normalization.
 
-**Anti-Drift Protection**: This resource automatically normalizes all member identifiers to distinguished names (DNs) and object GUIDs internally while preserving your original configuration. The `members` attribute retains exactly what you configure, while `member_details` shows the resolved `(dn, guid)` pairs used for Active Directory operations. Resolution happens once, at plan time; because an object's `objectGUID` never changes for its lifetime (unlike its DN, which changes on rename), that plan-time snapshot is trusted for the rest of the apply.
+**Anti-Drift Protection**: This resource automatically normalizes all member identifiers to distinguished names (DNs) and object GUIDs internally while preserving your original configuration. The `members` attribute retains exactly what you configure, while `member_details` shows the resolved `(dn, id)` pairs used for Active Directory operations. Resolution happens once, at plan time; because an object's `objectGUID` never changes for its lifetime (unlike its DN, which changes on rename), that plan-time snapshot is trusted for the rest of the apply.
 
 **Supported Identifier Formats**:
 - Distinguished Name (DN): `CN=John Doe,OU=Users,DC=example,DC=com`
@@ -103,7 +103,7 @@ If not specified, inherits from the provider-level `ignore_missing_members` sett
 Read-Only:
 
 - `dn` (String) The member's distinguished name.
-- `guid` (String) The member's objectGUID (canonical hyphenated form).
+- `id` (String) The member's objectGUID (canonical hyphenated form).
 
 ## Import
 

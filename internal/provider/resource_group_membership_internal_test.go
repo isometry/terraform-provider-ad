@@ -135,7 +135,7 @@ func extractSortedMembers(t *testing.T, ctx context.Context, s types.Set) []stri
 	return out
 }
 
-// newMemberDetailSet builds a types.Set of `member_details` {dn, guid}
+// newMemberDetailSet builds a types.Set of `member_details` {dn, id}
 // objects from parallel dn/guid slices (same length, same order), failing
 // the test on error.
 func newMemberDetailSet(t *testing.T, ctx context.Context, dns, guids []string) types.Set {
@@ -146,8 +146,8 @@ func newMemberDetailSet(t *testing.T, ctx context.Context, dns, guids []string) 
 	details := make([]MemberDetailModel, 0, len(dns))
 	for i, dn := range dns {
 		details = append(details, MemberDetailModel{
-			DN:   types.StringValue(dn),
-			GUID: types.StringValue(guids[i]),
+			DN: types.StringValue(dn),
+			ID: types.StringValue(guids[i]),
 		})
 	}
 	s, diags := types.SetValueFrom(ctx, memberDetailObjectType, details)
@@ -157,7 +157,7 @@ func newMemberDetailSet(t *testing.T, ctx context.Context, dns, guids []string) 
 	return s
 }
 
-// extractMemberDetails extracts the {dn, guid} elements of a `member_details`
+// extractMemberDetails extracts the {dn, id} elements of a `member_details`
 // types.Set into a dn->guid map, for order-independent comparison. Null/
 // unknown sets extract to nil.
 func extractMemberDetails(t *testing.T, ctx context.Context, s types.Set) map[string]string {
@@ -172,7 +172,7 @@ func extractMemberDetails(t *testing.T, ctx context.Context, s types.Set) map[st
 	}
 	out := make(map[string]string, len(details))
 	for _, d := range details {
-		out[d.DN.ValueString()] = d.GUID.ValueString()
+		out[d.DN.ValueString()] = d.ID.ValueString()
 	}
 	return out
 }
@@ -486,7 +486,7 @@ func TestGroupMembershipResource_ModifyPlanUnknownMembersDetail(t *testing.T) {
 }
 
 // TestGroupMembershipResource_ModifyPlanResolvesEveryIdentifierFormat proves
-// that ModifyPlan populates `member_details` with the correct (dn, guid)
+// that ModifyPlan populates `member_details` with the correct (dn, id)
 // pair for every supported `members` identifier format — DN, GUID, SID,
 // UPN, and SAM — each resolved via a cache-seeded entry (no live LDAP
 // call), following the same direct-ModifyPlan-invocation and cache-seeding
