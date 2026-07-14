@@ -86,7 +86,7 @@ Connection pooling handles concurrent access automatically.
 
 	// Manage group membership
 	membershipManager := ldap.NewGroupMembershipManager(ctx, client, "DC=example,DC=com", nil)
-	err = membershipManager.SetGroupMembers(ctx, groupGUID, memberDNs)
+	err = membershipManager.SetGroupMembers(groupGUID, memberDNs, nil)
 	if err != nil {
 		return err
 	}

@@ -722,6 +722,116 @@ func TestGUIDHandler_ParseGUIDFromDN(t *testing.T) {
 	}
 }
 
+func TestGUIDToAltDN(t *testing.T) {
+	tests := []struct {
+		name     string
+		guid     string
+		expected string
+		wantErr  bool
+	}{
+		{
+			name:     "hyphenated GUID",
+			guid:     "12345678-1234-1234-1234-123456789012",
+			expected: "<GUID=12345678-1234-1234-1234-123456789012>",
+		},
+		{
+			name:     "compact GUID is normalized to hyphenated form",
+			guid:     "12345678123412341234123456789012",
+			expected: "<GUID=12345678-1234-1234-1234-123456789012>",
+		},
+		{
+			name:     "mixed-case GUID is normalized to lowercase",
+			guid:     "ABCDEF01-1234-1234-1234-123456789012",
+			expected: "<GUID=abcdef01-1234-1234-1234-123456789012>",
+		},
+		{
+			name:    "malformed GUID rejected",
+			guid:    "not-a-guid",
+			wantErr: true,
+		},
+		{
+			name:    "empty GUID rejected",
+			guid:    "",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := GUIDToAltDN(tt.guid)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Empty(t, result)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestIsAltGUIDDN(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name:     "well-formed alternative DN",
+			input:    "<GUID=12345678-1234-1234-1234-123456789012>",
+			expected: true,
+		},
+		{
+			name:     "malformed content still recognised as the shape",
+			input:    "<GUID=not-a-guid>",
+			expected: true,
+		},
+		{
+			name:     "lowercase guid keyword",
+			input:    "<guid=12345678-1234-1234-1234-123456789012>",
+			expected: true,
+		},
+		{
+			name:     "padded with whitespace",
+			input:    "  <GUID=12345678-1234-1234-1234-123456789012>  ",
+			expected: true,
+		},
+		{
+			name:     "plain DN",
+			input:    "CN=User,OU=Users,DC=example,DC=com",
+			expected: false,
+		},
+		{
+			name:     "missing closing bracket",
+			input:    "<GUID=12345678-1234-1234-1234-123456789012",
+			expected: false,
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, IsAltGUIDDN(tt.input))
+		})
+	}
+}
+
+func TestGUIDToAltDN_IsAltGUIDDN_RoundTrip(t *testing.T) {
+	guid := "12345678-1234-1234-1234-123456789012"
+
+	altDN, err := GUIDToAltDN(guid)
+	require.NoError(t, err)
+
+	assert.True(t, IsAltGUIDDN(altDN))
+	assert.False(t, IsAltGUIDDN(guid), "the bare GUID itself is not the alternative-DN shape")
+}
+
 // Benchmark tests for performance validation.
 func BenchmarkGUIDHandler_StringToGUIDBytes(b *testing.B) {
 	handler := NewGUIDHandler()
