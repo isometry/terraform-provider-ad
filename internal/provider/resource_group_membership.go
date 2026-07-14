@@ -41,19 +41,20 @@ type GroupMembershipResourceModel struct {
 	ID                   types.String `tfsdk:"id"`                     // Group objectGUID (same as group_id)
 	GroupID              types.String `tfsdk:"group_id"`               // Group objectGUID (required)
 	Members              types.Set    `tfsdk:"members"`                // Set of member identifiers (required, user-provided)
-	MemberDetails        types.Set    `tfsdk:"member_details"`         // Set of MemberDetailModel: resolved (dn, guid) pairs (computed)
+	MemberDetails        types.Set    `tfsdk:"member_details"`         // Set of MemberDetailModel: resolved (dn, id) pairs (computed)
 	IgnoreMissingMembers types.Bool   `tfsdk:"ignore_missing_members"` // Per-resource override for ignore_missing_members (optional)
 }
 
 // MemberDetailModel describes a single resolved member — one element of
-// MemberDetails. DN and GUID are correlated together (unlike two independent
-// flat Sets, which would lose that correlation): both are derived from the
-// same identifier, in the same ModifyPlan resolution pass, from whatever
-// format was used in `members`. GUID is the empty string when unavailable
-// (mirrors ldapclient.ResolvedIdentifier; never an error on its own).
+// MemberDetails. DN and ID (the member's objectGUID) are correlated together
+// (unlike two independent flat Sets, which would lose that correlation): both
+// are derived from the same identifier, in the same ModifyPlan resolution
+// pass, from whatever format was used in `members`. ID is the empty string
+// when unavailable (mirrors ldapclient.ResolvedIdentifier; never an error on
+// its own).
 type MemberDetailModel struct {
-	DN   types.String `tfsdk:"dn"`
-	GUID types.String `tfsdk:"guid"`
+	DN types.String `tfsdk:"dn"`
+	ID types.String `tfsdk:"id"`
 }
 
 // memberDetailAttrTypes/memberDetailObjectType describe the element type of
@@ -62,8 +63,8 @@ type MemberDetailModel struct {
 // schema.Schema definition itself (ModifyPlan, Create/Update, Read,
 // ImportState).
 var memberDetailAttrTypes = map[string]attr.Type{
-	"dn":   types.StringType,
-	"guid": types.StringType,
+	"dn": types.StringType,
+	"id": types.StringType,
 }
 
 var memberDetailObjectType = types.ObjectType{AttrTypes: memberDetailAttrTypes}
@@ -76,7 +77,7 @@ func (r *GroupMembershipResource) Schema(ctx context.Context, req resource.Schem
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages the membership of an Active Directory group. This resource allows you to define the complete set of members for a group, with automatic anti-drift protection through identifier normalization.\n\n" +
 			"**Anti-Drift Protection**: This resource automatically normalizes all member identifiers to distinguished names (DNs) and object GUIDs internally while preserving your original configuration. " +
-			"The `members` attribute retains exactly what you configure, while `member_details` shows the resolved `(dn, guid)` pairs used for Active Directory operations. " +
+			"The `members` attribute retains exactly what you configure, while `member_details` shows the resolved `(dn, id)` pairs used for Active Directory operations. " +
 			"Resolution happens once, at plan time; because an object's `objectGUID` never changes for its lifetime (unlike its DN, which changes on rename), that plan-time snapshot is trusted for the rest of the apply.\n\n" +
 			"**Supported Identifier Formats**:\n" +
 			"- Distinguished Name (DN): `CN=John Doe,OU=Users,DC=example,DC=com`\n" +
@@ -117,8 +118,8 @@ func (r *GroupMembershipResource) Schema(ctx context.Context, req resource.Schem
 				Computed: true,
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
-						"dn":   schema.StringAttribute{Computed: true, MarkdownDescription: "The member's distinguished name."},
-						"guid": schema.StringAttribute{Computed: true, MarkdownDescription: "The member's objectGUID (canonical hyphenated form)."},
+						"dn": schema.StringAttribute{Computed: true, MarkdownDescription: "The member's distinguished name."},
+						"id": schema.StringAttribute{Computed: true, MarkdownDescription: "The member's objectGUID (canonical hyphenated form)."},
 					},
 				},
 			},
@@ -260,15 +261,15 @@ func (r *GroupMembershipResource) ModifyPlan(ctx context.Context, req resource.M
 		return
 	}
 
-	// Build the resolved (dn, guid) pairs in the same order as input (only
+	// Build the resolved (dn, id) pairs in the same order as input (only
 	// for successfully resolved members). Both DN and GUID come from the
 	// SAME ResolvedIdentifier, so they are correlated by construction.
 	memberDetails := make([]MemberDetailModel, 0, len(resolvedMap))
 	for _, member := range members {
 		if resolved, ok := resolvedMap[member]; ok {
 			memberDetails = append(memberDetails, MemberDetailModel{
-				DN:   types.StringValue(resolved.DN),
-				GUID: types.StringValue(resolved.GUID),
+				DN: types.StringValue(resolved.DN),
+				ID: types.StringValue(resolved.GUID),
 			})
 		}
 		// Skip members that failed normalization (already reported above)
@@ -375,13 +376,13 @@ func (r *GroupMembershipResource) resolveMembers(
 }
 
 // extractMemberDetailsForWrite unpacks data.MemberDetails — the plan-time-
-// resolved (dn, guid) pairs computed once by ModifyPlan — into the DN list
+// resolved (dn, id) pairs computed once by ModifyPlan — into the DN list
 // and DN->GUID map consumed by SetGroupMembers/AddGroupMembers to prefer
 // AD's rename-immune "<GUID=...>" alternative-DN form when writing newly-
 // added members.
 //
 // This is the common-case path for Create/Update and performs ZERO LDAP
-// calls: the (dn, guid) pairing was already resolved and correlated at the
+// calls: the (dn, id) pairing was already resolved and correlated at the
 // schema level by ModifyPlan, so this is pure in-memory unpacking. It is
 // safe to trust member_details indefinitely through the apply because an
 // AD object's objectGUID never changes for its lifetime, unlike its DN
@@ -411,7 +412,7 @@ func (r *GroupMembershipResource) extractMemberDetailsForWrite(
 	for _, detail := range details {
 		dn := detail.DN.ValueString()
 		memberDNs = append(memberDNs, dn)
-		if guid := detail.GUID.ValueString(); guid != "" {
+		if guid := detail.ID.ValueString(); guid != "" {
 			memberGUIDs[dn] = guid
 		}
 	}
@@ -500,7 +501,7 @@ func (r *GroupMembershipResource) resolveMembersForWriteFallback(
 // resolution before returning: Terraform requires every computed attribute
 // to be fully known once Create/Update completes, so an Unknown/Null
 // member_details can never be left as-is in the saved state — it must be
-// replaced with the same (dn, guid) pairs that were just resolved for the
+// replaced with the same (dn, id) pairs that were just resolved for the
 // write, keeping the persisted state internally consistent with what was
 // actually applied to AD.
 func (r *GroupMembershipResource) resolveMemberDetailsForWrite(
@@ -522,8 +523,8 @@ func (r *GroupMembershipResource) resolveMemberDetailsForWrite(
 	details := make([]MemberDetailModel, 0, len(memberDNs))
 	for _, dn := range memberDNs {
 		details = append(details, MemberDetailModel{
-			DN:   types.StringValue(dn),
-			GUID: types.StringValue(memberGUIDs[dn]), // "" when absent, matching the empty-when-unavailable contract
+			DN: types.StringValue(dn),
+			ID: types.StringValue(memberGUIDs[dn]), // "" when absent, matching the empty-when-unavailable contract
 		})
 	}
 	memberDetailsSet, setDiags := types.SetValueFrom(ctx, memberDetailObjectType, details)
@@ -574,7 +575,7 @@ func (r *GroupMembershipResource) Create(ctx context.Context, req resource.Creat
 		return
 	}
 
-	// Use the plan-time-resolved (dn, guid) pairs captured in
+	// Use the plan-time-resolved (dn, id) pairs captured in
 	// data.MemberDetails by ModifyPlan — the common case, requiring ZERO
 	// LDAP calls here. Falls back to fresh resolution only if
 	// member_details couldn't be resolved at plan time (see
@@ -704,7 +705,7 @@ func (r *GroupMembershipResource) Update(ctx context.Context, req resource.Updat
 		return
 	}
 
-	// Use the plan-time-resolved (dn, guid) pairs captured in
+	// Use the plan-time-resolved (dn, id) pairs captured in
 	// data.MemberDetails by ModifyPlan — the common case, requiring ZERO
 	// LDAP calls here. Falls back to fresh resolution only if
 	// member_details couldn't be resolved at plan time (see
@@ -916,7 +917,7 @@ func (r *GroupMembershipResource) ImportState(ctx context.Context, req resource.
 
 // resolveCurrentMemberDetails resolves each of the given (already-canonical)
 // member DNs — as read live from AD's own `member` attribute — to its
-// (dn, guid) pair, for use outside of ModifyPlan (Read/refreshMembershipState
+// (dn, id) pair, for use outside of ModifyPlan (Read/refreshMembershipState
 // and ImportState, which start from AD's actual current membership rather
 // than from the user's verbatim `members` configuration).
 //
@@ -927,10 +928,10 @@ func (r *GroupMembershipResource) ImportState(ctx context.Context, req resource.
 // this same provider process already cached, which is not guaranteed for
 // every real `terraform plan`/`apply` invocation (each is normally a fresh
 // process with an empty cache). Resolving fully here ensures Read produces
-// the exact same (dn, guid) pairs ModifyPlan would independently compute for
+// the exact same (dn, id) pairs ModifyPlan would independently compute for
 // the same DN, so a steady-state refresh (no actual AD membership change)
 // converges to zero plan diff instead of a spurious one from a mismatched
-// `guid` sub-field.
+// `id` sub-field.
 //
 // A resolution failure for an individual member (e.g. it was deleted
 // between the group-members read and this call) is non-fatal: it is logged
@@ -957,7 +958,7 @@ func (r *GroupMembershipResource) resolveCurrentMemberDetails(ctx context.Contex
 	normalizer := ldapclient.NewMemberNormalizer(r.client, baseDN, r.cacheManager)
 	resolvedMap, failures := normalizer.ResolveBatch(memberDNs)
 	for dn, resolveErr := range failures {
-		tflog.Warn(ctx, "Could not resolve current member's GUID; member_details.guid will be empty for this member", map[string]any{
+		tflog.Warn(ctx, "Could not resolve current member's GUID; member_details.id will be empty for this member", map[string]any{
 			"dn":    dn,
 			"error": resolveErr.Error(),
 		})
@@ -970,8 +971,8 @@ func (r *GroupMembershipResource) resolveCurrentMemberDetails(ctx context.Contex
 			guid = resolved.GUID
 		}
 		details = append(details, MemberDetailModel{
-			DN:   types.StringValue(dn),
-			GUID: types.StringValue(guid),
+			DN: types.StringValue(dn),
+			ID: types.StringValue(guid),
 		})
 	}
 

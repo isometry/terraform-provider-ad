@@ -285,7 +285,7 @@ func (c *recordingMembershipClient) nonGroupLookupSearches() []string {
 // string.
 //
 // Each subtest hand-constructs a model where MemberDetails already holds a
-// resolved (dn, guid) pair whose dn deliberately looks "stale", as if
+// resolved (dn, id) pair whose dn deliberately looks "stale", as if
 // captured before some unrelated rename — and deliberately does NOT seed
 // the cache manager for that identifier. recordingMembershipClient fails
 // loudly on any Search beyond the legitimate group-by-GUID lookup, so if
