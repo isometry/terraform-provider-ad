@@ -252,6 +252,16 @@ func TestValidateDNSyntax(t *testing.T) {
 			input:   "cn=john,doe,ou=users,dc=example,dc=com",
 			wantErr: true,
 		},
+		{
+			name:    "well-formed alternative GUID DN",
+			input:   "<GUID=12345678-1234-1234-1234-123456789012>",
+			wantErr: false,
+		},
+		{
+			name:    "malformed alternative GUID DN",
+			input:   "<GUID=not-a-guid>",
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -264,6 +274,37 @@ func TestValidateDNSyntax(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestValidateDNSyntax_AltGUIDDN covers the "<GUID=...>" alternative-DN form
+// (see GUIDToAltDN) in more detail than the table-driven cases above:
+// well-formed values are accepted, malformed ones are rejected with a
+// specific error, and ordinary DN validation is unaffected.
+func TestValidateDNSyntax_AltGUIDDN(t *testing.T) {
+	t.Run("accepts compact GUID inside the delimiters", func(t *testing.T) {
+		err := ValidateDNSyntax("<GUID=12345678123412341234123456789012>")
+		assert.NoError(t, err)
+	})
+
+	t.Run("accepts uppercase GUID keyword", func(t *testing.T) {
+		err := ValidateDNSyntax("<guid=12345678-1234-1234-1234-123456789012>")
+		assert.NoError(t, err)
+	})
+
+	t.Run("rejects empty GUID content", func(t *testing.T) {
+		err := ValidateDNSyntax("<GUID=>")
+		assert.Error(t, err)
+	})
+
+	t.Run("rejects garbage GUID content", func(t *testing.T) {
+		err := ValidateDNSyntax("<GUID=zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz>")
+		assert.Error(t, err)
+	})
+
+	t.Run("plain DN validation is unaffected", func(t *testing.T) {
+		assert.NoError(t, ValidateDNSyntax("cn=john,ou=users,dc=example,dc=com"))
+		assert.Error(t, ValidateDNSyntax("not-a-dn-and-not-alt-guid"))
+	})
 }
 
 func TestExtractRDNValue(t *testing.T) {

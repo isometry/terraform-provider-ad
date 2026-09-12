@@ -1151,8 +1151,8 @@ func (um *UserManager) entryToUser(entry *ldap.Entry) (*User, error) {
 			if len(sidParts) >= 4 {
 				domainSID := strings.Join(sidParts[:len(sidParts)-1], "-")
 				primaryGroupSID := fmt.Sprintf("%s-%d", domainSID, pgid)
-				if dn, err := um.normalizer.ResolveSIDToDN(primaryGroupSID); err == nil {
-					user.PrimaryGroup = dn
+				if resolved, err := um.normalizer.ResolveSID(primaryGroupSID); err == nil {
+					user.PrimaryGroup = resolved.DN
 				} else {
 					tflog.SubsystemWarn(um.ctx, "ldap", "Could not resolve primary group SID to DN, using SID", map[string]any{
 						"sid":   primaryGroupSID,
@@ -1349,11 +1349,11 @@ func (um *UserManager) buildLDAPFilter(filter *UserSearchFilter) (string, error)
 	}
 	if filter.Manager != "" {
 		// Normalize manager identifier to DN
-		managerDN, err := um.normalizer.NormalizeToDN(filter.Manager)
+		resolvedManager, err := um.normalizer.Resolve(filter.Manager)
 		if err != nil {
 			return "", fmt.Errorf("failed to normalize manager identifier: %w", err)
 		}
-		filterParts = append(filterParts, fmt.Sprintf("(manager=%s)", ldap.EscapeFilter(managerDN)))
+		filterParts = append(filterParts, fmt.Sprintf("(manager=%s)", ldap.EscapeFilter(resolvedManager.DN)))
 	}
 	if filter.Company != "" {
 		companyFilter := fmt.Sprintf("(company=%s)", ldap.EscapeFilter(filter.Company))

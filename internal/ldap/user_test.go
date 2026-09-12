@@ -137,7 +137,7 @@ var testBinaryGUID = []byte{0x78, 0x56, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x12
 // mockPrimaryGroupSIDResolution sets up a mock expectation for the SID-to-DN resolution
 // that entryToUser performs when processing the primaryGroupID attribute. Tests that use
 // createMockUserEntry (which includes primaryGroupID and objectSid) must call this to
-// avoid unexpected Search calls from ResolveSIDToDN.
+// avoid unexpected Search calls from ResolveSID.
 //
 // The matcher excludes filters containing "objectClass" to avoid matching the primary
 // user/group search expectations that also contain objectSid.
@@ -1002,7 +1002,7 @@ func TestUserManager_entryToUser_ComprehensiveMapping(t *testing.T) {
 	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
 
 	// Mock the SID resolution search for the primary group.
-	// ResolveSIDToDN searches for objectSid matching the primary group SID.
+	// ResolveSID searches for objectSid matching the primary group SID.
 	client.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 		return req.BaseDN == "DC=example,DC=com" &&
 			req.Scope == ScopeWholeSubtree &&

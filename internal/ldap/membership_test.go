@@ -433,7 +433,7 @@ func TestAddGroupMembers(t *testing.T) {
 		user2DN, // DN format
 	}
 
-	err := gmm.AddGroupMembers(groupGUID, membersToAdd)
+	err := gmm.AddGroupMembers(groupGUID, membersToAdd, nil)
 
 	if err != nil {
 		t.Fatalf("AddGroupMembers failed: %v", err)
@@ -471,7 +471,7 @@ func TestAddGroupMembersWithConflicts(t *testing.T) {
 	// Try to add both users (user1 should conflict, user2 should succeed)
 	membersToAdd := []string{user1DN, user2DN}
 
-	err := gmm.AddGroupMembers(groupGUID, membersToAdd)
+	err := gmm.AddGroupMembers(groupGUID, membersToAdd, nil)
 
 	// Should succeed despite conflict (graceful handling)
 	if err != nil {
@@ -480,6 +480,164 @@ func TestAddGroupMembersWithConflicts(t *testing.T) {
 
 	// Verify both members are present
 	expectedMembers := []string{user1DN, user2DN}
+	sort.Strings(group.Members)
+	sort.Strings(expectedMembers)
+
+	if !reflect.DeepEqual(group.Members, expectedMembers) {
+		t.Errorf("Expected members %v, got %v", expectedMembers, group.Members)
+	}
+}
+
+// TestAddGroupMembers_WithMemberGUIDs_UsesAltDNForm verifies that, when a
+// GUID is supplied for a member being added, the value actually written to
+// AD's member attribute is the rename-immune "<GUID=...>" alternative-DN
+// form (see GUIDToAltDN) rather than the literal DN.
+func TestAddGroupMembers_WithMemberGUIDs_UsesAltDNForm(t *testing.T) {
+	gmm, client := createTestMembershipManager(t)
+
+	groupGUID := "12345678-1234-1234-1234-123456789012"
+	groupDN := "CN=TestGroup,OU=Groups,DC=example,DC=com"
+	client.AddMockGroup(groupGUID, groupDN, "TestGroup", "testgroup")
+
+	user1DN := "CN=User1,OU=Users,DC=example,DC=com"
+	user1GUID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	user2DN := "CN=User2,OU=Users,DC=example,DC=com"
+	user2GUID := "11111111-2222-3333-4444-555555555555"
+
+	memberGUIDs := map[string]string{
+		user1DN: user1GUID,
+		user2DN: user2GUID,
+	}
+
+	err := gmm.AddGroupMembers(groupGUID, []string{user1DN, user2DN}, memberGUIDs)
+	if err != nil {
+		t.Fatalf("AddGroupMembers failed: %v", err)
+	}
+
+	expectedUser1AltDN, err := GUIDToAltDN(user1GUID)
+	if err != nil {
+		t.Fatalf("GUIDToAltDN failed: %v", err)
+	}
+	expectedUser2AltDN, err := GUIDToAltDN(user2GUID)
+	if err != nil {
+		t.Fatalf("GUIDToAltDN failed: %v", err)
+	}
+
+	group := client.groups[groupGUID]
+	expectedMembers := []string{expectedUser1AltDN, expectedUser2AltDN}
+	sort.Strings(group.Members)
+	sort.Strings(expectedMembers)
+
+	if !reflect.DeepEqual(group.Members, expectedMembers) {
+		t.Errorf("Expected members written as alt-GUID DNs %v, got %v", expectedMembers, group.Members)
+	}
+
+	// Sanity: the literal DNs must NOT have been used as the write value.
+	for _, m := range group.Members {
+		if m == user1DN || m == user2DN {
+			t.Errorf("Expected alt-GUID DN form, but literal DN %q was written", m)
+		}
+	}
+}
+
+// TestAddGroupMembers_WithMemberGUIDs_FallsBackToLiteralDN verifies that
+// members with no entry in memberGUIDs (or an entirely nil map) are still
+// written using their literal DN, exactly as before this feature existed.
+func TestAddGroupMembers_WithMemberGUIDs_FallsBackToLiteralDN(t *testing.T) {
+	gmm, client := createTestMembershipManager(t)
+
+	groupGUID := "12345678-1234-1234-1234-123456789012"
+	groupDN := "CN=TestGroup,OU=Groups,DC=example,DC=com"
+	client.AddMockGroup(groupGUID, groupDN, "TestGroup", "testgroup")
+
+	user1DN := "CN=User1,OU=Users,DC=example,DC=com"
+	user1GUID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	user2DN := "CN=User2,OU=Users,DC=example,DC=com" // no GUID known for this one
+
+	memberGUIDs := map[string]string{
+		user1DN: user1GUID,
+	}
+
+	err := gmm.AddGroupMembers(groupGUID, []string{user1DN, user2DN}, memberGUIDs)
+	if err != nil {
+		t.Fatalf("AddGroupMembers failed: %v", err)
+	}
+
+	expectedUser1AltDN, err := GUIDToAltDN(user1GUID)
+	if err != nil {
+		t.Fatalf("GUIDToAltDN failed: %v", err)
+	}
+
+	group := client.groups[groupGUID]
+	expectedMembers := []string{expectedUser1AltDN, user2DN}
+	sort.Strings(group.Members)
+	sort.Strings(expectedMembers)
+
+	if !reflect.DeepEqual(group.Members, expectedMembers) {
+		t.Errorf("Expected mixed alt-GUID/literal-DN members %v, got %v", expectedMembers, group.Members)
+	}
+}
+
+// TestAddGroupMembers_NilMemberGUIDs_UsesLiteralDN is a regression guard: a
+// nil memberGUIDs map must preserve the pre-existing literal-DN write
+// behavior exactly (this is also covered implicitly by TestAddGroupMembers,
+// but is asserted explicitly here for clarity).
+func TestAddGroupMembers_NilMemberGUIDs_UsesLiteralDN(t *testing.T) {
+	gmm, client := createTestMembershipManager(t)
+
+	groupGUID := "12345678-1234-1234-1234-123456789012"
+	groupDN := "CN=TestGroup,OU=Groups,DC=example,DC=com"
+	client.AddMockGroup(groupGUID, groupDN, "TestGroup", "testgroup")
+
+	userDN := "CN=User1,OU=Users,DC=example,DC=com"
+
+	if err := gmm.AddGroupMembers(groupGUID, []string{userDN}, nil); err != nil {
+		t.Fatalf("AddGroupMembers failed: %v", err)
+	}
+
+	group := client.groups[groupGUID]
+	if !reflect.DeepEqual(group.Members, []string{userDN}) {
+		t.Errorf("Expected literal DN %q, got %v", userDN, group.Members)
+	}
+}
+
+// TestAddGroupMembers_WithMemberGUIDs_ConflictFallsBackIndividually verifies
+// that the GUID substitution is also applied on the addMembersIndividually
+// conflict-recovery path (triggered when a batch add hits an "already
+// exists" conflict).
+func TestAddGroupMembers_WithMemberGUIDs_ConflictFallsBackIndividually(t *testing.T) {
+	gmm, client := createTestMembershipManager(t)
+
+	groupGUID := "12345678-1234-1234-1234-123456789012"
+	groupDN := "CN=TestGroup,OU=Groups,DC=example,DC=com"
+	client.AddMockGroup(groupGUID, groupDN, "TestGroup", "testgroup")
+
+	user1DN := "CN=User1,OU=Users,DC=example,DC=com"
+	user2DN := "CN=User2,OU=Users,DC=example,DC=com"
+	user2GUID := "11111111-2222-3333-4444-555555555555"
+	client.AddMockObject(user1DN, "", "", "", "user1")
+	client.AddMockObject(user2DN, "", "", "", "user2")
+
+	// Pre-populate group with user1 so the batch add conflicts on it,
+	// forcing the individual-add fallback path for the whole batch.
+	group := client.groups[groupGUID]
+	group.Members = []string{user1DN}
+
+	memberGUIDs := map[string]string{
+		user2DN: user2GUID,
+	}
+
+	err := gmm.AddGroupMembers(groupGUID, []string{user1DN, user2DN}, memberGUIDs)
+	if err != nil {
+		t.Fatalf("AddGroupMembers should handle conflicts gracefully, got error: %v", err)
+	}
+
+	expectedUser2AltDN, err := GUIDToAltDN(user2GUID)
+	if err != nil {
+		t.Fatalf("GUIDToAltDN failed: %v", err)
+	}
+
+	expectedMembers := []string{user1DN, expectedUser2AltDN}
 	sort.Strings(group.Members)
 	sort.Strings(expectedMembers)
 
@@ -666,7 +824,7 @@ func TestSetGroupMembers(t *testing.T) {
 		user2DN, // DN format for user2
 	}
 
-	err := gmm.SetGroupMembers(groupGUID, desiredMembers)
+	err := gmm.SetGroupMembers(groupGUID, desiredMembers, nil)
 
 	if err != nil {
 		t.Fatalf("SetGroupMembers failed: %v", err)
@@ -703,7 +861,7 @@ func TestSetGroupMembersEmptyDesiredList(t *testing.T) {
 	// Set empty membership
 	desiredMembers := []string{}
 
-	err := gmm.SetGroupMembers(groupGUID, desiredMembers)
+	err := gmm.SetGroupMembers(groupGUID, desiredMembers, nil)
 
 	if err != nil {
 		t.Fatalf("SetGroupMembers failed: %v", err)
@@ -879,7 +1037,7 @@ func TestSimplifiedDNOnlyApproach(t *testing.T) {
 	}
 
 	// Test 3: SetGroupMembers should also reject non-DN formats
-	err = gmm.SetGroupMembers(groupGUID, nonDNMembers)
+	err = gmm.SetGroupMembers(groupGUID, nonDNMembers, nil)
 	if err == nil {
 		t.Error("Expected validation error for non-DN format in SetGroupMembers, but got none")
 	} else if !strings.Contains(err.Error(), "invalid member DN") {
@@ -907,7 +1065,7 @@ func TestBatchOperationsLargeSet(t *testing.T) {
 	client.ClearOperationLog()
 
 	// Add all users - should be done in batches
-	err := gmm.AddGroupMembers(groupGUID, largeUserSet)
+	err := gmm.AddGroupMembers(groupGUID, largeUserSet, nil)
 
 	if err != nil {
 		t.Fatalf("AddGroupMembers with large set failed: %v", err)
