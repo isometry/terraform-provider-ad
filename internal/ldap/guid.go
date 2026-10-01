@@ -295,6 +295,36 @@ func (g *GUIDHandler) ParseGUIDFromDN(dn string) (string, bool) {
 	return "", false
 }
 
+// ExtendedDNGUIDToString converts the guid_value of an Active Directory
+// extended DN ("<GUID=guid_value>", see LDAP_SERVER_EXTENDED_DN_OID in
+// MS-ADTS 3.1.1.3.4.1.5) to the canonical lower-case dashed GUID form.
+//
+// Both server output forms are accepted:
+//   - Flag 0 / control value omitted (hex form): 32 hex digits encoding the
+//     raw 16 objectGUID bytes in AD's on-the-wire mixed-endian order. These
+//     are decoded as raw bytes and converted via GUIDBytesToString - they are
+//     NOT a compact rendering of the dashed form (Data1-Data3 are byte-swapped
+//     relative to it), so NormalizeGUID must not be used for them.
+//   - Flag 1 (string form): the RFC 4122 dashed-string GUID, normalised via
+//     NormalizeGUID.
+func (g *GUIDHandler) ExtendedDNGUIDToString(value string) (string, error) {
+	value = strings.TrimSpace(value)
+
+	if hyphenatedGUIDRegex.MatchString(value) {
+		return g.NormalizeGUID(value)
+	}
+
+	if compactGUIDRegex.MatchString(value) {
+		raw, err := hex.DecodeString(value)
+		if err != nil {
+			return "", fmt.Errorf("failed to decode extended DN GUID hex %q: %w", value, err)
+		}
+		return g.GUIDBytesToString(raw)
+	}
+
+	return "", fmt.Errorf("invalid extended DN GUID value: %q", value)
+}
+
 // altGUIDDNRegex recognises the "<GUID=...>" alternative-DN shape documented
 // by MS-ADTS, without validating the content between the delimiters. Use
 // IsAltGUIDDN for the shape check and GUIDToAltDN to build/validate a real one.

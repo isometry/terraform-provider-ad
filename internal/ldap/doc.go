@@ -40,6 +40,15 @@ The package provides robust identifier handling:
   - Caching layer for performance optimization
   - Anti-drift prevention through normalization
 
+For group membership, MemberNormalizer.ResolveBatchAgainst avoids per-member
+lookups: GroupMembershipManager.GetCurrentMembers reads every current member's
+DN, objectGUID and objectSid in one GUID-filtered subtree search under the
+manager's base DN (LDAP_SERVER_EXTENDED_DN_OID; a group outside the base DN is
+reported as not found), DN,
+GUID and SID identifiers that unambiguously name a current member are resolved
+from that list in memory, and only the remainder (UPN/SAM, new or stale
+identifiers) goes through ResolveBatch, in a single call.
+
 # Active Directory Constraints
 
 The implementation respects Active Directory operational limits:
@@ -90,5 +99,13 @@ Connection pooling handles concurrent access automatically.
 	if err != nil {
 		return err
 	}
+
+	// Resolve configured member identifiers against current membership
+	current, err := membershipManager.GetCurrentMembers(groupGUID)
+	if err != nil {
+		return err
+	}
+	normalizer := ldap.NewMemberNormalizer(client, "DC=example,DC=com", cacheManager)
+	resolved, failures := normalizer.ResolveBatchAgainst(identifiers, current)
 */
 package ldap

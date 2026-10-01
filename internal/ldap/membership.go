@@ -6,6 +6,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/go-ldap/ldap/v3"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 // Active Directory membership operation limits.
@@ -61,11 +64,19 @@ func (gmm *GroupMembershipManager) SetTimeout(timeout time.Duration) {
 // SetGroupMembers sets the complete membership of a group, replacing all existing members.
 // All members must be provided as Distinguished Names (DNs).
 //
-// memberGUIDs is optional (nil is valid and preserves today's literal-DN
-// write behavior exactly) — DN → canonical GUID, for any member about to
-// be added whose GUID is known. Only consulted by the Add path; Remove
-// already operates on AD's own fresh current DNs via replaceMemberList and
-// has no staleness to guard against.
+// memberGUIDs is optional — DN → canonical GUID for any desired member whose
+// GUID is known. nil (or a map supplying no valid GUID for any desired DN)
+// preserves the legacy DN-only behavior exactly. When it supplies a GUID for
+// a desired DN, that GUID is used in two places:
+//   - Delta: the member is compared to current membership by GUID identity
+//     (see CalculateMembershipDeltaWithGUIDs), so a desired DN that is stale
+//     because the object was renamed is recognised as already present and is
+//     neither removed nor re-added.
+//   - Add: the member is written using its rename-immune "<GUID=...>"
+//     alternative-DN form.
+//
+// Removals always use AD's own current DNs, so they have no staleness to
+// guard against.
 func (gmm *GroupMembershipManager) SetGroupMembers(groupGUID string, memberDNs []string, memberGUIDs map[string]string) error {
 	if groupGUID == "" {
 		return fmt.Errorf("group GUID cannot be empty")
@@ -77,7 +88,7 @@ func (gmm *GroupMembershipManager) SetGroupMembers(groupGUID string, memberDNs [
 	}
 
 	// Calculate what changes are needed
-	delta, err := gmm.CalculateMembershipDelta(groupGUID, memberDNs)
+	delta, err := gmm.CalculateMembershipDeltaWithGUIDs(groupGUID, memberDNs, memberGUIDs)
 	if err != nil {
 		return WrapError("calculate_membership_delta", err)
 	}
@@ -233,6 +244,365 @@ func (gmm *GroupMembershipManager) CalculateMembershipDelta(groupGUID string, de
 		ToAdd:    toAdd,
 		ToRemove: toRemove,
 	}, nil
+}
+
+// CalculateMembershipDeltaWithGUIDs is CalculateMembershipDelta with
+// GUID-identity comparison for desired members whose GUID is known.
+//
+// memberGUIDs maps desired DN (exact string, as passed in desiredMemberDNs)
+// → GUID (any format accepted by NormalizeGUID; compared case-insensitively).
+// Entries that are missing, empty or malformed are ignored, i.e. that member
+// falls back to DN comparison. If no desired DN has a usable GUID (including
+// memberGUIDs == nil), this delegates to CalculateMembershipDelta and the
+// result is identical to it, with no extra LDAP traffic.
+//
+// Otherwise current membership is read in one search (a GUID-filtered
+// subtree search under the manager's base DN, size limit 1, requesting only
+// the member attribute) carrying LDAP_SERVER_EXTENDED_DN_OID, which yields
+// every current member's GUID alongside its DN, and the delta is computed as
+// follows (DN comparisons are case-insensitive, exactly as in
+// CalculateMembershipDelta):
+//   - A desired member with a GUID is present iff a current member has that
+//     GUID - regardless of whether its desired DN is stale - or a current
+//     member with no GUID in the extended DN has the same DN.
+//   - A desired member without a GUID is present iff a current member has the
+//     same DN.
+//   - A current member is kept iff it matches a desired member by the same
+//     rules; otherwise it is removed.
+//
+// ToAdd holds the desired DNs (as passed in, so memberGUIDs lookups in the
+// Add path still resolve) of members not present, with at most one DN per
+// GUID. ToRemove holds the DNs exactly as AD currently reports them for the
+// current members not kept. Both are sorted.
+//
+// Degradation: if the server rejects the (critical) extended-DN control with
+// unavailableCriticalExtension, a warning is logged and the result of
+// CalculateMembershipDelta (DN-based comparison) is returned instead; ToAdd
+// still carries the desired DNs, so the Add path still writes GUID forms.
+// Every other failure (group not found, search error, malformed member
+// value) is returned as an error.
+func (gmm *GroupMembershipManager) CalculateMembershipDeltaWithGUIDs(groupGUID string, desiredMemberDNs []string, memberGUIDs map[string]string) (*MembershipDelta, error) {
+	if groupGUID == "" {
+		return nil, fmt.Errorf("group GUID cannot be empty")
+	}
+
+	desiredDNs := gmm.extractUniqueDNs(desiredMemberDNs)
+	desiredGUIDs := usableMemberGUIDs(desiredDNs, memberGUIDs)
+	if len(desiredGUIDs) == 0 {
+		return gmm.CalculateMembershipDelta(groupGUID, desiredMemberDNs)
+	}
+
+	// Validate that all desired members are DNs
+	if err := gmm.ValidateMembers(desiredMemberDNs); err != nil {
+		return nil, WrapError("validate_desired_member_dns", err)
+	}
+
+	currentMembers, err := gmm.getCurrentMembersWithGUIDs(groupGUID)
+	if err != nil {
+		if ldap.IsErrorWithCode(err, ldap.LDAPResultUnavailableCriticalExtension) {
+			tflog.SubsystemWarn(gmm.ctx, "ldap", "Server does not support the extended DN control (unavailableCriticalExtension); falling back to DN-based membership comparison", map[string]any{
+				"group_guid": groupGUID,
+				"error":      err.Error(),
+			})
+			return gmm.CalculateMembershipDelta(groupGUID, desiredMemberDNs)
+		}
+		return nil, WrapError("get_current_members_with_guids", err)
+	}
+
+	toAdd, toRemove := calculateGUIDAwareSetDifferences(currentMembers, desiredDNs, desiredGUIDs)
+
+	return &MembershipDelta{
+		ToAdd:    toAdd,
+		ToRemove: toRemove,
+	}, nil
+}
+
+// usableMemberGUIDs returns desired DN → normalized GUID for every desired DN
+// with a well-formed GUID in memberGUIDs.
+func usableMemberGUIDs(desiredDNs []string, memberGUIDs map[string]string) map[string]string {
+	if len(memberGUIDs) == 0 {
+		return nil
+	}
+
+	handler := NewGUIDHandler()
+	usable := make(map[string]string)
+	for _, dn := range desiredDNs {
+		guid, ok := memberGUIDs[dn]
+		if !ok || guid == "" {
+			continue
+		}
+		normalized, err := handler.NormalizeGUID(guid)
+		if err != nil {
+			continue
+		}
+		usable[dn] = normalized
+	}
+
+	return usable
+}
+
+// CurrentMember is one current member of a group, exactly as Active Directory
+// reports it in the group's member attribute, together with the identity
+// components of its extended DN. It is produced by GetCurrentMembers and
+// consumed by MemberNormalizer.ResolveBatchAgainst.
+type CurrentMember struct {
+	// DN is the member's DN as AD reports it, with attribute types upper-cased
+	// via NormalizeDNCase - the same form GetGroupMembers and
+	// MemberNormalizer.ResolveBatch return.
+	DN string
+	// GUID is the member's objectGUID in canonical lower-case hyphenated
+	// form, or "" if AD supplied no GUID component for the value.
+	GUID string
+	// SID is the member's objectSid in "S-1-..." string form, or "" if the
+	// object has no objectSid (e.g. contacts) or the component was absent or
+	// unparseable.
+	SID string
+}
+
+// GetCurrentMembers returns the group's current members from a single
+// search carrying LDAP_SERVER_EXTENDED_DN_OID, so every member's DN, GUID and
+// SID are obtained without any per-member lookup. The search is a
+// GUID-filtered subtree search under the manager's base DN (size limit 1,
+// only the member attribute requested); a group outside the base DN is
+// therefore reported as not found. Members are returned in the order AD
+// reports them.
+//
+// This is the same reader SetGroupMembers uses for GUID-identity diffing (see
+// CalculateMembershipDeltaWithGUIDs) and shares its range-retrieval
+// limitation: for groups above AD's MaxValRange, AD returns only
+// "member;range=0-N", which is not consumed, so the result is empty (a
+// warning is logged). Callers must therefore treat the result as a possibly
+// incomplete view: absence from it does not prove non-membership.
+// MemberNormalizer.ResolveBatchAgainst is safe on such a view, since any
+// identifier it cannot match simply falls back to normal resolution.
+//
+// Errors: an empty or malformed groupGUID, a failed search (including
+// unavailableCriticalExtension from servers lacking the control), a missing
+// group (IsNotFoundError) or a member value whose extended DN or DN cannot
+// be parsed. A malformed SID component is not an error; that member's SID is
+// left empty.
+func (gmm *GroupMembershipManager) GetCurrentMembers(groupGUID string) ([]CurrentMember, error) {
+	if groupGUID == "" {
+		return nil, fmt.Errorf("group GUID cannot be empty")
+	}
+
+	members, err := gmm.getCurrentMembersWithGUIDs(groupGUID)
+	if err != nil {
+		return nil, WrapError("get_current_members", err)
+	}
+
+	out := make([]CurrentMember, len(members))
+	for i, m := range members {
+		out[i] = CurrentMember{DN: m.NormalizedDN, GUID: m.GUID, SID: m.SID}
+	}
+	return out, nil
+}
+
+// currentGroupMember is one value of a group's member attribute as AD
+// currently reports it.
+type currentGroupMember struct {
+	// DN is the member's DN exactly as AD reported it (extended components removed).
+	DN string
+	// NormalizedDN is DN with uppercase attribute types (as GetGroupMembers returns).
+	NormalizedDN string
+	// GUID is the canonical lower-case objectGUID, or "" if AD supplied none.
+	GUID string
+	// SID is the "S-1-..." objectSid, or "" if AD supplied none (or it was malformed).
+	SID string
+}
+
+// getCurrentMembersWithGUIDs reads the group's member attribute with the
+// LDAP_SERVER_EXTENDED_DN_OID control so that each value carries the
+// member's objectGUID and objectSid, avoiding a per-member lookup. It is the
+// single reader behind both GetCurrentMembers and
+// CalculateMembershipDeltaWithGUIDs.
+//
+// Range retrieval: like GroupManager.GetGroup (and therefore
+// GetGroupMembers), only the plain "member" attribute is consumed. For groups
+// above AD's MaxValRange the server returns "member;range=0-N" instead, which
+// both readers treat as no current members; this keeps SetGroupMembers'
+// large-group behavior identical to the legacy path (additions only, never
+// removals - RemoveGroupMembers rewrites the member list from GetGroup and
+// would otherwise truncate it).
+func (gmm *GroupMembershipManager) getCurrentMembersWithGUIDs(groupGUID string) ([]currentGroupMember, error) {
+	handler := NewGUIDHandler()
+	if !handler.IsValidGUID(groupGUID) {
+		return nil, fmt.Errorf("invalid GUID format: %s", groupGUID)
+	}
+
+	searchReq, err := handler.GenerateGUIDSearchRequest(gmm.groupManager.baseDN, groupGUID)
+	if err != nil {
+		return nil, WrapError("generate_guid_search", err)
+	}
+	searchReq.Attributes = []string{"member"}
+	searchReq.TimeLimit = gmm.timeout
+	searchReq.Controls = []ldap.Control{NewExtendedDNControl()}
+
+	result, err := gmm.client.Search(gmm.ctx, searchReq)
+	if err != nil {
+		return nil, WrapError("search_group_members_extended_dn", err)
+	}
+
+	if len(result.Entries) == 0 {
+		return nil, NewNotFoundError("get_group_members_extended_dn", "group with GUID %s not found", groupGUID)
+	}
+
+	entry := result.Entries[0]
+	for _, attr := range entry.Attributes {
+		if strings.HasPrefix(strings.ToLower(attr.Name), "member;range=") {
+			tflog.SubsystemWarn(gmm.ctx, "ldap", "Group member attribute was range-limited by the server; only the unranged member attribute is evaluated", map[string]any{
+				"group_guid": groupGUID,
+				"attribute":  attr.Name,
+				"values":     len(attr.Values),
+			})
+		}
+	}
+
+	values := entry.GetAttributeValues("member")
+	members := make([]currentGroupMember, 0, len(values))
+	sidHandler := NewSIDHandler()
+	withoutGUID := 0
+	for _, value := range values {
+		parsed, err := ParseExtendedDN(value)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse member value of group %s: %w", groupGUID, err)
+		}
+
+		normalized, err := NormalizeDNCase(parsed.DN)
+		if err != nil {
+			return nil, fmt.Errorf("failed to normalize member DN %q of group %s: %w", parsed.DN, groupGUID, err)
+		}
+
+		if parsed.GUID == "" {
+			withoutGUID++
+		}
+
+		// The SID is informational (identifier matching only); a malformed
+		// one must not fail membership reads or writes, so it is dropped.
+		var sid string
+		if parsed.SID != "" {
+			sid, err = sidHandler.ExtendedDNSIDToString(parsed.SID)
+			if err != nil {
+				tflog.SubsystemDebug(gmm.ctx, "ldap", "Ignoring unparseable SID component in member extended DN", map[string]any{
+					"group_guid": groupGUID,
+					"member_dn":  parsed.DN,
+					"error":      err.Error(),
+				})
+				sid = ""
+			}
+		}
+
+		members = append(members, currentGroupMember{
+			DN:           parsed.DN,
+			NormalizedDN: normalized,
+			GUID:         parsed.GUID,
+			SID:          sid,
+		})
+	}
+
+	tflog.SubsystemDebug(gmm.ctx, "ldap", "Read current group members with extended DNs", map[string]any{
+		"group_guid":           groupGUID,
+		"member_count":         len(members),
+		"members_without_guid": withoutGUID,
+	})
+
+	return members, nil
+}
+
+// desiredGroupMember is a deduplicated desired member for GUID-aware diffing.
+type desiredGroupMember struct {
+	dn   string // as passed by the caller
+	guid string // normalized; "" means compare by DN
+}
+
+// calculateGUIDAwareSetDifferences implements the comparison rules documented
+// on CalculateMembershipDeltaWithGUIDs. desiredGUIDs maps desired DN →
+// normalized GUID for those desired DNs that have one.
+func calculateGUIDAwareSetDifferences(current []currentGroupMember, desiredDNs []string, desiredGUIDs map[string]string) (toAdd, toRemove []string) {
+	// Deduplicate desired members case-insensitively by DN; if case variants
+	// disagree on having a GUID, keep the one that has it.
+	desiredByDN := make(map[string]desiredGroupMember, len(desiredDNs))
+	for _, dn := range desiredDNs {
+		lower := strings.ToLower(dn)
+		candidate := desiredGroupMember{dn: dn, guid: desiredGUIDs[dn]}
+		if existing, ok := desiredByDN[lower]; ok && (existing.guid != "" || candidate.guid == "") {
+			continue
+		}
+		desiredByDN[lower] = candidate
+	}
+
+	desiredGUIDSet := make(map[string]bool)
+	desiredNoGUIDDNs := make(map[string]bool)
+	for lower, d := range desiredByDN {
+		if d.guid != "" {
+			desiredGUIDSet[d.guid] = true
+		} else {
+			desiredNoGUIDDNs[lower] = true
+		}
+	}
+
+	currentGUIDSet := make(map[string]bool)
+	currentAllDNs := make(map[string]bool)
+	currentNoGUIDDNs := make(map[string]bool)
+	for _, c := range current {
+		lower := strings.ToLower(c.NormalizedDN)
+		currentAllDNs[lower] = true
+		if c.GUID != "" {
+			currentGUIDSet[c.GUID] = true
+		} else {
+			currentNoGUIDDNs[lower] = true
+		}
+	}
+
+	// Desired members not present → add (at most one DN per GUID). Iterate
+	// the sorted desired list rather than the map so the DN chosen for a GUID
+	// shared by several desired DNs is deterministic (lexicographically first).
+	addedGUIDs := make(map[string]bool)
+	for _, dn := range desiredDNs {
+		lower := strings.ToLower(dn)
+		d := desiredByDN[lower]
+		if d.dn != dn {
+			continue // case-variant duplicate folded into another entry
+		}
+		var present bool
+		if d.guid != "" {
+			present = currentGUIDSet[d.guid] || currentNoGUIDDNs[lower]
+		} else {
+			present = currentAllDNs[lower]
+		}
+		if present {
+			continue
+		}
+		if d.guid != "" {
+			if addedGUIDs[d.guid] {
+				continue
+			}
+			addedGUIDs[d.guid] = true
+		}
+		toAdd = append(toAdd, d.dn)
+	}
+
+	// Current members not desired → remove, using AD's own current DN.
+	removedDNs := make(map[string]bool)
+	for _, c := range current {
+		lower := strings.ToLower(c.NormalizedDN)
+		var kept bool
+		if c.GUID != "" {
+			kept = desiredGUIDSet[c.GUID] || desiredNoGUIDDNs[lower]
+		} else {
+			_, kept = desiredByDN[lower]
+		}
+		if kept || removedDNs[lower] {
+			continue
+		}
+		removedDNs[lower] = true
+		toRemove = append(toRemove, c.DN)
+	}
+
+	sort.Strings(toAdd)
+	sort.Strings(toRemove)
+
+	return toAdd, toRemove
 }
 
 // batchAddMembers adds members in batches to respect Active Directory limits.
