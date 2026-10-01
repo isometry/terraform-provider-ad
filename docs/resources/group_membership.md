@@ -4,7 +4,7 @@ page_title: "ad_group_membership Resource - ad"
 subcategory: ""
 description: |-
   Manages the membership of an Active Directory group. This resource allows you to define the complete set of members for a group, with automatic anti-drift protection through identifier normalization.
-  Anti-Drift Protection: This resource automatically normalizes all member identifiers to distinguished names (DNs) and object GUIDs internally while preserving your original configuration. The members attribute retains exactly what you configure, while member_details shows the resolved (dn, id) pairs used for Active Directory operations. Resolution happens once, at plan time; because an object's objectGUID never changes for its lifetime (unlike its DN, which changes on rename), that plan-time snapshot is trusted for the rest of the apply.
+  Anti-Drift Protection: This resource automatically normalizes all member identifiers to distinguished names (DNs) and object GUIDs internally while preserving your original configuration. The members attribute retains exactly what you configure, while member_details shows the resolved (dn, id) pairs used for Active Directory operations. Members are identified by objectGUID, which never changes for an object's lifetime (unlike its DN, which changes on rename), so membership writes are immune to members being renamed. Members that are new to this resource, or that cannot be resolved yet (e.g. objects created in the same apply), are resolved again immediately before the write.
   Supported Identifier Formats:
   Distinguished Name (DN): CN=John Doe,OU=Users,DC=example,DC=comObject GUID: 550e8400-e29b-41d4-a716-446655440000User Principal Name (UPN): john@example.comSAM Account Name: DOMAIN\john or johnSecurity Identifier (SID): S-1-5-21-123456789-123456789-123456789-1001
 ---
@@ -13,7 +13,7 @@ description: |-
 
 Manages the membership of an Active Directory group. This resource allows you to define the complete set of members for a group, with automatic anti-drift protection through identifier normalization.
 
-**Anti-Drift Protection**: This resource automatically normalizes all member identifiers to distinguished names (DNs) and object GUIDs internally while preserving your original configuration. The `members` attribute retains exactly what you configure, while `member_details` shows the resolved `(dn, id)` pairs used for Active Directory operations. Resolution happens once, at plan time; because an object's `objectGUID` never changes for its lifetime (unlike its DN, which changes on rename), that plan-time snapshot is trusted for the rest of the apply.
+**Anti-Drift Protection**: This resource automatically normalizes all member identifiers to distinguished names (DNs) and object GUIDs internally while preserving your original configuration. The `members` attribute retains exactly what you configure, while `member_details` shows the resolved `(dn, id)` pairs used for Active Directory operations. Members are identified by `objectGUID`, which never changes for an object's lifetime (unlike its DN, which changes on rename), so membership writes are immune to members being renamed. Members that are new to this resource, or that cannot be resolved yet (e.g. objects created in the same apply), are resolved again immediately before the write.
 
 **Supported Identifier Formats**:
 - Distinguished Name (DN): `CN=John Doe,OU=Users,DC=example,DC=com`
@@ -95,7 +95,7 @@ If not specified, inherits from the provider-level `ignore_missing_members` sett
 ### Read-Only
 
 - `id` (String) The resource identifier, which is the objectGUID of the group. This is the same value as `group_id`.
-- `member_details` (Attributes Set) The resolved identity of every group member: its distinguished name (DN) and object GUID, both derived from whatever identifier format was used in `members`. This is the authoritative source used for all Active Directory operations — resolved once, at plan time, and immune to the member being renamed afterward (the GUID never changes even when the DN does). (see [below for nested schema](#nestedatt--member_details))
+- `member_details` (Attributes Set) The resolved identity of every group member: its distinguished name (DN) and object GUID, both derived from whatever identifier format was used in `members`. Members already in state are planned with full details. In the plan, a member new to this resource shows `dn` as `(known after apply)` (its `id` is known), and a member that cannot be resolved yet (e.g. an object created in the same apply) shows both `dn` and `id` as `(known after apply)`. Writes use the GUID, so they are immune to the member being renamed (the GUID never changes even when the DN does). (see [below for nested schema](#nestedatt--member_details))
 
 <a id="nestedatt--member_details"></a>
 ### Nested Schema for `member_details`

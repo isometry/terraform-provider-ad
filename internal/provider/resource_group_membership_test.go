@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
@@ -597,6 +598,121 @@ func TestAccGroupMembershipResource_unknownMembers(t *testing.T) {
 			},
 		},
 	})
+}
+
+// TestAccGroupMembershipResource_dnMemberCreatedInSameApply reproduces the
+// production "Provider produced inconsistent final plan ... member_details:
+// length changed" failure (T1). An existing membership is updated to add
+// groups created in the SAME apply, referenced by their `dn` — which is known
+// at plan time (computed from name + container) even though the objects do
+// not exist yet. With ignore_missing_members = true the plan succeeds with a
+// warning; Terraform then re-plans the membership during apply, after the new
+// groups exist, and that re-plan must be compatible with the original plan
+// (the unresolved members are planned as per-element placeholders).
+//
+// Step 1 is a baseline (the membership's group is itself new, so group_id is
+// unknown and member_details is wholly unknown). Steps 2 and 3 are the exact
+// production update shape; each is followed by the harness's implicit (and
+// here explicit) empty-plan check.
+func TestAccGroupMembershipResource_dnMemberCreatedInSameApply(t *testing.T) {
+	n := newGMTestNames(0)
+
+	names := make([]string, 4)
+	sams := make([]string, 4)
+	for i := range 4 {
+		names[i] = GenerateTestName(fmt.Sprintf("tf-mship-same%d-", i))
+		sams[i] = GenerateTestSAMName(fmt.Sprintf("TFMshSame%d", i))
+	}
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccGroupMembershipResourceConfig_sameApplyDN(n, names, sams, 0),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "2"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "member_details.#", "2"),
+				),
+			},
+			{
+				Config: testAccGroupMembershipResourceConfig_sameApplyDN(n, names, sams, 2),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("ad_group_membership.test", plancheck.ResourceActionUpdate),
+					},
+					PostApplyPostRefresh: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "4"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "member_details.#", "4"),
+				),
+			},
+			{
+				Config: testAccGroupMembershipResourceConfig_sameApplyDN(n, names, sams, 4),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("ad_group_membership.test", plancheck.ResourceActionUpdate),
+					},
+					PostApplyPostRefresh: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", "6"),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "member_details.#", "6"),
+				),
+			},
+		},
+	})
+}
+
+// testAccGroupMembershipResourceConfig_sameApplyDN emits the prerequisites
+// plus `count` ad_group.new instances (count-indexed, because the
+// terraform-plugin-testing legacy state shim cannot handle for_each state),
+// and a membership referencing two existing users and every ad_group.new
+// instance by DN. names and sams are the stable per-index values; only the
+// first count entries are used, so later steps add instances without
+// disturbing earlier ones.
+func testAccGroupMembershipResourceConfig_sameApplyDN(n gmTestNames, names, sams []string, count int) string {
+	quote := func(in []string) string {
+		out := make([]string, len(in))
+		for i, v := range in {
+			out[i] = fmt.Sprintf("%q", v)
+		}
+
+		return "[" + strings.Join(out, ", ") + "]"
+	}
+
+	return fmt.Sprintf(`
+%[1]s
+
+locals {
+  new_group_names = %[2]s
+  new_group_sams  = %[3]s
+}
+
+resource "ad_group" "new" {
+  count            = %[4]d
+  name             = local.new_group_names[count.index]
+  sam_account_name = local.new_group_sams[count.index]
+  container        = ad_ou.test.dn
+  scope            = "global"
+  category         = "security"
+  description      = "Created in the same apply as the membership update"
+}
+
+resource "ad_group_membership" "test" {
+  group_id               = ad_group.test.id
+  ignore_missing_members = true
+  members = concat(
+    [ad_user.testuser1.dn, ad_user.testuser2.dn],
+    [for g in ad_group.new : g.dn],
+  )
+}
+`, prerequisiteConfig(n), quote(names), quote(sams), count)
 }
 
 // testAccGroupMembershipImportStateIdFunc returns the group GUID for import testing.

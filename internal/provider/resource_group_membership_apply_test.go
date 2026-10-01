@@ -3,6 +3,8 @@ package provider
 import (
 	"context"
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -258,11 +260,11 @@ func runMembershipUpdate(
 
 // nonGroupLookupSearches returns every recorded Search filter that was NOT
 // the "objectGUID=" group-by-GUID lookup GetGroupMembers/AddGroupMembers/
-// RemoveGroupMembers legitimately issue. In the new plan-time-GUID-capture
-// design this must always be empty for Create/Update's common case (fully
-// known member_details): resolving member identities happens ZERO times at
-// apply time, so the only Search traffic at all is the group's own DN/
-// current-member lookup.
+// RemoveGroupMembers legitimately issue. In the per-element
+// member_details design this must always be empty for Create/Update's common
+// case (fully known member_details, every element anchored to prior state):
+// member identities are not resolved at apply time, so the only Search
+// traffic at all is the group's own DN/current-member lookup.
 func (c *recordingMembershipClient) nonGroupLookupSearches() []string {
 	var out []string
 	for _, filter := range c.searchFilters {
@@ -273,20 +275,21 @@ func (c *recordingMembershipClient) nonGroupLookupSearches() []string {
 	return out
 }
 
-// TestGroupMembershipResource_CreateUpdateTrustPlanTimeMemberDetails is the
-// direct regression test for the design that replaced apply-time
-// re-resolution (re-resolving `members` fresh, live/cached, immediately
-// before the AD write) with plan-time GUID capture: `member_details` is
-// resolved exactly once, by ModifyPlan, and trusted verbatim through apply.
-// This is safe — even if a referenced object is renamed by an unordered
-// sibling resource later in the very same apply — because an AD object's
-// objectGUID never changes for its lifetime, and the write below always
-// prefers the GUID-alt-DN form over the literal (possibly now-stale) DN
-// string.
+// TestGroupMembershipResource_CreateUpdateTrustPlanTimeMemberDetails covers
+// row A1: when the planned `member_details` is FULLY known (every element
+// case K, anchored to prior state — e.g. members only removed, or drift
+// being corrected), Create/Update trust it verbatim and perform ZERO LDAP
+// calls to resolve member identity. This is safe — even if a referenced
+// object is renamed by an unordered sibling resource later in the very same
+// apply — because an AD object's objectGUID never changes for its lifetime:
+// the Add leg uses the GUID-alt-DN form rather than the (possibly stale) DN
+// string, and SetGroupMembers diffs by GUID when memberGUIDs supplies one.
+// The fully-known path trusts the state-anchored DNs; a stale DN in state is
+// corrected by the next refresh.
 //
 // Each subtest hand-constructs a model where MemberDetails already holds a
 // resolved (dn, id) pair whose dn deliberately looks "stale", as if
-// captured before some unrelated rename — and deliberately does NOT seed
+// recorded before some unrelated rename — and deliberately does NOT seed
 // the cache manager for that identifier. recordingMembershipClient fails
 // loudly on any Search beyond the legitimate group-by-GUID lookup, so if
 // Create/Update regressed to re-resolving `members` fresh (the old design),
@@ -294,13 +297,13 @@ func (c *recordingMembershipClient) nonGroupLookupSearches() []string {
 // for a bare identifier, failing the test loudly rather than silently
 // succeeding. Invariants asserted:
 //
-//  1. The underlying AD write uses member_details' captured GUID (via its
+//  1. The underlying AD write uses member_details' planned GUID (via its
 //     "<GUID=...>" alternative-DN form) — proving the write is driven by
 //     member_details, not by any re-resolution of `members`.
 //  2. Every Search call recorded is the legitimate group-by-GUID lookup —
 //     zero LDAP calls were made to resolve member identity.
 //  3. resp.State's saved member_details equals exactly what ModifyPlan had
-//     already captured in the input plan — proving Create/Update never
+//     already planned in the input plan — proving Create/Update never
 //     rewrite it in the common case.
 func TestGroupMembershipResource_CreateUpdateTrustPlanTimeMemberDetails(t *testing.T) {
 	ctx := t.Context()
@@ -419,7 +422,10 @@ func TestGroupMembershipResource_CreateUpdateTrustPlanTimeMemberDetails(t *testi
 }
 
 // TestGroupMembershipResource_CreateUpdateFallBackWhenMemberDetailsUnknown
-// covers the EXCEPTION path: when member_details is Unknown at apply time
+// covers row A2, the wholly-Unknown case of the fresh-resolution path (rows
+// A3/A4 cover the per-element mixed case, see
+// TestGroupMembershipResource_CreateUpdateMixedPlanMemberDetails): when
+// member_details is Unknown at apply time
 // (ModifyPlan itself could not resolve members at plan time — e.g. `members`
 // depended on a computed attribute of another resource being created in the
 // very same apply, so its value only becomes known once that resource is
@@ -546,5 +552,183 @@ func TestGroupMembershipResource_CreateUpdateFallBackWhenMemberDetailsUnknown(t 
 		if len(gotDetails) != len(wantDetails) || gotDetails[memberDN] != memberGUID {
 			t.Errorf("member_details = %v, want %v", gotDetails, wantDetails)
 		}
+	})
+}
+
+// TestGroupMembershipResource_CreateUpdateMixedPlanMemberDetails covers the
+// write path for a per-element planned member_details (rows A3/A4): a plan
+// mixing case K (known, anchored to prior state), case G (id known, dn
+// unknown) and case P (fully unknown placeholder) elements. Create/Update
+// must resolve `members` fresh, keep every known planned element verbatim
+// (its state-anchored DN, even when AD now reports a different DN), fill G
+// and P from the fresh resolution, and produce a result compatible with the
+// plan under Terraform's set rules.
+func TestGroupMembershipResource_CreateUpdateMixedPlanMemberDetails(t *testing.T) {
+	ctx := t.Context()
+
+	const (
+		groupGUID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+		groupDN   = "CN=MixedTestGroup,OU=Groups,DC=example,DC=com"
+
+		// Member 1: in prior state under dnState1, renamed in AD to dnFresh1.
+		dnState1 = "CN=Member1,OU=Users,DC=example,DC=com"
+		dnFresh1 = "CN=Member1Renamed,OU=Users,DC=example,DC=com"
+		guid1    = "11111111-1111-1111-1111-111111111111"
+
+		// Member 2: referenced by GUID, not in prior state (case G).
+		dn2   = "CN=Member2,OU=Users,DC=example,DC=com"
+		guid2 = "22222222-2222-2222-2222-222222222222"
+
+		// Member 3: referenced by DN, did not exist at plan time (case P),
+		// exists by apply time.
+		dn3   = "CN=Member3,OU=Groups,DC=example,DC=com"
+		guid3 = "33333333-3333-3333-3333-333333333333"
+
+		// Never exists.
+		dnMissing = "CN=NeverCreated,OU=Groups,DC=example,DC=com"
+	)
+
+	altDN := func(t *testing.T, guid string) string {
+		t.Helper()
+		alt, err := ldapclient.GUIDToAltDN(guid)
+		if err != nil {
+			t.Fatalf("failed to compute alt-DN: %v", err)
+		}
+		return alt
+	}
+
+	sorted := func(in []string) []string {
+		out := slices.Clone(in)
+		sort.Strings(out)
+		return out
+	}
+
+	t.Run("A3: Update with K + G + P", func(t *testing.T) {
+		cm := ldapclient.NewCacheManager()
+		seedMembershipCache(t, cm, dnFresh1, guid1)
+		seedMembershipCache(t, cm, dn2, guid2)
+		seedMembershipCache(t, cm, dn3, guid3)
+
+		client := newRecordingMembershipClient(groupGUID, groupDN, dnFresh1) // AD already reports the renamed DN
+		r := newTestGroupMembershipResourceWithClient(client, cm)
+
+		plannedDetails := newMemberDetailSetOf(t,
+			knownDetail(t, dnState1, guid1), // K
+			guidOnlyDetail(t, guid2),        // G
+			placeholderDetail(t),            // P
+		)
+		planModel := &GroupMembershipResourceModel{
+			ID:                   types.StringValue(groupGUID),
+			GroupID:              types.StringValue(groupGUID),
+			Members:              newMembershipSet(t, guid1, guid2, dn3),
+			MemberDetails:        plannedDetails,
+			IgnoreMissingMembers: types.BoolNull(),
+		}
+		stateModel := &GroupMembershipResourceModel{
+			ID:                   types.StringValue(groupGUID),
+			GroupID:              types.StringValue(groupGUID),
+			Members:              newMembershipSet(t, guid1),
+			MemberDetails:        newMemberDetailSet(t, ctx, []string{dnState1}, []string{guid1}),
+			IgnoreMissingMembers: types.BoolNull(),
+		}
+
+		out, resp := runMembershipUpdate(t, ctx, r, planModel, stateModel)
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
+		}
+
+		// The write uses fresh DNs: member 1 is already present under its
+		// current DN, so only members 2 and 3 are added (GUID-alt-DN form)
+		// and nothing is removed.
+		wantAdded := sorted([]string{altDN(t, guid2), altDN(t, guid3)})
+		if got := sorted(client.addedMemberValues()); !slices.Equal(got, wantAdded) {
+			t.Errorf("AD adds = %v, want %v", got, wantAdded)
+		}
+		wantMembers := sorted([]string{dnFresh1, altDN(t, guid2), altDN(t, guid3)})
+		if got := sorted(client.members); !slices.Equal(got, wantMembers) {
+			t.Errorf("final group membership = %v, want %v (member 1 must not be removed and re-added)", got, wantMembers)
+		}
+		if extra := client.nonGroupLookupSearches(); len(extra) != 0 {
+			t.Errorf("unexpected live Search calls (members should resolve from cache): %v", extra)
+		}
+
+		// K keeps the planned (state-anchored) DN; G and P are filled
+		// from fresh resolution; the result is fully known.
+		assertClassifiedDetails(t, out.MemberDetails, classifiedDetails{
+			known: map[string]string{dnState1: guid1, dn2: guid2, dn3: guid3},
+		})
+		assertFinalPlanCompatible(t, plannedDetails, out.MemberDetails)
+	})
+
+	t.Run("A3: Create with G + P", func(t *testing.T) {
+		cm := ldapclient.NewCacheManager()
+		seedMembershipCache(t, cm, dn2, guid2)
+		seedMembershipCache(t, cm, dn3, guid3)
+
+		client := newRecordingMembershipClient(groupGUID, groupDN)
+		r := newTestGroupMembershipResourceWithClient(client, cm)
+
+		plannedDetails := newMemberDetailSetOf(t, guidOnlyDetail(t, guid2), placeholderDetail(t))
+		planModel := &GroupMembershipResourceModel{
+			ID:                   types.StringUnknown(),
+			GroupID:              types.StringValue(groupGUID),
+			Members:              newMembershipSet(t, guid2, dn3),
+			MemberDetails:        plannedDetails,
+			IgnoreMissingMembers: types.BoolNull(),
+		}
+
+		out, resp := runMembershipCreate(t, ctx, r, planModel)
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
+		}
+
+		wantAdded := sorted([]string{altDN(t, guid2), altDN(t, guid3)})
+		if got := sorted(client.addedMemberValues()); !slices.Equal(got, wantAdded) {
+			t.Errorf("AD adds = %v, want %v", got, wantAdded)
+		}
+		assertClassifiedDetails(t, out.MemberDetails, classifiedDetails{
+			known: map[string]string{dn2: guid2, dn3: guid3},
+		})
+		assertFinalPlanCompatible(t, plannedDetails, out.MemberDetails)
+	})
+
+	t.Run("A4: Update with K + P, P still unresolved at apply (ignore-missing)", func(t *testing.T) {
+		cm := ldapclient.NewCacheManager()
+		seedMembershipCache(t, cm, dnState1, guid1)
+		// dnMissing deliberately unseeded: it still does not exist.
+
+		client := newRecordingMembershipClient(groupGUID, groupDN, dnState1)
+		r := newTestGroupMembershipResourceWithClient(client, cm)
+
+		plannedDetails := newMemberDetailSetOf(t, knownDetail(t, dnState1, guid1), placeholderDetail(t))
+		planModel := &GroupMembershipResourceModel{
+			ID:                   types.StringValue(groupGUID),
+			GroupID:              types.StringValue(groupGUID),
+			Members:              newMembershipSet(t, guid1, dnMissing),
+			MemberDetails:        plannedDetails,
+			IgnoreMissingMembers: types.BoolValue(true),
+		}
+		stateModel := &GroupMembershipResourceModel{
+			ID:                   types.StringValue(groupGUID),
+			GroupID:              types.StringValue(groupGUID),
+			Members:              newMembershipSet(t, guid1),
+			MemberDetails:        newMemberDetailSet(t, ctx, []string{dnState1}, []string{guid1}),
+			IgnoreMissingMembers: types.BoolValue(true),
+		}
+
+		out, resp := runMembershipUpdate(t, ctx, r, planModel, stateModel)
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
+		}
+		if !hasWarningSummary(resp.Diagnostics, "Member could not be resolved") {
+			t.Errorf("expected a 'Member could not be resolved' warning for the still-missing member, got %v", resp.Diagnostics)
+		}
+		if added := client.addedMemberValues(); len(added) != 0 {
+			t.Errorf("AD adds = %v, want none (the missing member is excluded)", added)
+		}
+		assertClassifiedDetails(t, out.MemberDetails, classifiedDetails{
+			known: map[string]string{dnState1: guid1},
+		})
+		assertFinalPlanCompatible(t, plannedDetails, out.MemberDetails)
 	})
 }
