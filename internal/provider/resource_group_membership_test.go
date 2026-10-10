@@ -3,6 +3,7 @@ package provider_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -1610,4 +1611,97 @@ func collectMemberDetailDNs(attrs map[string]string) []string {
 
 func containsLower(haystack []string, needle string) bool {
 	return slices.Contains(haystack, needle)
+}
+
+// TestAccGroupMembershipResource_largeGroupRangeRetrieval is a regression test
+// for ranged retrieval of the member attribute (AD returns at most 1500 values
+// per read): a group above that limit must not be read as empty, plans must
+// settle, and destroying the membership must remove every member.
+//
+// Opt-in: requires TF_ACC=1 and AD_TEST_LARGE_GROUP=1 plus the usual AD_TEST_*
+// variables. Member users are created out-of-band via the LDAP client in a
+// dedicated OU (removed on cleanup). Expect a minute or two against a lab DC;
+// run with -timeout 30m.
+func TestAccGroupMembershipResource_largeGroupRangeRetrieval(t *testing.T) {
+	SkipIfNotAccTest(t)
+	if os.Getenv("AD_TEST_LARGE_GROUP") != "1" {
+		t.Skip("Skipping large group test - set AD_TEST_LARGE_GROUP=1 to run")
+	}
+	testAccPreCheck(t)
+
+	const memberCount = 1600
+	suffix := GenerateTestName("")
+	ouName := "tf-test-lg-" + suffix
+	groupName := "tf-lg-" + suffix
+	groupSAM := "tflg" + suffix[len(suffix)-8:]
+	if len(groupSAM) > 20 {
+		groupSAM = groupSAM[:20]
+	}
+	ouDN, userDNs := setupLargeGroupFixture(t, ouName, memberCount)
+
+	quoted := make([]string, len(userDNs))
+	for i, dn := range userDNs {
+		quoted[i] = fmt.Sprintf("%q", dn)
+	}
+	groupCfg := fmt.Sprintf(`
+%s
+
+resource "ad_group" "test" {
+  name             = %q
+  sam_account_name = %q
+  container        = %q
+  scope            = "global"
+  category         = "security"
+}
+`, testProviderConfig(), groupName, groupSAM, ouDN)
+	fullCfg := groupCfg + fmt.Sprintf(`
+resource "ad_group_membership" "test" {
+  group_id = ad_group.test.id
+  members  = [
+    %s,
+  ]
+}
+`, strings.Join(quoted, ",\n    "))
+
+	var groupGUID string
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fullCfg,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_group_membership.test", "members.#", fmt.Sprint(memberCount)),
+					resource.TestCheckResourceAttr("ad_group_membership.test", "member_details.#", fmt.Sprint(memberCount)),
+					captureStateAttr("ad_group.test", "id", &groupGUID),
+				),
+			},
+			// Fails if the group is read as empty and everyone is re-added.
+			{
+				Config:   fullCfg,
+				PlanOnly: true,
+			},
+			// Membership removed from config: destroy must empty the group.
+			{
+				Config: groupCfg,
+				Check: func(*terraform.State) error {
+					cfg := GetTestConfig()
+					client, err := ldapclient.NewClient(context.Background(), newTestLDAPConfig(cfg))
+					if err != nil {
+						return err
+					}
+					defer client.Close() //nolint:errcheck
+					gm := ldapclient.NewGroupManager(context.Background(), client, cfg.BaseDN, ldapclient.NewCacheManager())
+					g, err := gm.GetGroup(groupGUID)
+					if err != nil {
+						return err
+					}
+					if len(g.MemberDNs) != 0 {
+						return fmt.Errorf("expected group to be empty after membership destroy, found %d members", len(g.MemberDNs))
+					}
+					return nil
+				},
+			},
+		},
+	})
 }

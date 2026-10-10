@@ -1141,3 +1141,67 @@ resource "ad_group" "inside" {
 }
 `, testProviderConfig(), testRootDSEDataSource(), grandparent, parent, child, groupName, groupSAM, parentPath)
 }
+
+// TestAccOUResource_protectedParentChildNotProtected is a regression test for
+// the deny-delete ACE of a protected OU being written inheritable, which made
+// children of a protected parent read back as protected. It checks that
+// children (explicit protected = false, and defaulted) stay unprotected and
+// that the plan is stable.
+func TestAccOUResource_protectedParentChildNotProtected(t *testing.T) {
+	parent := GenerateTestName("tf-test-ou-pp-")
+	child := GenerateTestName("tf-test-ou-pc-")
+	child2 := GenerateTestName("tf-test-ou-pd-")
+
+	cfg := func(parentProtected bool) string {
+		return fmt.Sprintf(`
+%s
+
+%s
+
+resource "ad_ou" "parent" {
+  name      = %q
+  path      = data.ad_rootdse.test.default_naming_context
+  protected = %t
+}
+
+resource "ad_ou" "child" {
+  name      = %q
+  path      = ad_ou.parent.dn
+  protected = false
+}
+
+resource "ad_ou" "child_default" {
+  name = %q
+  path = ad_ou.parent.dn
+}
+`, testProviderConfig(), testRootDSEDataSource(), parent, parentProtected, child, child2)
+	}
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg(true),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_ou.parent", "protected", "true"),
+					resource.TestCheckResourceAttr("ad_ou.child", "protected", "false"),
+					resource.TestCheckResourceAttr("ad_ou.child_default", "protected", "false"),
+				),
+			},
+			// No perpetual diff (the symptom of the old bug).
+			{
+				Config:   cfg(true),
+				PlanOnly: true,
+			},
+			// Unprotect the parent so the final destroy succeeds.
+			{
+				Config: cfg(false),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ad_ou.parent", "protected", "false"),
+					resource.TestCheckResourceAttr("ad_ou.child", "protected", "false"),
+				),
+			},
+		},
+	})
+}
