@@ -84,6 +84,19 @@ func (m passwordLastSetUnknown) PlanModifyString(ctx context.Context, req planmo
 		return
 	}
 
+	// Flipping change_password_at_logon writes pwdLastSet (0 or -1), which
+	// changes the value read back; an unknown plan value counts as no change.
+	var planCPAL, stateCPAL types.Bool
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("change_password_at_logon"), &planCPAL)...)
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("change_password_at_logon"), &stateCPAL)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !planCPAL.IsUnknown() && !planCPAL.Equal(stateCPAL) {
+		resp.PlanValue = types.StringUnknown()
+		return
+	}
+
 	// If the planned password_version differs from the state value (this
 	// also covers the null -> value transition), a password reset is
 	// planned; the server will update pwdLastSet, so do not pin the plan.

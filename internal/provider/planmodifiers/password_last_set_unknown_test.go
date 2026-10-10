@@ -44,11 +44,17 @@ func TestPasswordLastSetUnknown_PlanModifyString(t *testing.T) {
 			"password_last_set": schema.StringAttribute{
 				Computed: true,
 			},
+			"change_password_at_logon": schema.BoolAttribute{
+				Optional: true,
+				Computed: true,
+			},
 		},
 	}
 	attrTypes := map[string]tftypes.Type{
 		"password_version":  tftypes.Number,
 		"password_last_set": tftypes.String,
+
+		"change_password_at_logon": tftypes.Bool,
 	}
 	objType := tftypes.Object{AttributeTypes: attrTypes}
 
@@ -66,11 +72,15 @@ func TestPasswordLastSetUnknown_PlanModifyString(t *testing.T) {
 	}
 	unknownNumber := tftypes.NewValue(tftypes.Number, tftypes.UnknownValue)
 
-	makeRaw := func(passwordVersion tftypes.Value, lastSet *string) tftypes.Value {
+	makeRawCPAL := func(passwordVersion tftypes.Value, lastSet *string, cpal bool) tftypes.Value {
 		return tftypes.NewValue(objType, map[string]tftypes.Value{
-			"password_version":  passwordVersion,
-			"password_last_set": stringValue(lastSet),
+			"password_version":         passwordVersion,
+			"password_last_set":        stringValue(lastSet),
+			"change_password_at_logon": tftypes.NewValue(tftypes.Bool, cpal),
 		})
+	}
+	makeRaw := func(passwordVersion tftypes.Value, lastSet *string) tftypes.Value {
+		return makeRawCPAL(passwordVersion, lastSet, false)
 	}
 
 	nullRaw := tftypes.NewValue(objType, nil)
@@ -135,6 +145,24 @@ func TestPasswordLastSetUnknown_PlanModifyString(t *testing.T) {
 			stateValue: types.StringValue("2026-04-19T14:24:40Z"),
 			planValue:  types.StringUnknown(),
 			expected:   types.StringUnknown(),
+		},
+		"update_change_password_at_logon_flipped_marks_unknown": {
+			// Update writes pwdLastSet=0 or -1, so the read-back value differs
+			// from state; the plan must not pin it.
+			configRaw:  makeRawCPAL(int64Value(ptrInt(1)), nil, true),
+			planRaw:    makeRawCPAL(int64Value(ptrInt(1)), nil, true),
+			stateRaw:   makeRawCPAL(int64Value(ptrInt(1)), ptrStr("2026-04-19T14:24:40Z"), false),
+			stateValue: types.StringValue("2026-04-19T14:24:40Z"),
+			planValue:  types.StringUnknown(),
+			expected:   types.StringUnknown(),
+		},
+		"update_change_password_at_logon_unchanged_preserves_state": {
+			configRaw:  makeRawCPAL(int64Value(ptrInt(1)), nil, true),
+			planRaw:    makeRawCPAL(int64Value(ptrInt(1)), nil, true),
+			stateRaw:   makeRawCPAL(int64Value(ptrInt(1)), ptrStr("2026-04-19T14:24:40Z"), true),
+			stateValue: types.StringValue("2026-04-19T14:24:40Z"),
+			planValue:  types.StringUnknown(),
+			expected:   types.StringValue("2026-04-19T14:24:40Z"),
 		},
 		"update_plan_password_version_unknown_marks_unknown": {
 			// Update where plan password_version is Unknown: we cannot prove

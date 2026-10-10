@@ -372,7 +372,7 @@ func (d *GroupDataSource) retrieveGroup(ctx context.Context, data *GroupDataSour
 		})
 
 		// Use search to find group by SAM account name
-		filter := fmt.Sprintf("(sAMAccountName=%s)", samAccountName)
+		filter := samAccountNameFilter(samAccountName)
 		groups, err := d.groupManager.SearchGroups(filter, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to search for group by SAM account name: %w", err)
@@ -503,4 +503,9 @@ func groupLookupAttributeDescription(data *GroupDataSourceModel) string {
 	default:
 		return "lookup attribute"
 	}
+}
+
+// samAccountNameFilter builds an LDAP filter matching an exact sAMAccountName.
+func samAccountNameFilter(samAccountName string) string {
+	return fmt.Sprintf("(sAMAccountName=%s)", ldap.EscapeFilter(samAccountName))
 }
