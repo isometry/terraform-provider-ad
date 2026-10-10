@@ -3,7 +3,6 @@ package ldap
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -408,7 +407,68 @@ func (gm *GroupManager) GetGroup(guid string) (*Group, error) {
 		return nil, WrapError("parse_group_entry", err)
 	}
 
+	members, err := gm.getAllMembers(result.Entries[0], nil)
+	if err != nil {
+		return nil, WrapError("get_group_members_range", err)
+	}
+	group.MemberDNs = members
+
 	return group, nil
+}
+
+// getAllMembers returns every value of the entry's member attribute. When the
+// server range-limited it ("member;range=0-N", see MaxValRange), it re-reads
+// the group with "member;range=<next>-*" until the final range ends in "*".
+// controls are sent on each follow-up request (e.g. the extended-DN control).
+func (gm *GroupManager) getAllMembers(entry *ldap.Entry, controls []ldap.Control) ([]string, error) {
+	rangeAttr := func(e *ldap.Entry) (name string, values []string, ok bool) {
+		for _, attr := range e.Attributes {
+			if strings.HasPrefix(strings.ToLower(attr.Name), "member;range=") {
+				return attr.Name, attr.Values, true
+			}
+		}
+		return "", nil, false
+	}
+
+	name, values, ok := rangeAttr(entry)
+	if !ok {
+		return entry.GetAttributeValues("member"), nil
+	}
+
+	all := append([]string(nil), values...)
+	for {
+		_, spec, _ := strings.Cut(name, "=")
+		_, hi, _ := strings.Cut(spec, "-")
+		if hi == "*" {
+			return all, nil
+		}
+		last, err := strconv.Atoi(hi)
+		if err != nil {
+			return nil, fmt.Errorf("invalid member range %q: %w", name, err)
+		}
+
+		result, err := gm.client.Search(gm.ctx, &SearchRequest{
+			BaseDN:     entry.DN,
+			Scope:      ScopeBaseObject,
+			Filter:     "(objectClass=*)",
+			Attributes: []string{fmt.Sprintf("member;range=%d-*", last+1)},
+			TimeLimit:  gm.timeout,
+			Controls:   controls,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to read member range %d-*: %w", last+1, err)
+		}
+		if len(result.Entries) == 0 {
+			return nil, fmt.Errorf("group %s not found while reading member range %d-*", entry.DN, last+1)
+		}
+
+		var ok bool
+		name, values, ok = rangeAttr(result.Entries[0])
+		if !ok {
+			return nil, fmt.Errorf("server returned no member range for %s after %d", entry.DN, last)
+		}
+		all = append(all, values...)
+	}
 }
 
 // GetGroupByDN retrieves a group by its distinguished name.
@@ -756,135 +816,6 @@ func (gm *GroupManager) DeleteGroup(guid string) error {
 	return nil
 }
 
-// AddMembers adds members to a group.
-func (gm *GroupManager) AddMembers(groupGUID string, members []string) error {
-	if groupGUID == "" {
-		return fmt.Errorf("group GUID cannot be empty")
-	}
-
-	if len(members) == 0 {
-		return nil // Nothing to add
-	}
-
-	// Get group DN
-	group, err := gm.GetGroup(groupGUID)
-	if err != nil {
-		return WrapError("get_group_for_add_members", err)
-	}
-
-	// Normalize member identifiers to DNs
-	resolvedMembers, failures := gm.normalizer.ResolveBatch(members)
-
-	// In LDAP operations, any normalization failure is an error
-	if len(failures) > 0 {
-		var errMsgs []string
-		for identifier, err := range failures {
-			errMsgs = append(errMsgs, fmt.Sprintf("'%s': %s", identifier, err.Error()))
-		}
-		sort.Strings(errMsgs) // deterministic order
-		return WrapError("normalize_member_identifiers",
-			fmt.Errorf("failed to normalize members: %s", strings.Join(errMsgs, ", ")))
-	}
-
-	// Extract just the DN values
-	dnList := make([]string, 0, len(resolvedMembers))
-	for _, r := range resolvedMembers {
-		dnList = append(dnList, r.DN)
-	}
-
-	// Add members using LDAP modify operation
-	modReq := &ModifyRequest{
-		DN:            group.DistinguishedName,
-		AddAttributes: map[string][]string{"member": dnList},
-	}
-
-	if err := gm.client.Modify(gm.ctx, modReq); err != nil {
-		// Handle case where some members might already exist
-		if IsConflictError(err) {
-			// Try adding members one by one to identify which ones fail
-			return gm.addMembersIndividually(group.DistinguishedName, dnList)
-		}
-		return WrapError("add_members", err)
-	}
-
-	return nil
-}
-
-// RemoveMembers removes members from a group.
-func (gm *GroupManager) RemoveMembers(groupGUID string, members []string) error {
-	if groupGUID == "" {
-		return fmt.Errorf("group GUID cannot be empty")
-	}
-
-	if len(members) == 0 {
-		return nil // Nothing to remove
-	}
-
-	// Get group DN
-	group, err := gm.GetGroup(groupGUID)
-	if err != nil {
-		return WrapError("get_group_for_remove_members", err)
-	}
-
-	// Normalize member identifiers to DNs
-	resolvedMembers, failures := gm.normalizer.ResolveBatch(members)
-
-	// In LDAP operations, any normalization failure is an error
-	if len(failures) > 0 {
-		var errMsgs []string
-		for identifier, err := range failures {
-			errMsgs = append(errMsgs, fmt.Sprintf("'%s': %s", identifier, err.Error()))
-		}
-		sort.Strings(errMsgs) // deterministic order
-		return WrapError("normalize_member_identifiers",
-			fmt.Errorf("failed to normalize members: %s", strings.Join(errMsgs, ", ")))
-	}
-
-	// Extract just the DN values
-	dnList := make([]string, 0, len(resolvedMembers))
-	for _, r := range resolvedMembers {
-		dnList = append(dnList, r.DN)
-	}
-
-	// Remove members using LDAP modify operation
-	modReq := &ModifyRequest{
-		DN:                group.DistinguishedName,
-		ReplaceAttributes: make(map[string][]string), // Initialize empty map
-	}
-
-	// For member removal, we need to specify exact DNs to delete
-	// We'll use a replace operation with the current members minus the ones to remove
-	currentMembers := group.MemberDNs
-	newMembers := make([]string, 0, len(currentMembers))
-
-	// Create a map of members to remove for quick lookup
-	toRemove := make(map[string]bool)
-	for _, dn := range dnList {
-		toRemove[strings.ToLower(dn)] = true
-	}
-
-	// Filter out members to be removed
-	for _, member := range currentMembers {
-		if !toRemove[strings.ToLower(member)] {
-			newMembers = append(newMembers, member)
-		}
-	}
-
-	// Replace member attribute with filtered list
-	if len(newMembers) == 0 {
-		// Remove all members by deleting the attribute
-		modReq.DeleteAttributes = []string{"member"}
-	} else {
-		modReq.ReplaceAttributes["member"] = newMembers
-	}
-
-	if err := gm.client.Modify(gm.ctx, modReq); err != nil {
-		return WrapError("remove_members", err)
-	}
-
-	return nil
-}
-
 // GetMembers retrieves all members of a group.
 func (gm *GroupManager) GetMembers(groupGUID string) ([]string, error) {
 	if groupGUID == "" {
@@ -1172,39 +1103,6 @@ func (gm *GroupManager) entryToGroup(entry *ldap.Entry) (*Group, error) {
 	}
 
 	return group, nil
-}
-
-// addMembersIndividually adds members one by one to handle partial conflicts.
-func (gm *GroupManager) addMembersIndividually(groupDN string, memberDNs []string) error {
-	var lastNonConflictErr error
-	successCount := 0
-	conflictCount := 0
-
-	for _, memberDN := range memberDNs {
-		modReq := &ModifyRequest{
-			DN:            groupDN,
-			AddAttributes: map[string][]string{"member": {memberDN}},
-		}
-
-		if err := gm.client.Modify(gm.ctx, modReq); err != nil {
-			if IsConflictError(err) {
-				// Member already exists, count as conflict but continue
-				conflictCount++
-				continue
-			}
-			lastNonConflictErr = err
-		} else {
-			successCount++
-		}
-	}
-
-	// If we had actual non-conflict errors and no successes, return the error
-	if successCount == 0 && lastNonConflictErr != nil {
-		return lastNonConflictErr
-	}
-
-	// If we only had conflicts or successes, that's acceptable
-	return nil
 }
 
 // validateScopeChange validates whether a group scope change is allowed.

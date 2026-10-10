@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -20,6 +21,11 @@ type raObject struct {
 	guid string // canonical dashed GUID; "" simulates a member lacking a GUID in the extended DN
 	dn   string // current DN as AD would report it
 	sid  string // optional hex SID emitted in the extended DN
+
+	// Directory attributes served to resolver searches (see directorySearch).
+	dirSID string // S-... string form; "" = object has no objectSid
+	upn    string
+	sam    string
 }
 
 // renameAwareMembershipClient is a Client test double that models AD member
@@ -34,6 +40,9 @@ type raObject struct {
 //   - every write records a membership snapshot so tests can prove a member
 //     was never transiently absent.
 //
+// Searches for anything other than the group are answered as a directory
+// lookup (see directorySearch).
+//
 // Client methods not overridden here are delegated to the embedded
 // MockGroupMembershipClient.
 type renameAwareMembershipClient struct {
@@ -46,9 +55,10 @@ type renameAwareMembershipClient struct {
 
 	rangeLimit int // >0 emulates AD MaxValRange
 
-	modifies       []*ModifyRequest
-	history        [][]*raObject
-	searchControls [][]ldap.Control
+	modifies         []*ModifyRequest
+	history          [][]*raObject
+	searchControls   [][]ldap.Control
+	resolverSearches []*SearchRequest
 }
 
 // newRenameAwareMembershipClient models the group raGroupGUID at raGroupDN; tests
@@ -123,8 +133,17 @@ func (c *renameAwareMembershipClient) Search(_ context.Context, req *SearchReque
 	if err != nil {
 		return nil, err
 	}
-	if req.Filter != wantFilter {
-		return &SearchResult{Entries: []*ldap.Entry{}}, nil
+	rangeLo := -1 // >=0: follow-up "member;range=<lo>-*" read of the group
+	if req.Scope == ScopeBaseObject && DNEqual(req.BaseDN, c.groupDN) && len(req.Attributes) == 1 &&
+		strings.HasPrefix(req.Attributes[0], "member;range=") {
+		spec := strings.TrimSuffix(strings.TrimPrefix(req.Attributes[0], "member;range="), "-*")
+		lo, err := strconv.Atoi(spec)
+		if err != nil {
+			return nil, err
+		}
+		rangeLo = lo
+	} else if req.Filter != wantFilter {
+		return c.directorySearch(req)
 	}
 
 	extended := hasControl(req.Controls, ldap.ControlTypeMicrosoftExtendedDN)
@@ -164,7 +183,17 @@ func (c *renameAwareMembershipClient) Search(_ context.Context, req *SearchReque
 	}
 	if len(values) > 0 {
 		name := "member"
-		if c.rangeLimit > 0 && len(values) > c.rangeLimit {
+		switch {
+		case rangeLo >= 0:
+			hi := rangeLo + c.rangeLimit
+			if c.rangeLimit <= 0 || hi >= len(values) {
+				name = fmt.Sprintf("member;range=%d-*", rangeLo)
+				values = values[rangeLo:]
+			} else {
+				name = fmt.Sprintf("member;range=%d-%d", rangeLo, hi-1)
+				values = values[rangeLo:hi]
+			}
+		case c.rangeLimit > 0 && len(values) > c.rangeLimit:
 			name = fmt.Sprintf("member;range=0-%d", c.rangeLimit-1)
 			values = values[:c.rangeLimit]
 		}
@@ -217,6 +246,17 @@ func (c *renameAwareMembershipClient) Modify(_ context.Context, req *ModifyReque
 	if slices.Contains(req.DeleteAttributes, "member") {
 		c.members = nil
 	}
+	// Value-level delete; the permissive-modify control makes absent values a no-op.
+	for _, v := range req.DeleteValues["member"] {
+		// Match the stored link value (by literal DN or GUID form), not the
+		// directory object currently at that DN.
+		c.members = slices.DeleteFunc(c.members, func(m *raObject) bool {
+			if IsAltGUIDDN(v) {
+				return v == "<GUID="+m.guid+">"
+			}
+			return DNEqual(m.dn, v)
+		})
+	}
 	if vals, ok := req.AddAttributes["member"]; ok {
 		staged := append([]*raObject(nil), c.members...)
 		for _, v := range vals {
@@ -238,7 +278,7 @@ func (c *renameAwareMembershipClient) Modify(_ context.Context, req *ModifyReque
 func (c *renameAwareMembershipClient) removalWrites() int {
 	n := 0
 	for _, m := range c.modifies {
-		if _, ok := m.ReplaceAttributes["member"]; ok || slices.Contains(m.DeleteAttributes, "member") {
+		if _, ok := m.ReplaceAttributes["member"]; ok || slices.Contains(m.DeleteAttributes, "member") || len(m.DeleteValues["member"]) > 0 {
 			n++
 		}
 	}
@@ -274,65 +314,118 @@ func newRenameAwareManager(t *testing.T) (*GroupMembershipManager, *renameAwareM
 	return gmm, c
 }
 
-// Stale desired DN + matching GUID: the renamed member must be left alone
-// entirely - no removal write, no add write, never absent.
-func TestSetGroupMembers_StaleDNMatchingGUID_NoChurn(t *testing.T) {
-	gmm, c := newRenameAwareManager(t)
-	a := c.addObject(raGUIDA, raDNAOld)
-	b := c.addObject(raGUIDB, raDNB)
-	c.setMembers(a, b)
-	c.rename(a, raDNANew) // renamed earlier in the same apply; caller still holds raDNAOld
+// A desired DN that is stale because the member was renamed (earlier in the
+// same apply) while its GUID is known: the renamed member is left alone - no
+// removal write, never absent, never re-added - whatever else changes.
+func TestSetGroupMembers_StaleDesiredDN(t *testing.T) {
+	tests := []struct {
+		name              string
+		members           []string // initially members: "a" (renamed), "b"
+		dExists           bool     // whether D exists in the directory (else adding D fails)
+		renameB           bool
+		desired           []string
+		guids             map[string]string
+		wantErr           bool
+		wantAdded         []string
+		wantRemovalWrites int
+		wantDNs           []string
+		snapshot          bool // pass GetCurrentMembers' result: no second member read
+	}{
+		{
+			name:    "matching GUID, unchanged: no writes",
+			members: []string{"a", "b"},
+			desired: []string{raDNAOld, raDNB},
+			guids:   map[string]string{raDNAOld: raGUIDA, raDNB: raGUIDB},
+			wantDNs: []string{raDNANew, raDNB},
+		},
+		{
+			name:              "other member removed: renamed member untouched",
+			members:           []string{"a", "b"},
+			desired:           []string{raDNAOld},
+			guids:             map[string]string{raDNAOld: raGUIDA},
+			wantRemovalWrites: 1,
+			wantDNs:           []string{raDNANew},
+		},
+		{
+			name:              "removal uses AD's current DN even if the removed member was renamed too",
+			members:           []string{"a", "b"},
+			renameB:           true,
+			desired:           []string{raDNAOld},
+			guids:             map[string]string{raDNAOld: raGUIDA},
+			wantRemovalWrites: 1,
+			wantDNs:           []string{raDNANew},
+		},
+		{
+			name:              "other member removed, decided from a current snapshot",
+			members:           []string{"a", "b"},
+			desired:           []string{raDNAOld},
+			guids:             map[string]string{raDNAOld: raGUIDA},
+			wantRemovalWrites: 1,
+			wantDNs:           []string{raDNANew},
+			snapshot:          true,
+		},
+		{
+			name:      "new member: added via GUID form only",
+			members:   []string{"a"},
+			dExists:   true,
+			desired:   []string{raDNAOld, raDND},
+			guids:     map[string]string{raDNAOld: raGUIDA, raDND: raGUIDD},
+			wantAdded: []string{"<GUID=" + raGUIDD + ">"},
+			wantDNs:   []string{raDNANew, raDND},
+		},
+		{
+			name:    "failing add never costs the renamed member its membership",
+			members: []string{"a"},
+			desired: []string{raDNAOld, raDND},
+			guids:   map[string]string{raDNAOld: raGUIDA, raDND: raGUIDD},
+			wantErr: true,
+			// The attempted write is recorded even though D cannot be resolved.
+			wantAdded: []string{"<GUID=" + raGUIDD + ">"},
+			wantDNs:   []string{raDNANew},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gmm, c := newRenameAwareManager(t)
+			a := c.addObject(raGUIDA, raDNAOld)
+			b := c.addObject(raGUIDB, raDNB)
+			if tc.dExists {
+				c.addObject(raGUIDD, raDND)
+			}
+			byName := map[string]*raObject{"a": a, "b": b}
+			var initial []*raObject
+			for _, m := range tc.members {
+				initial = append(initial, byName[m])
+			}
+			c.setMembers(initial...)
+			c.rename(a, raDNANew) // renamed earlier in the same apply; caller still holds raDNAOld
+			if tc.renameB {
+				c.rename(b, "cn=Bob Renamed,ou=Users,dc=example,dc=com")
+			}
 
-	err := gmm.SetGroupMembers(raGroupGUID, []string{raDNAOld, raDNB}, map[string]string{
-		raDNAOld: raGUIDA,
-		raDNB:    raGUIDB,
-	})
-	require.NoError(t, err)
+			var current []CurrentMember
+			if tc.snapshot {
+				var err error
+				current, err = gmm.GetCurrentMembers(raGroupGUID)
+				require.NoError(t, err)
+			}
 
-	assert.Empty(t, c.modifies, "no writes expected when membership is unchanged by GUID identity")
-	assert.True(t, c.isMember(a))
-	assert.True(t, c.isMember(b))
-	assert.Equal(t, []string{raDNANew, raDNB}, c.memberDNs())
-}
+			err := gmm.SetGroupMembers(raGroupGUID, tc.desired, tc.guids, current)
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
 
-// Stale DN + another member being removed: only the other member is removed;
-// the renamed member is never transiently absent and is not re-added.
-func TestSetGroupMembers_StaleDNWithOtherRemoval_RenamedMemberUntouched(t *testing.T) {
-	gmm, c := newRenameAwareManager(t)
-	a := c.addObject(raGUIDA, raDNAOld)
-	b := c.addObject(raGUIDB, raDNB)
-	c.setMembers(a, b)
-	c.rename(a, raDNANew)
-
-	err := gmm.SetGroupMembers(raGroupGUID, []string{raDNAOld}, map[string]string{raDNAOld: raGUIDA})
-	require.NoError(t, err)
-
-	assert.True(t, c.neverAbsent(a), "renamed member must never be transiently removed")
-	assert.False(t, c.isMember(b))
-	assert.Empty(t, c.addedValues(), "renamed member must not be re-added")
-	assert.Equal(t, 1, c.removalWrites())
-	assert.Equal(t, []string{raDNANew}, c.memberDNs())
-}
-
-// Stale DN + new member: the new member is added via its GUID form, the
-// renamed member is untouched.
-func TestSetGroupMembers_StaleDNWithNewMember_AddsOnlyNew(t *testing.T) {
-	gmm, c := newRenameAwareManager(t)
-	a := c.addObject(raGUIDA, raDNAOld)
-	d := c.addObject(raGUIDD, raDND)
-	c.setMembers(a)
-	c.rename(a, raDNANew)
-
-	err := gmm.SetGroupMembers(raGroupGUID, []string{raDNAOld, raDND}, map[string]string{
-		raDNAOld: raGUIDA,
-		raDND:    raGUIDD,
-	})
-	require.NoError(t, err)
-
-	assert.True(t, c.neverAbsent(a))
-	assert.Equal(t, 0, c.removalWrites())
-	assert.Equal(t, []string{"<GUID=" + raGUIDD + ">"}, c.addedValues())
-	assert.True(t, c.isMember(d))
+			assert.True(t, c.neverAbsent(a), "renamed member must never be transiently removed")
+			assert.Equal(t, tc.wantAdded, c.addedValues())
+			assert.Equal(t, tc.wantRemovalWrites, c.removalWrites())
+			assert.Equal(t, tc.wantDNs, c.memberDNs())
+			if tc.snapshot {
+				assert.Equal(t, 1, c.extendedDNSearches(), "no second member read")
+			}
+		})
+	}
 }
 
 // --- Mixed-endian GUID conversion & extended DN parsing ---------------------
@@ -459,7 +552,7 @@ func TestNewExtendedDNControl(t *testing.T) {
 
 func calcDelta(t *testing.T, gmm *GroupMembershipManager, desired []string, guids map[string]string) *MembershipDelta {
 	t.Helper()
-	d, err := gmm.CalculateMembershipDeltaWithGUIDs(raGroupGUID, desired, guids)
+	d, err := gmm.CalculateMembershipDeltaWithGUIDs(raGroupGUID, desired, guids, nil)
 	require.NoError(t, err)
 	return d
 }
@@ -511,7 +604,7 @@ func TestSetGroupMembers_NilGUIDs_LegacyBehavior(t *testing.T) {
 	d := c.addObject(raGUIDD, raDND)
 	c.setMembers(a, b)
 
-	require.NoError(t, gmm.SetGroupMembers(raGroupGUID, []string{raDNAOld, raDND}, nil))
+	require.NoError(t, gmm.SetGroupMembers(raGroupGUID, []string{raDNAOld, raDND}, nil, nil))
 
 	assert.Zero(t, c.extendedDNSearches())
 	assert.Equal(t, []string{raDND}, c.addedValues(), "nil memberGUIDs writes literal DNs")
@@ -692,23 +785,23 @@ func TestCalculateMembershipDeltaWithGUIDs_EmptyDesiredRemovesAll(t *testing.T) 
 func TestCalculateMembershipDeltaWithGUIDs_Errors(t *testing.T) {
 	t.Run("empty group GUID", func(t *testing.T) {
 		gmm, _ := newRenameAwareManager(t)
-		_, err := gmm.CalculateMembershipDeltaWithGUIDs("", []string{raDNB}, map[string]string{raDNB: raGUIDB})
+		_, err := gmm.CalculateMembershipDeltaWithGUIDs("", []string{raDNB}, map[string]string{raDNB: raGUIDB}, nil)
 		assert.Error(t, err)
 	})
 	t.Run("invalid desired DN", func(t *testing.T) {
 		gmm, _ := newRenameAwareManager(t)
-		_, err := gmm.CalculateMembershipDeltaWithGUIDs(raGroupGUID, []string{"not a dn"}, map[string]string{"not a dn": raGUIDB})
+		_, err := gmm.CalculateMembershipDeltaWithGUIDs(raGroupGUID, []string{"not a dn"}, map[string]string{"not a dn": raGUIDB}, nil)
 		assert.Error(t, err)
 	})
 	t.Run("invalid group GUID", func(t *testing.T) {
 		gmm, _ := newRenameAwareManager(t)
-		_, err := gmm.CalculateMembershipDeltaWithGUIDs("zzz", []string{raDNB}, map[string]string{raDNB: raGUIDB})
+		_, err := gmm.CalculateMembershipDeltaWithGUIDs("zzz", []string{raDNB}, map[string]string{raDNB: raGUIDB}, nil)
 		assert.Error(t, err)
 	})
 	t.Run("group not found", func(t *testing.T) {
 		gmm, c := newRenameAwareManager(t)
 		c.groupGUID = raGUIDC // mock now only answers for a different group
-		_, err := gmm.CalculateMembershipDeltaWithGUIDs(raGroupGUID, []string{raDNB}, map[string]string{raDNB: raGUIDB})
+		_, err := gmm.CalculateMembershipDeltaWithGUIDs(raGroupGUID, []string{raDNB}, map[string]string{raDNB: raGUIDB}, nil)
 		assert.True(t, IsNotFoundError(err), "got %v", err)
 	})
 }
@@ -742,7 +835,7 @@ func TestSetGroupMembers_GUIDPathReadFailures_NoWrites(t *testing.T) {
 		fc := &failingSearchClient{renameAwareMembershipClient: inner, err: ldap.NewError(ldap.LDAPResultInsufficientAccessRights, fmt.Errorf("denied"))}
 		gmm := NewGroupMembershipManager(t.Context(), fc, "DC=example,DC=com", nil)
 
-		err := gmm.SetGroupMembers(raGroupGUID, []string{raDND}, map[string]string{raDND: raGUIDD})
+		err := gmm.SetGroupMembers(raGroupGUID, []string{raDND}, map[string]string{raDND: raGUIDD}, nil)
 		require.Error(t, err)
 		assert.Empty(t, inner.modifies)
 	})
@@ -751,7 +844,7 @@ func TestSetGroupMembers_GUIDPathReadFailures_NoWrites(t *testing.T) {
 		fc := &failingSearchClient{renameAwareMembershipClient: inner, memberValue: "<GUID=nothex>;CN=X,DC=example,DC=com"}
 		gmm := NewGroupMembershipManager(t.Context(), fc, "DC=example,DC=com", nil)
 
-		err := gmm.SetGroupMembers(raGroupGUID, []string{raDND}, map[string]string{raDND: raGUIDD})
+		err := gmm.SetGroupMembers(raGroupGUID, []string{raDND}, map[string]string{raDND: raGUIDD}, nil)
 		require.Error(t, err)
 		assert.Empty(t, inner.modifies)
 	})
@@ -759,28 +852,13 @@ func TestSetGroupMembers_GUIDPathReadFailures_NoWrites(t *testing.T) {
 
 // --- SetGroupMembers end-to-end with the rename-aware AD model --------------
 
-func TestSetGroupMembers_RemoveUsesADCurrentDN(t *testing.T) {
-	gmm, c := newRenameAwareManager(t)
-	a := c.addObject(raGUIDA, raDNAOld)
-	b := c.addObject(raGUIDB, raDNB)
-	c.setMembers(a, b)
-	c.rename(a, raDNANew)
-	c.rename(b, "cn=Bob Renamed,ou=Users,dc=example,dc=com") // non-desired member renamed too
-
-	require.NoError(t, gmm.SetGroupMembers(raGroupGUID, []string{raDNAOld}, map[string]string{raDNAOld: raGUIDA}))
-
-	assert.True(t, c.neverAbsent(a))
-	assert.False(t, c.isMember(b))
-	assert.Equal(t, []string{raDNANew}, c.memberDNs())
-}
-
 func TestSetGroupMembers_RecreatedObjectSameDN_ReplacedByGUID(t *testing.T) {
 	gmm, c := newRenameAwareManager(t)
 	old := &raObject{guid: raGUIDB, dn: raDNC} // deleted object, still a member value
 	c.setMembers(old)
 	fresh := c.addObject(raGUIDC, raDNC) // recreated at the same DN
 
-	require.NoError(t, gmm.SetGroupMembers(raGroupGUID, []string{raDNC}, map[string]string{raDNC: raGUIDC}))
+	require.NoError(t, gmm.SetGroupMembers(raGroupGUID, []string{raDNC}, map[string]string{raDNC: raGUIDC}, nil))
 
 	assert.Equal(t, []*raObject{fresh}, c.members)
 	assert.Equal(t, []string{"<GUID=" + raGUIDC + ">"}, c.addedValues())
@@ -796,7 +874,7 @@ func TestSetGroupMembers_Mixed_EndToEnd(t *testing.T) {
 	c.rename(a, raDNANew)
 
 	// A: stale DN + GUID (keep). C: DN only (keep). D: DN only (add). B: drop.
-	require.NoError(t, gmm.SetGroupMembers(raGroupGUID, []string{raDNAOld, raDNC, raDND}, map[string]string{raDNAOld: raGUIDA}))
+	require.NoError(t, gmm.SetGroupMembers(raGroupGUID, []string{raDNAOld, raDNC, raDND}, map[string]string{raDNAOld: raGUIDA}, nil))
 
 	assert.True(t, c.neverAbsent(a))
 	assert.True(t, c.neverAbsent(cc))
@@ -811,35 +889,18 @@ func TestSetGroupMembers_EmptyCurrentAddsAllWithGUIDForm(t *testing.T) {
 	b := c.addObject(raGUIDB, raDNB)
 
 	// A's desired DN is stale; the GUID form makes the add succeed anyway.
-	require.NoError(t, gmm.SetGroupMembers(raGroupGUID, []string{raDNAOld, raDNB}, map[string]string{raDNAOld: raGUIDA, raDNB: raGUIDB}))
+	require.NoError(t, gmm.SetGroupMembers(raGroupGUID, []string{raDNAOld, raDNB}, map[string]string{raDNAOld: raGUIDA, raDNB: raGUIDB}, nil))
 
 	assert.Equal(t, 0, c.removalWrites())
 	assert.True(t, c.isMember(a))
 	assert.True(t, c.isMember(b))
 }
 
-// A failing add must never cost an existing (renamed) member its membership:
-// with GUID-identity diffing the renamed member is not part of any write.
-func TestSetGroupMembers_StaleDN_AddFailureDoesNotLoseRenamedMember(t *testing.T) {
-	gmm, c := newRenameAwareManager(t)
-	a := c.addObject(raGUIDA, raDNAOld)
-	c.setMembers(a)
-	c.rename(a, raDNANew)
-
-	// D does not exist in the directory => the add of D fails.
-	err := gmm.SetGroupMembers(raGroupGUID, []string{raDNAOld, raDND}, map[string]string{raDNAOld: raGUIDA, raDND: raGUIDD})
-	require.Error(t, err)
-
-	assert.True(t, c.neverAbsent(a))
-	assert.True(t, c.isMember(a))
-	assert.Equal(t, 0, c.removalWrites())
-}
-
-// Groups beyond AD's MaxValRange: the server returns "member;range=0-N".
-// The GUID path must match the legacy handling (no ranged retrieval, so no
-// current members are seen) and therefore never issue a removal write that
-// RemoveGroupMembers would compute from a truncated member list.
-func TestSetGroupMembers_RangedMemberAttribute_NoRemovals(t *testing.T) {
+// Groups beyond AD's MaxValRange: the server returns "member;range=0-N" and
+// the remaining values are fetched via follow-up range requests. The full
+// membership is therefore seen, B is the only member dropped, and renamed A is
+// recognised by GUID and never absent.
+func TestSetGroupMembers_RangedMemberAttribute_FollowsRanges(t *testing.T) {
 	gmm, c := newRenameAwareManager(t)
 	c.rangeLimit = 2
 	a := c.addObject(raGUIDA, raDNAOld)
@@ -848,20 +909,16 @@ func TestSetGroupMembers_RangedMemberAttribute_NoRemovals(t *testing.T) {
 	c.setMembers(a, b, cc)
 	c.rename(a, raDNANew)
 
-	desired := []string{raDNAOld, raDNB}
-	guids := map[string]string{raDNAOld: raGUIDA, raDNB: raGUIDB}
+	desired := []string{raDNAOld, raDNC}
+	guids := map[string]string{raDNAOld: raGUIDA, raDNC: raGUIDC}
 
-	legacy, err := gmm.CalculateMembershipDelta(raGroupGUID, desired)
-	require.NoError(t, err)
 	got := calcDelta(t, gmm, desired, guids)
-	assert.Empty(t, got.ToRemove)
-	assert.Empty(t, legacy.ToRemove)
-	assert.Equal(t, legacy.ToAdd, got.ToAdd)
+	assert.Equal(t, []string{raDNB}, got.ToRemove)
+	assert.Empty(t, got.ToAdd)
 
-	require.NoError(t, gmm.SetGroupMembers(raGroupGUID, desired, guids))
-	assert.Equal(t, 0, c.removalWrites())
+	require.NoError(t, gmm.SetGroupMembers(raGroupGUID, desired, guids, nil))
 	assert.True(t, c.neverAbsent(a))
-	assert.True(t, c.neverAbsent(b))
+	assert.False(t, c.isMember(b))
 	assert.True(t, c.neverAbsent(cc))
 }
 
@@ -898,7 +955,7 @@ func TestCalculateMembershipDeltaWithGUIDs_UnavailableCriticalExtension_FallsBac
 			legacy, err := gmm.CalculateMembershipDelta(raGroupGUID, desired)
 			require.NoError(t, err)
 
-			got, err := gmm.CalculateMembershipDeltaWithGUIDs(raGroupGUID, desired, guids)
+			got, err := gmm.CalculateMembershipDeltaWithGUIDs(raGroupGUID, desired, guids, nil)
 			require.NoError(t, err)
 			assert.Equal(t, legacy, got, "fallback must equal the DN-based delta")
 			assert.Equal(t, []string{raDND}, got.ToAdd)
@@ -910,7 +967,7 @@ func TestCalculateMembershipDeltaWithGUIDs_UnavailableCriticalExtension_FallsBac
 func TestSetGroupMembers_UnavailableCriticalExtension_FallsBackAndWritesGUIDForm(t *testing.T) {
 	gmm, c := newUnsupportedControlManager(t, unavailableCriticalExtensionErr())
 
-	require.NoError(t, gmm.SetGroupMembers(raGroupGUID, []string{raDNAOld, raDND}, map[string]string{raDNAOld: raGUIDA, raDND: raGUIDD}))
+	require.NoError(t, gmm.SetGroupMembers(raGroupGUID, []string{raDNAOld, raDND}, map[string]string{raDNAOld: raGUIDA, raDND: raGUIDD}, nil))
 
 	assert.Equal(t, []string{"<GUID=" + raGUIDD + ">"}, c.addedValues(), "adds are still written in GUID form")
 	assert.True(t, c.isMember(c.objects[2]))
@@ -930,11 +987,11 @@ func TestCalculateMembershipDeltaWithGUIDs_OtherReadErrors_NotMasked(t *testing.
 		t.Run(name, func(t *testing.T) {
 			gmm, c := newUnsupportedControlManager(t, ldap.NewError(code, fmt.Errorf("boom")))
 
-			_, err := gmm.CalculateMembershipDeltaWithGUIDs(raGroupGUID, desired, guids)
+			_, err := gmm.CalculateMembershipDeltaWithGUIDs(raGroupGUID, desired, guids, nil)
 			require.Error(t, err)
 			assert.True(t, ldap.IsErrorWithCode(err, code), "got %v", err)
 
-			require.Error(t, gmm.SetGroupMembers(raGroupGUID, desired, guids))
+			require.Error(t, gmm.SetGroupMembers(raGroupGUID, desired, guids, nil))
 			assert.Empty(t, c.modifies)
 		})
 	}
@@ -942,7 +999,7 @@ func TestCalculateMembershipDeltaWithGUIDs_OtherReadErrors_NotMasked(t *testing.
 	t.Run("group not found", func(t *testing.T) {
 		gmm, c := newRenameAwareManager(t)
 		c.groupGUID = raGUIDC
-		require.Error(t, gmm.SetGroupMembers(raGroupGUID, desired, guids))
+		require.Error(t, gmm.SetGroupMembers(raGroupGUID, desired, guids, nil))
 		assert.Empty(t, c.modifies)
 	})
 }
@@ -959,7 +1016,7 @@ func TestGetCurrentMembers_UnavailableCriticalExtension_StillReturnsError(t *tes
 func TestCalculateMembershipDeltaWithGUIDs_NoGUIDs_NeverSendsControl(t *testing.T) {
 	gmm, c := newUnsupportedControlManager(t, unavailableCriticalExtensionErr())
 	for _, guids := range []map[string]string{nil, {}} {
-		_, err := gmm.CalculateMembershipDeltaWithGUIDs(raGroupGUID, []string{raDNB}, guids)
+		_, err := gmm.CalculateMembershipDeltaWithGUIDs(raGroupGUID, []string{raDNB}, guids, nil)
 		require.NoError(t, err)
 	}
 	assert.Equal(t, 0, c.extendedDNSearches())

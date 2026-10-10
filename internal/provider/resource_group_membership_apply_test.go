@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/go-ldap/ldap/v3"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -136,8 +137,27 @@ func (c *recordingMembershipClient) groupEntry() *ldap.Entry {
 // member list, so that subsequent Search-driven lookups within the same
 // SetGroupMembers call (e.g. RemoveGroupMembers re-reading current state
 // after AddGroupMembers already ran) see up-to-date membership.
+// DeleteValues["member"] removes matching DNs case-insensitively; absent
+// values are a no-op, mirroring AD's permissive-modify behaviour.
 func (c *recordingMembershipClient) Modify(ctx context.Context, req *ldapclient.ModifyRequest) error {
 	c.modifyRequests = append(c.modifyRequests, req)
+
+	if del, ok := req.DeleteValues["member"]; ok {
+		kept := c.members[:0:0]
+		for _, m := range c.members {
+			drop := false
+			for _, d := range del {
+				if strings.EqualFold(m, d) {
+					drop = true
+					break
+				}
+			}
+			if !drop {
+				kept = append(kept, m)
+			}
+		}
+		c.members = kept
+	}
 
 	if add, ok := req.AddAttributes["member"]; ok {
 		c.members = append(c.members, add...)
@@ -588,11 +608,10 @@ func TestGroupMembershipResource_CreateUpdateMixedPlanMemberDetails(t *testing.T
 		dnMissing = "CN=NeverCreated,OU=Groups,DC=example,DC=com"
 	)
 
-	altDN := func(t *testing.T, guid string) string {
-		t.Helper()
+	altDN := func(guid string) string {
 		alt, err := ldapclient.GUIDToAltDN(guid)
 		if err != nil {
-			t.Fatalf("failed to compute alt-DN: %v", err)
+			panic(err)
 		}
 		return alt
 	}
@@ -603,132 +622,125 @@ func TestGroupMembershipResource_CreateUpdateMixedPlanMemberDetails(t *testing.T
 		return out
 	}
 
-	t.Run("A3: Update with K + G + P", func(t *testing.T) {
-		cm := ldapclient.NewCacheManager()
-		seedMembershipCache(t, cm, dnFresh1, guid1)
-		seedMembershipCache(t, cm, dn2, guid2)
-		seedMembershipCache(t, cm, dn3, guid3)
+	tests := []struct {
+		name    string
+		seed    []pair // resolvable from the cache at apply time
+		initial []string
+		members []string
+		planned func(t *testing.T) types.Set
+		update  bool // prior state holds member 1 under dnState1
+		ignore  types.Bool
 
-		client := newRecordingMembershipClient(groupGUID, groupDN, dnFresh1) // AD already reports the renamed DN
-		r := newTestGroupMembershipResourceWithClient(client, cm)
+		wantAdded    []string
+		wantFinal    []string // final group membership; nil = not asserted
+		noLiveSearch bool
+		wantWarning  bool
+		wantKnown    map[string]string
+	}{
+		{
+			// AD already reports member 1 under its renamed DN, so it is not
+			// removed and re-added: only members 2 and 3 are added.
+			name:    "A3: Update with K + G + P",
+			seed:    []pair{{dnFresh1, guid1}, {dn2, guid2}, {dn3, guid3}},
+			initial: []string{dnFresh1},
+			members: []string{guid1, guid2, dn3},
+			planned: func(t *testing.T) types.Set {
+				return newMemberDetailSetOf(t, knownDetail(t, dnState1, guid1), guidOnlyDetail(t, guid2), placeholderDetail(t))
+			},
+			update:       true,
+			ignore:       types.BoolNull(),
+			wantAdded:    []string{altDN(guid2), altDN(guid3)},
+			wantFinal:    []string{dnFresh1, altDN(guid2), altDN(guid3)},
+			noLiveSearch: true,
+			// K keeps the planned (state-anchored) DN; G and P are filled
+			// from fresh resolution.
+			wantKnown: map[string]string{dnState1: guid1, dn2: guid2, dn3: guid3},
+		},
+		{
+			name:    "A3: Create with G + P",
+			seed:    []pair{{dn2, guid2}, {dn3, guid3}},
+			members: []string{guid2, dn3},
+			planned: func(t *testing.T) types.Set {
+				return newMemberDetailSetOf(t, guidOnlyDetail(t, guid2), placeholderDetail(t))
+			},
+			ignore:    types.BoolNull(),
+			wantAdded: []string{altDN(guid2), altDN(guid3)},
+			wantKnown: map[string]string{dn2: guid2, dn3: guid3},
+		},
+		{
+			// dnMissing is deliberately unseeded: it still does not exist.
+			name:    "A4: Update with K + P, P still unresolved at apply (ignore-missing)",
+			seed:    []pair{{dnState1, guid1}},
+			initial: []string{dnState1},
+			members: []string{guid1, dnMissing},
+			planned: func(t *testing.T) types.Set {
+				return newMemberDetailSetOf(t, knownDetail(t, dnState1, guid1), placeholderDetail(t))
+			},
+			update:      true,
+			ignore:      types.BoolValue(true),
+			wantWarning: true,
+			wantKnown:   map[string]string{dnState1: guid1},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cm := ldapclient.NewCacheManager()
+			for _, p := range tc.seed {
+				seedMembershipCache(t, cm, p.dn, p.guid)
+			}
+			client := newRecordingMembershipClient(groupGUID, groupDN, tc.initial...)
+			r := newTestGroupMembershipResourceWithClient(client, cm)
 
-		plannedDetails := newMemberDetailSetOf(t,
-			knownDetail(t, dnState1, guid1), // K
-			guidOnlyDetail(t, guid2),        // G
-			placeholderDetail(t),            // P
-		)
-		planModel := &GroupMembershipResourceModel{
-			ID:                   types.StringValue(groupGUID),
-			GroupID:              types.StringValue(groupGUID),
-			Members:              newMembershipSet(t, guid1, guid2, dn3),
-			MemberDetails:        plannedDetails,
-			IgnoreMissingMembers: types.BoolNull(),
-		}
-		stateModel := &GroupMembershipResourceModel{
-			ID:                   types.StringValue(groupGUID),
-			GroupID:              types.StringValue(groupGUID),
-			Members:              newMembershipSet(t, guid1),
-			MemberDetails:        newMemberDetailSet(t, ctx, []string{dnState1}, []string{guid1}),
-			IgnoreMissingMembers: types.BoolNull(),
-		}
+			plannedDetails := tc.planned(t)
+			planModel := &GroupMembershipResourceModel{
+				ID:                   types.StringUnknown(),
+				GroupID:              types.StringValue(groupGUID),
+				Members:              newMembershipSet(t, tc.members...),
+				MemberDetails:        plannedDetails,
+				IgnoreMissingMembers: tc.ignore,
+			}
 
-		out, resp := runMembershipUpdate(t, ctx, r, planModel, stateModel)
-		if resp.Diagnostics.HasError() {
-			t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
-		}
+			var out *GroupMembershipResourceModel
+			var diags diag.Diagnostics
+			if tc.update {
+				planModel.ID = types.StringValue(groupGUID)
+				stateModel := &GroupMembershipResourceModel{
+					ID:                   types.StringValue(groupGUID),
+					GroupID:              types.StringValue(groupGUID),
+					Members:              newMembershipSet(t, guid1),
+					MemberDetails:        newMemberDetailSet(t, ctx, []string{dnState1}, []string{guid1}),
+					IgnoreMissingMembers: tc.ignore,
+				}
+				var resp *resource.UpdateResponse
+				out, resp = runMembershipUpdate(t, ctx, r, planModel, stateModel)
+				diags = resp.Diagnostics
+			} else {
+				var resp *resource.CreateResponse
+				out, resp = runMembershipCreate(t, ctx, r, planModel)
+				diags = resp.Diagnostics
+			}
+			if diags.HasError() {
+				t.Fatalf("unexpected error: %v", diags.Errors())
+			}
+			if tc.wantWarning != hasWarningSummary(diags, "Member could not be resolved") {
+				t.Errorf("'Member could not be resolved' warning present = %v, want %v: %v", !tc.wantWarning, tc.wantWarning, diags)
+			}
 
-		// The write uses fresh DNs: member 1 is already present under its
-		// current DN, so only members 2 and 3 are added (GUID-alt-DN form)
-		// and nothing is removed.
-		wantAdded := sorted([]string{altDN(t, guid2), altDN(t, guid3)})
-		if got := sorted(client.addedMemberValues()); !slices.Equal(got, wantAdded) {
-			t.Errorf("AD adds = %v, want %v", got, wantAdded)
-		}
-		wantMembers := sorted([]string{dnFresh1, altDN(t, guid2), altDN(t, guid3)})
-		if got := sorted(client.members); !slices.Equal(got, wantMembers) {
-			t.Errorf("final group membership = %v, want %v (member 1 must not be removed and re-added)", got, wantMembers)
-		}
-		if extra := client.nonGroupLookupSearches(); len(extra) != 0 {
-			t.Errorf("unexpected live Search calls (members should resolve from cache): %v", extra)
-		}
+			if got := sorted(client.addedMemberValues()); !slices.Equal(got, sorted(tc.wantAdded)) {
+				t.Errorf("AD adds = %v, want %v", got, sorted(tc.wantAdded))
+			}
+			if tc.wantFinal != nil {
+				if got := sorted(client.members); !slices.Equal(got, sorted(tc.wantFinal)) {
+					t.Errorf("final group membership = %v, want %v (member 1 must not be removed and re-added)", got, sorted(tc.wantFinal))
+				}
+			}
+			if extra := client.nonGroupLookupSearches(); tc.noLiveSearch && len(extra) != 0 {
+				t.Errorf("unexpected live Search calls (members should resolve from cache): %v", extra)
+			}
 
-		// K keeps the planned (state-anchored) DN; G and P are filled
-		// from fresh resolution; the result is fully known.
-		assertClassifiedDetails(t, out.MemberDetails, classifiedDetails{
-			known: map[string]string{dnState1: guid1, dn2: guid2, dn3: guid3},
+			// The result is fully known and compatible with the plan.
+			assertClassifiedDetails(t, out.MemberDetails, classifiedDetails{known: tc.wantKnown})
+			assertFinalPlanCompatible(t, plannedDetails, out.MemberDetails)
 		})
-		assertFinalPlanCompatible(t, plannedDetails, out.MemberDetails)
-	})
-
-	t.Run("A3: Create with G + P", func(t *testing.T) {
-		cm := ldapclient.NewCacheManager()
-		seedMembershipCache(t, cm, dn2, guid2)
-		seedMembershipCache(t, cm, dn3, guid3)
-
-		client := newRecordingMembershipClient(groupGUID, groupDN)
-		r := newTestGroupMembershipResourceWithClient(client, cm)
-
-		plannedDetails := newMemberDetailSetOf(t, guidOnlyDetail(t, guid2), placeholderDetail(t))
-		planModel := &GroupMembershipResourceModel{
-			ID:                   types.StringUnknown(),
-			GroupID:              types.StringValue(groupGUID),
-			Members:              newMembershipSet(t, guid2, dn3),
-			MemberDetails:        plannedDetails,
-			IgnoreMissingMembers: types.BoolNull(),
-		}
-
-		out, resp := runMembershipCreate(t, ctx, r, planModel)
-		if resp.Diagnostics.HasError() {
-			t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
-		}
-
-		wantAdded := sorted([]string{altDN(t, guid2), altDN(t, guid3)})
-		if got := sorted(client.addedMemberValues()); !slices.Equal(got, wantAdded) {
-			t.Errorf("AD adds = %v, want %v", got, wantAdded)
-		}
-		assertClassifiedDetails(t, out.MemberDetails, classifiedDetails{
-			known: map[string]string{dn2: guid2, dn3: guid3},
-		})
-		assertFinalPlanCompatible(t, plannedDetails, out.MemberDetails)
-	})
-
-	t.Run("A4: Update with K + P, P still unresolved at apply (ignore-missing)", func(t *testing.T) {
-		cm := ldapclient.NewCacheManager()
-		seedMembershipCache(t, cm, dnState1, guid1)
-		// dnMissing deliberately unseeded: it still does not exist.
-
-		client := newRecordingMembershipClient(groupGUID, groupDN, dnState1)
-		r := newTestGroupMembershipResourceWithClient(client, cm)
-
-		plannedDetails := newMemberDetailSetOf(t, knownDetail(t, dnState1, guid1), placeholderDetail(t))
-		planModel := &GroupMembershipResourceModel{
-			ID:                   types.StringValue(groupGUID),
-			GroupID:              types.StringValue(groupGUID),
-			Members:              newMembershipSet(t, guid1, dnMissing),
-			MemberDetails:        plannedDetails,
-			IgnoreMissingMembers: types.BoolValue(true),
-		}
-		stateModel := &GroupMembershipResourceModel{
-			ID:                   types.StringValue(groupGUID),
-			GroupID:              types.StringValue(groupGUID),
-			Members:              newMembershipSet(t, guid1),
-			MemberDetails:        newMemberDetailSet(t, ctx, []string{dnState1}, []string{guid1}),
-			IgnoreMissingMembers: types.BoolValue(true),
-		}
-
-		out, resp := runMembershipUpdate(t, ctx, r, planModel, stateModel)
-		if resp.Diagnostics.HasError() {
-			t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
-		}
-		if !hasWarningSummary(resp.Diagnostics, "Member could not be resolved") {
-			t.Errorf("expected a 'Member could not be resolved' warning for the still-missing member, got %v", resp.Diagnostics)
-		}
-		if added := client.addedMemberValues(); len(added) != 0 {
-			t.Errorf("AD adds = %v, want none (the missing member is excluded)", added)
-		}
-		assertClassifiedDetails(t, out.MemberDetails, classifiedDetails{
-			known: map[string]string{dnState1: guid1},
-		})
-		assertFinalPlanCompatible(t, plannedDetails, out.MemberDetails)
-	})
+	}
 }

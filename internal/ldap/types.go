@@ -172,12 +172,18 @@ type AddRequest struct {
 	Attributes map[string][]string
 }
 
+// ControlTypePermissiveModify is LDAP_SERVER_PERMISSIVE_MODIFY_OID: adding an
+// existing value or deleting an absent one succeeds instead of failing.
+const ControlTypePermissiveModify = "1.2.840.113556.1.4.1413"
+
 // ModifyRequest encapsulates LDAP modify parameters.
 type ModifyRequest struct {
 	DN                string
 	AddAttributes     map[string][]string
 	ReplaceAttributes map[string][]string
 	DeleteAttributes  []string
+	// DeleteValues removes specific values from attributes.
+	DeleteValues map[string][]string
 	// Controls are optional LDAP controls to send with the request
 	// (e.g., LDAP_SERVER_SD_FLAGS_OID).
 	Controls []ldap.Control

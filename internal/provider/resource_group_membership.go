@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/go-ldap/ldap/v3"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -53,11 +52,12 @@ type GroupMembershipResourceModel struct {
 // MemberDetails. DN and ID (the member's objectGUID) are correlated together
 // (unlike two independent flat Sets, which would lose that correlation): both
 // are derived from the same identifier, in the same resolution pass, from
-// whatever format was used in `members`. ID is the empty string when
-// unavailable (mirrors ldapclient.ResolvedIdentifier; never an error on its
-// own). In a PLANNED value either field may be Unknown (see
-// buildPlannedMemberDetails: case G has an unknown DN, case P both); in
-// state both are always known.
+// whatever format was used in `members`. Planning and writes require every
+// member's objectGUID (see resolveMembers); only a refresh of a member whose
+// GUID could not be read (loadMembershipView) stores ID as the empty string,
+// and such an element is replaced by the next plan. In a PLANNED value either
+// field may be Unknown (see buildPlannedMemberDetails: case G has an unknown
+// DN, case P both); in state both are always known.
 type MemberDetailModel struct {
 	DN types.String `tfsdk:"dn"`
 	ID types.String `tfsdk:"id"`
@@ -190,8 +190,7 @@ func (r *GroupMembershipResource) Configure(ctx context.Context, req resource.Co
 //
 // No-op exemption: when members, ignore_missing_members and group_id all
 // equal prior state, and the known (case K) elements alone equal
-// state.member_details with no case G element and no resolvable-but-
-// unanchored case P element, member_details is planned as exactly
+// state.member_details with no case G element, member_details is planned as exactly
 // state.member_details. Remaining placeholders in that situation can only be
 // members that are permanently missing under ignore_missing_members; planning
 // them would produce a diff on every plan. This is safe because Terraform
@@ -297,7 +296,7 @@ func (r *GroupMembershipResource) ModifyPlan(ctx context.Context, req resource.M
 	effectiveIgnoreMissing := r.effectiveIgnoreMissingMembers(ctx, plan.IgnoreMissingMembers)
 
 	// Normalize all identifiers to DNs, applying ignore-missing semantics.
-	current := r.readCurrentMembersBestEffort(ctx, plan.GroupID.ValueString(), len(members))
+	current := r.readCurrentMembersBestEffort(ctx, baseDN, plan.GroupID.ValueString(), len(members))
 	resolvedMap, failures, diags := r.resolveMembers(ctx, normalizer, members, current, effectiveIgnoreMissing)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
@@ -358,7 +357,6 @@ func (r *GroupMembershipResource) ModifyPlan(ctx context.Context, req resource.M
 		"known_count":        len(planned.known),
 		"guid_only_count":    len(planned.guidOnly),
 		"unresolved_count":   planned.unresolved,
-		"unanchored_count":   planned.unanchored,
 		"member_details_len": len(memberDetailsSet.Elements()),
 	})
 
@@ -378,31 +376,28 @@ type plannedMemberDetails struct {
 	// unresolved counts case P placeholders for members that failed to
 	// resolve (ignore-missing mode only; strict mode errors before this).
 	unresolved int
-	// unanchored counts case P placeholders for members that resolved with
-	// an empty GUID and match no prior-state element by DN.
-	unanchored int
 }
 
 // buildPlannedMemberDetails classifies every configured member into one
 // planned `member_details` element:
 //
 //   - K (known, anchored): resolves to a GUID matching a prior-state element
-//     (or, when it resolves with an empty GUID, whose DN matches a prior-state
-//     element) -> that prior-state element verbatim, fully known. The state
+//     -> that prior-state element verbatim, fully known. The state
 //     DN is used rather than the freshly resolved DN so that the plan and the
 //     apply-time re-plan (which receive the same prior state) produce the
-//     same value even if the member is renamed in between. A prior element
-//     with an EMPTY id (transient GUID lookup failure in Read) whose DN
-//     matches a member that now resolves to a GUID is anchored as
-//     {dn_state, fresh GUID}: a one-time healing update.
+//     same value even if the member is renamed in between.
 //   - G (new, GUID known): resolves to a GUID not in prior state ->
 //     {dn: unknown, id: GUID}. Such a member has no stable DN yet, but its
-//     GUID can never change.
-//   - P (placeholder): fails to resolve (ignore-missing mode), or resolves
-//     with an empty GUID and matches no prior-state element by DN ->
+//     GUID can never change. This includes a member whose prior element has
+//     an EMPTY id (transient GUID lookup failure in Read) but which now
+//     resolves to a GUID: a one-time healing update. Anchoring it to the
+//     state DN instead would break if the member were renamed before the
+//     apply-time re-plan.
+//   - P (placeholder): fails to resolve (ignore-missing mode) ->
 //     {dn: unknown, id: unknown}, one per member, so the planned element
 //     count is never smaller than the final count.
 //
+// Every resolved member has a GUID (resolveMembers errors otherwise).
 // Identifiers that appear in neither resolved nor failures (empty or
 // whitespace-only, skipped by ResolveBatch) produce no element.
 func buildPlannedMemberDetails(
@@ -412,32 +407,14 @@ func buildPlannedMemberDetails(
 	priorDetails []MemberDetailModel,
 ) plannedMemberDetails {
 	priorByGUID := make(map[string]int, len(priorDetails))
-	priorByDN := make(map[string]int, len(priorDetails))
-	// priorEmptyIDByDN indexes prior elements whose id is empty (Read stores
-	// {dn, ""} when a member's GUID lookup failed transiently).
-	priorEmptyIDByDN := make(map[string]int)
 	for i, detail := range priorDetails {
 		if guid := detail.ID.ValueString(); guid != "" {
 			priorByGUID[strings.ToLower(guid)] = i
-		} else if dn := detail.DN.ValueString(); dn != "" {
-			priorEmptyIDByDN[strings.ToLower(dn)] = i
-		}
-		if dn := detail.DN.ValueString(); dn != "" {
-			priorByDN[strings.ToLower(dn)] = i
 		}
 	}
 
 	var out plannedMemberDetails
-	usedPrior := make(map[int]bool, len(priorDetails))
-	seenGUIDOnly := make(map[string]bool)
-
-	anchor := func(i int) {
-		if !usedPrior[i] {
-			usedPrior[i] = true
-			out.known = append(out.known, priorDetails[i])
-		}
-	}
-
+	seen := make(map[string]bool)
 	for _, member := range members {
 		res, ok := resolved[member]
 		if !ok {
@@ -447,63 +424,31 @@ func buildPlannedMemberDetails(
 			continue
 		}
 
-		if res.GUID != "" {
-			key := strings.ToLower(res.GUID)
-			if i, inPrior := priorByGUID[key]; inPrior {
-				anchor(i)
-				continue
-			}
-			// Prior element with an EMPTY id (transient GUID lookup failure
-			// in Read) for the same DN: anchor to the state DN but heal the
-			// id with the freshly resolved GUID, {dn_state, g}, fully known.
-			// Keeping the state's {dn, ""} would be unachievable (the apply
-			// result {dn, g} would not match a known planned {dn, ""}), and a
-			// case G element would needlessly discard the stable state DN.
-			// The apply-time re-plan yields the same element (same prior
-			// state, immutable GUID), and after apply/refresh the next plan
-			// matches by GUID (case K) and is a no-op: one-time convergence.
-			if i, inPrior := priorEmptyIDByDN[strings.ToLower(res.DN)]; inPrior {
-				if !usedPrior[i] {
-					usedPrior[i] = true
-					healed := priorDetails[i]
-					healed.ID = types.StringValue(res.GUID)
-					out.known = append(out.known, healed)
-				}
-				continue
-			}
-			if !seenGUIDOnly[key] {
-				seenGUIDOnly[key] = true
-				out.guidOnly = append(out.guidOnly, res.GUID)
-			}
+		key := strings.ToLower(res.GUID)
+		if seen[key] {
 			continue
 		}
-
-		if i, inPrior := priorByDN[strings.ToLower(res.DN)]; inPrior {
-			anchor(i)
-			continue
+		seen[key] = true
+		if i, inPrior := priorByGUID[key]; inPrior {
+			out.known = append(out.known, priorDetails[i])
+		} else {
+			out.guidOnly = append(out.guidOnly, res.GUID)
 		}
-		out.unanchored++
 	}
 
 	return out
 }
 
-// knownSet returns the case K elements alone as a fully known Set.
-func (p plannedMemberDetails) knownSet() (types.Set, diag.Diagnostics) {
-	return plannedMemberDetails{known: p.known}.toSet()
-}
-
 // isNoOpAgainst reports whether this plan qualifies for the no-op exemption
 // against the given prior-state member_details (see ModifyPlan): no case G
-// element, no unanchored case P element, and the case K elements alone equal
-// the prior state exactly. Unresolved case P placeholders are permitted:
-// they can only be members that are permanently missing under
-// ignore_missing_members.
+// element, and the case K elements alone equal the prior state exactly.
+// Unresolved case P placeholders are permitted: they can only be members that
+// are permanently missing under ignore_missing_members.
 func (p plannedMemberDetails) isNoOpAgainst(ctx context.Context, prior types.Set) (bool, diag.Diagnostics) {
-	if prior.IsNull() || prior.IsUnknown() || len(p.guidOnly) > 0 || p.unanchored > 0 {
+	if prior.IsNull() || prior.IsUnknown() || len(p.guidOnly) > 0 {
 		return false, nil
 	}
-	known, diags := p.knownSet()
+	known, diags := plannedMemberDetails{known: p.known}.toSet()
 	if diags.HasError() {
 		return false, diags
 	}
@@ -520,7 +465,7 @@ func (p plannedMemberDetails) isNoOpAgainst(ctx context.Context, prior types.Set
 func (p plannedMemberDetails) toSet() (types.Set, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
-	elems := make([]attr.Value, 0, len(p.known)+len(p.guidOnly)+p.unresolved+p.unanchored)
+	elems := make([]attr.Value, 0, len(p.known)+len(p.guidOnly)+p.unresolved)
 	appendElem := func(dn, id types.String) {
 		obj, objDiags := types.ObjectValue(memberDetailAttrTypes, map[string]attr.Value{"dn": dn, "id": id})
 		diags.Append(objDiags...)
@@ -533,7 +478,7 @@ func (p plannedMemberDetails) toSet() (types.Set, diag.Diagnostics) {
 	for _, guid := range p.guidOnly {
 		appendElem(types.StringUnknown(), types.StringValue(guid))
 	}
-	for range p.unresolved + p.unanchored {
+	for range p.unresolved {
 		appendElem(types.StringUnknown(), types.StringUnknown())
 	}
 	if diags.HasError() {
@@ -577,6 +522,9 @@ func (r *GroupMembershipResource) effectiveIgnoreMissingMembers(ctx context.Cont
 // identifiers naming a current member of the group resolve without LDAP
 // lookups; it affects only how identity is resolved, never the result.
 //
+// A member that resolves without an objectGUID is always an error, even in
+// ignore-missing mode.
+//
 // Returns the map of successfully resolved identifiers and the map of
 // failures, both keyed by the caller's original, verbatim identifier string
 // (mirrors MemberNormalizer.ResolveBatch). In strict mode
@@ -596,6 +544,19 @@ func (r *GroupMembershipResource) resolveMembers(
 	var diags diag.Diagnostics
 
 	resolvedMap, failures := normalizer.ResolveBatchAgainst(members, current)
+
+	// Members are identified by objectGUID throughout; an existing object whose
+	// GUID cannot be read is not supported. This is an error even when
+	// ignore_missing_members is set, which covers objects that do not exist,
+	// not objects this account cannot fully read.
+	for identifier, resolved := range resolvedMap {
+		if resolved.GUID == "" {
+			diags.AddError("Member objectGUID could not be read", fmt.Sprintf(
+				"Member '%s' resolved to '%s', but its objectGUID could not be read. "+
+					"Check that the provider's account is permitted to read objectGUID on this object.",
+				identifier, resolved.DN))
+		}
+	}
 
 	// Handle any resolution failures
 	if len(failures) > 0 {
@@ -666,9 +627,7 @@ func (r *GroupMembershipResource) extractMemberDetailsForWrite(
 	for _, detail := range details {
 		dn := detail.DN.ValueString()
 		memberDNs = append(memberDNs, dn)
-		if guid := detail.ID.ValueString(); guid != "" {
-			memberGUIDs[dn] = guid
-		}
+		memberGUIDs[dn] = detail.ID.ValueString()
 	}
 
 	return memberDNs, memberGUIDs, diags
@@ -686,23 +645,26 @@ func (r *GroupMembershipResource) extractMemberDetailsForWrite(
 // The returned DNs are the members' CURRENT DNs, so the write's DN-based
 // delta against AD's current membership is accurate even for a member
 // renamed earlier in the same apply.
+//
+// The returned CurrentMember slice is the group snapshot used for resolution
+// (see readCurrentMembersBestEffort), for SetGroupMembers to reuse; nil means none.
 func (r *GroupMembershipResource) resolveMembersForWriteFallback(
 	ctx context.Context, data *GroupMembershipResourceModel,
-) ([]string, map[string]string, diag.Diagnostics) {
+) ([]string, map[string]string, []ldapclient.CurrentMember, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
 	if data.Members.IsNull() || data.Members.IsUnknown() {
-		return nil, nil, diags
+		return nil, nil, nil, diags
 	}
 
 	var members []string
 	diags.Append(data.Members.ElementsAs(ctx, &members, false)...)
 	if diags.HasError() {
-		return nil, nil, diags
+		return nil, nil, nil, diags
 	}
 
 	if len(members) == 0 {
-		return []string{}, nil, diags
+		return []string{}, nil, nil, diags
 	}
 
 	baseDN, err := r.client.GetBaseDN(ctx)
@@ -711,17 +673,17 @@ func (r *GroupMembershipResource) resolveMembersForWriteFallback(
 			"Error Getting Base DN",
 			fmt.Sprintf("Could not get base DN from LDAP client for member resolution: %s", err.Error()),
 		)
-		return nil, nil, diags
+		return nil, nil, nil, diags
 	}
 
 	normalizer := ldapclient.NewMemberNormalizer(r.client, baseDN, r.cacheManager)
 	effectiveIgnoreMissing := r.effectiveIgnoreMissingMembers(ctx, data.IgnoreMissingMembers)
 
-	current := r.readCurrentMembersBestEffort(ctx, data.GroupID.ValueString(), len(members))
+	current := r.readCurrentMembersBestEffort(ctx, baseDN, data.GroupID.ValueString(), len(members))
 	resolvedMap, _, resolveDiags := r.resolveMembers(ctx, normalizer, members, current, effectiveIgnoreMissing)
 	diags.Append(resolveDiags...)
 	if diags.HasError() {
-		return nil, nil, diags
+		return nil, nil, nil, diags
 	}
 
 	// Build the DN list (same order as configured members, deduplicated:
@@ -740,12 +702,10 @@ func (r *GroupMembershipResource) resolveMembersForWriteFallback(
 			seenDNs[key] = true
 			memberDNs = append(memberDNs, resolved.DN)
 		}
-		if resolved.GUID != "" {
-			memberGUIDs[resolved.DN] = resolved.GUID
-		}
+		memberGUIDs[resolved.DN] = resolved.GUID
 	}
 
-	return memberDNs, memberGUIDs, diags
+	return memberDNs, memberGUIDs, current, diags
 }
 
 // memberDetailsFullyKnown reports whether a planned member_details Set is
@@ -767,9 +727,9 @@ func memberDetailsFullyKnown(ctx context.Context, set types.Set) (bool, error) {
 // reconcileMemberDetailsWithPlan builds the post-apply member_details
 // elements from a fresh resolution (memberDNs/memberGUIDs, as returned by
 // resolveMembersForWriteFallback) and the planned member_details. A fresh
-// member matching a KNOWN planned element (case K) by GUID — or, when either
-// side lacks a GUID, by DN — keeps that planned element verbatim (its DN is
-// anchored to prior state); every other member uses its fresh (dn, id).
+// member matching a KNOWN planned element (case K) by GUID keeps that planned
+// element verbatim (its DN is anchored to prior state); every other member
+// uses its fresh (dn, id).
 // Terraform requires every known planned element to appear unchanged in the
 // apply result, and every result element to correlate with a planned element:
 // case G elements correlate by GUID and case P placeholders with anything.
@@ -779,7 +739,6 @@ func reconcileMemberDetailsWithPlan(
 	var diags diag.Diagnostics
 
 	knownByGUID := make(map[string]MemberDetailModel)
-	knownByDN := make(map[string]MemberDetailModel)
 	if !planned.IsNull() && !planned.IsUnknown() {
 		for _, elem := range planned.Elements() {
 			obj, ok := elem.(types.Object)
@@ -794,25 +753,20 @@ func reconcileMemberDetailsWithPlan(
 			if detail.DN.IsUnknown() || detail.ID.IsUnknown() {
 				continue // case G / P: filled from the fresh resolution
 			}
-			if guid := detail.ID.ValueString(); guid != "" {
-				knownByGUID[strings.ToLower(guid)] = detail
-			}
-			knownByDN[strings.ToLower(detail.DN.ValueString())] = detail
+			knownByGUID[strings.ToLower(detail.ID.ValueString())] = detail
 		}
 	}
 
 	details := make([]MemberDetailModel, 0, len(memberDNs))
 	seen := make(map[string]bool, len(memberDNs))
 	for _, dn := range memberDNs {
-		guid := memberGUIDs[dn] // "" when absent, matching the empty-when-unavailable contract
+		guid := memberGUIDs[dn]
 		detail := MemberDetailModel{DN: types.StringValue(dn), ID: types.StringValue(guid)}
-		if anchored, ok := knownByGUID[strings.ToLower(guid)]; ok && guid != "" {
-			detail = anchored
-		} else if anchored, ok := knownByDN[strings.ToLower(dn)]; ok && (guid == "" || anchored.ID.ValueString() == "") {
+		if anchored, ok := knownByGUID[strings.ToLower(guid)]; ok {
 			detail = anchored
 		}
 
-		key := strings.ToLower(detail.DN.ValueString()) + "\x00" + strings.ToLower(detail.ID.ValueString())
+		key := strings.ToLower(detail.ID.ValueString())
 		if seen[key] {
 			continue
 		}
@@ -832,7 +786,8 @@ func reconcileMemberDetailsWithPlan(
 // wholly Unknown/Null, or contains case G/P elements with unknown attributes
 // (see ModifyPlan) — it resolves `members` fresh
 // (resolveMembersForWriteFallback, cache-backed) and writes the members'
-// current DNs/GUIDs.
+// current DNs/GUIDs. It also returns that path's group snapshot (nil on the
+// fully-known path) for SetGroupMembers to reuse.
 //
 // In the fresh-resolution branch, data.MemberDetails is backfilled before
 // returning: Terraform requires every computed attribute to be fully known
@@ -845,7 +800,7 @@ func reconcileMemberDetailsWithPlan(
 // planned for them simply coalesces, which Terraform permits.
 func (r *GroupMembershipResource) resolveMemberDetailsForWrite(
 	ctx context.Context, data *GroupMembershipResourceModel,
-) ([]string, map[string]string, diag.Diagnostics) {
+) ([]string, map[string]string, []ldapclient.CurrentMember, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
 	fullyKnown, err := memberDetailsFullyKnown(ctx, data.MemberDetails)
@@ -854,10 +809,11 @@ func (r *GroupMembershipResource) resolveMemberDetailsForWrite(
 			"Error Inspecting Planned Member Details",
 			fmt.Sprintf("Could not inspect the planned member_details: %s", err.Error()),
 		)
-		return nil, nil, diags
+		return nil, nil, nil, diags
 	}
 	if fullyKnown {
-		return r.extractMemberDetailsForWrite(ctx, data)
+		memberDNs, memberGUIDs, diags := r.extractMemberDetailsForWrite(ctx, data)
+		return memberDNs, memberGUIDs, nil, diags
 	}
 
 	tflog.Debug(ctx, "member_details not fully known at apply time; resolving members fresh before the write", map[string]any{
@@ -867,26 +823,26 @@ func (r *GroupMembershipResource) resolveMemberDetailsForWrite(
 		"member_details_elements": len(data.MemberDetails.Elements()),
 	})
 
-	memberDNs, memberGUIDs, fallbackDiags := r.resolveMembersForWriteFallback(ctx, data)
+	memberDNs, memberGUIDs, current, fallbackDiags := r.resolveMembersForWriteFallback(ctx, data)
 	diags.Append(fallbackDiags...)
 	if diags.HasError() {
-		return nil, nil, diags
+		return nil, nil, nil, diags
 	}
 
 	details, reconcileDiags := reconcileMemberDetailsWithPlan(ctx, data.MemberDetails, memberDNs, memberGUIDs)
 	diags.Append(reconcileDiags...)
 	if diags.HasError() {
-		return nil, nil, diags
+		return nil, nil, nil, diags
 	}
 
 	memberDetailsSet, setDiags := types.SetValueFrom(ctx, memberDetailObjectType, details)
 	diags.Append(setDiags...)
 	if diags.HasError() {
-		return nil, nil, diags
+		return nil, nil, nil, diags
 	}
 	data.MemberDetails = memberDetailsSet
 
-	return memberDNs, memberGUIDs, diags
+	return memberDNs, memberGUIDs, current, diags
 }
 
 // readCurrentMembersBestEffort reads the group's current members (DN, GUID,
@@ -894,29 +850,25 @@ func (r *GroupMembershipResource) resolveMemberDetailsForWrite(
 // resolved against them without per-identifier LDAP lookups (see
 // MemberNormalizer.ResolveBatchAgainst).
 //
-// The result is used to resolve identity ONLY, never to decide whether
-// something is or is not a member: for groups above AD's range limit the view
-// may be partial or empty. It is a pure optimisation, so every failure (no
-// group yet, unavailableCriticalExtension, search failure, malformed value)
-// is logged and yields nil, which makes ResolveBatchAgainst behave exactly
-// like ResolveBatch; it never produces a diagnostic. No LDAP call is made when
-// there are no members or the group ID is not known.
+// The result is the group's complete member list as read just now: non-nil
+// means complete (an empty group is an empty non-nil slice), and nil means no
+// usable view. GetCurrentMembers returns nil for a range-limited group, and
+// every failure (no group yet, unavailableCriticalExtension, search failure,
+// malformed value) is logged and yields nil, so a partial or failed read can
+// never be taken for the real membership. Create/Update pass the snapshot on
+// to SetGroupMembers, which then decides removals from it exactly as its own
+// read would; nil makes SetGroupMembers read the group itself, and makes
+// ResolveBatchAgainst behave exactly like ResolveBatch. It never produces a
+// diagnostic. No LDAP call is made when there are no members or the group ID
+// is not known.
 func (r *GroupMembershipResource) readCurrentMembersBestEffort(
-	ctx context.Context, groupID string, memberCount int,
+	ctx context.Context, baseDN, groupID string, memberCount int,
 ) []ldapclient.CurrentMember {
 	if memberCount == 0 || groupID == "" {
 		return nil
 	}
 
-	manager, err := r.getMembershipManager(ctx)
-	if err != nil {
-		tflog.Debug(ctx, "Could not create membership manager for live member matching; resolving members normally", map[string]any{
-			"group_id": groupID,
-			"error":    err.Error(),
-		})
-		return nil
-	}
-
+	manager := ldapclient.NewGroupMembershipManager(ctx, r.client, baseDN, r.cacheManager)
 	current, err := manager.GetCurrentMembers(groupID)
 	if err != nil {
 		tflog.Debug(ctx, "Could not read current group members for live member matching; resolving members normally", map[string]any{
@@ -972,7 +924,7 @@ func (r *GroupMembershipResource) Create(ctx context.Context, req resource.Creat
 	// (see resolveMemberDetailsForWrite), in which case data.MemberDetails
 	// is backfilled, plan-compatibly, so no unknown is left in
 	// resp.State.Set below.
-	memberDNs, memberGUIDs, diags := r.resolveMemberDetailsForWrite(ctx, &data)
+	memberDNs, memberGUIDs, current, diags := r.resolveMemberDetailsForWrite(ctx, &data)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -987,7 +939,7 @@ func (r *GroupMembershipResource) Create(ctx context.Context, req resource.Creat
 	// Set the complete membership using the resolved DNs, preferring AD's
 	// rename-immune "<GUID=...>" alternative-DN form for members whose
 	// GUID is known.
-	err = membershipManager.SetGroupMembers(data.GroupID.ValueString(), memberDNs, memberGUIDs)
+	err = membershipManager.SetGroupMembers(data.GroupID.ValueString(), memberDNs, memberGUIDs, current)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Setting Group Members",
@@ -1089,7 +1041,7 @@ func (r *GroupMembershipResource) Update(ctx context.Context, req resource.Updat
 	// (see resolveMemberDetailsForWrite), in which case data.MemberDetails
 	// is backfilled, plan-compatibly, so no unknown is left in
 	// resp.State.Set below.
-	memberDNs, memberGUIDs, diags := r.resolveMemberDetailsForWrite(ctx, &data)
+	memberDNs, memberGUIDs, current, diags := r.resolveMemberDetailsForWrite(ctx, &data)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -1104,7 +1056,7 @@ func (r *GroupMembershipResource) Update(ctx context.Context, req resource.Updat
 	// Set the complete membership using the resolved DNs, preferring AD's
 	// rename-immune "<GUID=...>" alternative-DN form for members whose
 	// GUID is known.
-	err = membershipManager.SetGroupMembers(data.GroupID.ValueString(), memberDNs, memberGUIDs)
+	err = membershipManager.SetGroupMembers(data.GroupID.ValueString(), memberDNs, memberGUIDs, current)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error Updating Group Members",
@@ -1151,16 +1103,14 @@ func (r *GroupMembershipResource) Delete(ctx context.Context, req resource.Delet
 	// Clear all members from the group (empty slice means remove all). No
 	// member-identity resolution is needed here: removing everyone needs no
 	// GUID map, and passing nil for an empty add-list is a no-op regardless.
-	err = membershipManager.SetGroupMembers(data.GroupID.ValueString(), []string{}, nil)
+	err = membershipManager.SetGroupMembers(data.GroupID.ValueString(), []string{}, nil, nil)
 	if err != nil {
 		// If the group no longer exists, that's fine - the membership is effectively deleted
-		if ldapErr, ok := err.(*ldapclient.LDAPError); ok {
-			if strings.Contains(ldapErr.Error(), "not found") {
-				tflog.Debug(ctx, "Group not found during delete, membership already removed", map[string]any{
-					"group_id": data.GroupID.ValueString(),
-				})
-				return
-			}
+		if isGroupNotFoundError(err) {
+			tflog.Debug(ctx, "Group not found during delete, membership already removed", map[string]any{
+				"group_id": data.GroupID.ValueString(),
+			})
+			return
 		}
 
 		resp.Diagnostics.AddError(
@@ -1401,6 +1351,9 @@ func (r *GroupMembershipResource) loadMembershipView(ctx context.Context, manage
 		dns := make([]string, 0, len(snapshot))
 		details := make([]MemberDetailModel, 0, len(snapshot))
 		for _, m := range snapshot {
+			if m.GUID == "" {
+				tflog.Warn(ctx, "Could not read current member's GUID; member_details.id will be empty for this member", map[string]any{"dn": m.DN})
+			}
 			dns = append(dns, m.DN)
 			details = append(details, MemberDetailModel{
 				DN: types.StringValue(m.DN),
@@ -1414,7 +1367,7 @@ func (r *GroupMembershipResource) loadMembershipView(ctx context.Context, manage
 		return &membershipView{dns: dns, details: set}, nil
 	}
 
-	if !ldap.IsErrorWithCode(err, ldap.LDAPResultUnavailableCriticalExtension) {
+	if !ldapclient.IsUnsupportedControlError(err) {
 		return nil, fmt.Errorf("could not get current group members: %w", err)
 	}
 

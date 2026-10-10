@@ -1249,28 +1249,24 @@ func TestGroupMembershipResource_ModifyPlanPerElementMemberDetails(t *testing.T)
 		assertFinalPlanCompatible(t, out.MemberDetails, newMemberDetailSetOf(t, knownDetail(t, dn1, guid1)))
 	})
 
-	t.Run("row 12: empty GUID, matched in state by DN -> K; unmatched -> P (not exempt)", func(t *testing.T) {
-		const (
-			dnNoGUIDInState = "CN=NoGUIDInState,OU=Users,DC=example,DC=com"
-			dnNoGUIDNew     = "CN=NoGUIDNew,OU=Users,DC=example,DC=com"
-		)
-		cm := ldapclient.NewCacheManager()
-		seedMembershipCache(t, cm, dnNoGUIDInState, "")
-		seedMembershipCache(t, cm, dnNoGUIDNew, "")
-		r := newTestGroupMembershipResource(cm)
+	t.Run("row 12: member resolving without objectGUID is an error in plan and write, even with ignore_missing_members", func(t *testing.T) {
+		const dnNoGUID = "CN=NoGUID,OU=Users,DC=example,DC=com"
+		for _, ignore := range []types.Bool{types.BoolNull(), types.BoolValue(true)} {
+			cm := ldapclient.NewCacheManager()
+			seedMembershipCache(t, cm, dnNoGUID, "")
+			r := newTestGroupMembershipResource(cm)
+			plan := membershipModel(newMembershipSet(t, dnNoGUID), types.SetUnknown(memberDetailObjectType), ignore)
 
-		stateDetails := newMemberDetailSet(t, ctx, []string{dnNoGUIDInState}, []string{""})
-		members := newMembershipSet(t, dnNoGUIDInState, dnNoGUIDNew)
-		// members unchanged vs state: the unmatched empty-GUID member is a
-		// real (resolvable) member missing from AD, so it must still diff.
-		state := membershipModel(members, stateDetails, types.BoolNull())
-		plan := membershipModel(members, stateDetails, types.BoolNull())
-
-		out, resp := runMembershipModifyPlan(t, ctx, r, plan, state)
-		if resp.Diagnostics.HasError() {
-			t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
+			_, planResp := runMembershipModifyPlan(t, ctx, r, plan, nil)
+			_, _, _, writeDiags := r.resolveMembersForWriteFallback(ctx, plan)
+			for name, diags := range map[string]diag.Diagnostics{"plan": planResp.Diagnostics, "write": writeDiags} {
+				errs := diags.Errors()
+				if len(errs) == 0 || errs[0].Summary() != "Member objectGUID could not be read" ||
+					!strings.Contains(errs[0].Detail(), dnNoGUID) || !strings.Contains(errs[0].Detail(), "objectGUID") {
+					t.Errorf("%s (ignore_missing_members=%v): want an objectGUID error naming the member, got %v", name, ignore, diags)
+				}
+			}
 		}
-		assertClassifiedDetails(t, out.MemberDetails, classifiedDetails{known: map[string]string{dnNoGUIDInState: ""}, placeholders: 1})
 	})
 
 	t.Run("row 15: strict mode, one unresolved member -> plan error", func(t *testing.T) {
@@ -1330,6 +1326,9 @@ func TestGroupMembershipResource_ModifyPlanPerElementMemberDetails(t *testing.T)
 	})
 }
 
+// pair is a DN and its objectGUID, for seeding the cache manager.
+type pair struct{ dn, guid string }
+
 // TestGroupMembershipResource_ModifyPlanReplanCompatible covers rows 13 and
 // 14: the apply-time re-plan (same prior state, dependencies now applied)
 // must be compatible with the original plan.
@@ -1349,94 +1348,96 @@ func TestGroupMembershipResource_ModifyPlanReplanCompatible(t *testing.T) {
 	)
 
 	ignoreMissing := types.BoolValue(true)
+	unknownDetails := types.SetUnknown(memberDetailObjectType)
 
-	t.Run("row 13: members created in the same apply, referenced by known DN (update)", func(t *testing.T) {
-		cm := ldapclient.NewCacheManager()
-		seedMembershipCache(t, cm, dn1, guid1)
-		seedMembershipCache(t, cm, dn2, guid2)
-		r := newTestGroupMembershipResource(cm)
+	tests := []struct {
+		name string
+		seed []pair // known when planning
+		late []pair // appear before the re-plan (dependencies applied)
+		// build returns the plan and prior state (nil on create).
+		build func(t *testing.T) (plan, state *GroupMembershipResourceModel)
+	}{
+		{
+			name: "row 13: members created in the same apply, referenced by known DN (update)",
+			seed: []pair{{dn1, guid1}, {dn2, guid2}},
+			late: []pair{{dnNew1, guidNew1}, {dnNew2, guidNew2}},
+			build: func(t *testing.T) (*GroupMembershipResourceModel, *GroupMembershipResourceModel) {
+				state := membershipModel(newMembershipSet(t, dn1, dn2), newMemberDetailSet(t, ctx, []string{dn1, dn2}, []string{guid1, guid2}), ignoreMissing)
+				return membershipModel(newMembershipSet(t, dn1, dn2, dnNew1, dnNew2), unknownDetails, ignoreMissing), state
+			},
+		},
+		{
+			name: "row 13: members created in the same apply, referenced by known DN (create)",
+			seed: []pair{{dn1, guid1}},
+			late: []pair{{dnNew1, guidNew1}},
+			build: func(t *testing.T) (*GroupMembershipResourceModel, *GroupMembershipResourceModel) {
+				plan := membershipModel(newMembershipSet(t, dn1, dnNew1), unknownDetails, ignoreMissing)
+				plan.ID = types.StringUnknown()
+				return plan, nil
+			},
+		},
+		{
+			// Prior state has {dn1, ""} (GUID lookup failed in Read): planned as
+			// G, which survives member 1 being renamed before the re-plan.
+			name: "empty prior id healed, member renamed in the same apply, referenced by GUID",
+			seed: []pair{{dn1, guid1}},
+			late: []pair{{"CN=Member1Renamed,OU=Users,DC=example,DC=com", guid1}},
+			build: func(t *testing.T) (*GroupMembershipResourceModel, *GroupMembershipResourceModel) {
+				state := membershipModel(newMembershipSet(t, guid1), newMemberDetailSet(t, ctx, []string{dn1}, []string{""}), types.BoolNull())
+				return membershipModel(newMembershipSet(t, guid1), unknownDetails, types.BoolNull()), state
+			},
+		},
+		{
+			// The sibling ad_group resource renames member 1 during apply.
+			name: "row 14: member renamed in the same apply, referenced by GUID",
+			seed: []pair{{dn1, guid1}, {dn2, guid2}},
+			late: []pair{{"CN=Member1Renamed,OU=Users,DC=example,DC=com", guid1}},
+			build: func(t *testing.T) (*GroupMembershipResourceModel, *GroupMembershipResourceModel) {
+				state := membershipModel(newMembershipSet(t, guid1), newMemberDetailSet(t, ctx, []string{dn1}, []string{guid1}), types.BoolNull())
+				return membershipModel(newMembershipSet(t, guid1, guid2), unknownDetails, types.BoolNull()), state
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cm := ldapclient.NewCacheManager()
+			for _, p := range tc.seed {
+				seedMembershipCache(t, cm, p.dn, p.guid)
+			}
+			r := newTestGroupMembershipResource(cm)
+			plan, state := tc.build(t)
 
-		state := membershipModel(newMembershipSet(t, dn1, dn2), newMemberDetailSet(t, ctx, []string{dn1, dn2}, []string{guid1, guid2}), ignoreMissing)
-		plan := membershipModel(newMembershipSet(t, dn1, dn2, dnNew1, dnNew2), types.SetUnknown(memberDetailObjectType), ignoreMissing)
+			plan1, resp := runMembershipModifyPlan(t, ctx, r, plan, state)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("plan: unexpected error: %v", resp.Diagnostics.Errors())
+			}
 
-		plan1, resp := runMembershipModifyPlan(t, ctx, r, plan, state)
-		if resp.Diagnostics.HasError() {
-			t.Fatalf("plan: unexpected error: %v", resp.Diagnostics.Errors())
-		}
+			for _, p := range tc.late {
+				seedMembershipCache(t, cm, p.dn, p.guid)
+			}
 
-		// The dependencies are applied: the new groups now exist.
-		seedMembershipCache(t, cm, dnNew1, guidNew1)
-		seedMembershipCache(t, cm, dnNew2, guidNew2)
+			plan2, resp := runMembershipModifyPlan(t, ctx, r, plan, state)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("re-plan: unexpected error: %v", resp.Diagnostics.Errors())
+			}
 
-		plan2, resp := runMembershipModifyPlan(t, ctx, r, plan, state)
-		if resp.Diagnostics.HasError() {
-			t.Fatalf("re-plan: unexpected error: %v", resp.Diagnostics.Errors())
-		}
-
-		assertFinalPlanCompatible(t, plan1.MemberDetails, plan2.MemberDetails)
-	})
-
-	t.Run("row 13: members created in the same apply, referenced by known DN (create)", func(t *testing.T) {
-		cm := ldapclient.NewCacheManager()
-		seedMembershipCache(t, cm, dn1, guid1)
-		r := newTestGroupMembershipResource(cm)
-
-		plan := membershipModel(newMembershipSet(t, dn1, dnNew1), types.SetUnknown(memberDetailObjectType), ignoreMissing)
-		plan.ID = types.StringUnknown()
-
-		plan1, resp := runMembershipModifyPlan(t, ctx, r, plan, nil)
-		if resp.Diagnostics.HasError() {
-			t.Fatalf("plan: unexpected error: %v", resp.Diagnostics.Errors())
-		}
-
-		seedMembershipCache(t, cm, dnNew1, guidNew1)
-
-		plan2, resp := runMembershipModifyPlan(t, ctx, r, plan, nil)
-		if resp.Diagnostics.HasError() {
-			t.Fatalf("re-plan: unexpected error: %v", resp.Diagnostics.Errors())
-		}
-
-		assertFinalPlanCompatible(t, plan1.MemberDetails, plan2.MemberDetails)
-	})
-
-	t.Run("row 14: member renamed in the same apply, referenced by GUID", func(t *testing.T) {
-		const dn1Renamed = "CN=Member1Renamed,OU=Users,DC=example,DC=com"
-		cm := ldapclient.NewCacheManager()
-		seedMembershipCache(t, cm, dn1, guid1)
-		seedMembershipCache(t, cm, dn2, guid2)
-		r := newTestGroupMembershipResource(cm)
-
-		state := membershipModel(newMembershipSet(t, guid1), newMemberDetailSet(t, ctx, []string{dn1}, []string{guid1}), types.BoolNull())
-		plan := membershipModel(newMembershipSet(t, guid1, guid2), types.SetUnknown(memberDetailObjectType), types.BoolNull())
-
-		plan1, resp := runMembershipModifyPlan(t, ctx, r, plan, state)
-		if resp.Diagnostics.HasError() {
-			t.Fatalf("plan: unexpected error: %v", resp.Diagnostics.Errors())
-		}
-
-		// The sibling ad_group resource renames member 1 during apply.
-		seedMembershipCache(t, cm, dn1Renamed, guid1)
-
-		plan2, resp := runMembershipModifyPlan(t, ctx, r, plan, state)
-		if resp.Diagnostics.HasError() {
-			t.Fatalf("re-plan: unexpected error: %v", resp.Diagnostics.Errors())
-		}
-
-		assertFinalPlanCompatible(t, plan1.MemberDetails, plan2.MemberDetails)
-	})
+			assertFinalPlanCompatible(t, plan1.MemberDetails, plan2.MemberDetails)
+		})
+	}
 }
 
 // TestGroupMembershipResource_ModifyPlanHealsEmptyPriorID covers review
 // finding 2: Read stores {dn, id=""} when a member's GUID lookup fails
 // transiently; on the next plan the same member resolves to a real GUID.
 //
-// Chosen behaviour: the member is anchored to the state DN (case K) with the
-// FRESH GUID, {dn_state, g}, fully known. That is a one-time healing Update
-// (id ""->g) rather than a no-op or a case G element, because (a) keeping the
-// state's {dn, ""} would be unwritable: the apply result {dn, g} would not
-// match a known planned {dn, ""}; (b) the apply-time re-plan produces the same
-// element (same state, immutable GUID), so the final plan is compatible; and
-// (c) after apply and refresh, the next plan is a no-op.
+// Chosen behaviour: the member is planned as case G, {dn: unknown, g}, whether
+// or not its DN still matches the state DN. That is a one-time healing Update
+// (id ""->g) rather than a no-op, because (a) keeping the state's {dn, ""}
+// would be unwritable: the apply result {dn, g} would not match a known planned
+// {dn, ""}; (b) anchoring {dn_state, g} would not survive the member being
+// renamed before the apply-time re-plan, whereas {unknown, g} correlates with
+// the result by GUID whatever the DN; and (c) after apply and refresh, the next
+// plan is a no-op.
 func TestGroupMembershipResource_ModifyPlanHealsEmptyPriorID(t *testing.T) {
 	ctx := t.Context()
 
@@ -1453,49 +1454,33 @@ func TestGroupMembershipResource_ModifyPlanHealsEmptyPriorID(t *testing.T) {
 			newMemberDetailSetOf(t, knownDetail(t, dn1, "")), types.BoolNull())
 	}
 
-	t.Run("prior id empty + fresh GUID + DN match -> K with state DN and fresh GUID", func(t *testing.T) {
-		cm := ldapclient.NewCacheManager()
-		seedMembershipCache(t, cm, dn1, guid1)
-		r := newTestGroupMembershipResource(cm)
+	tests := []struct {
+		name    string
+		seed    pair
+		members []string
+	}{
+		{"prior id empty + fresh GUID + DN match -> G", pair{dn1, guid1}, []string{dn1}},
+		{"prior id empty + fresh GUID + DN differs (rename) -> G", pair{dn1Rename, guid1}, []string{guid1}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cm := ldapclient.NewCacheManager()
+			seedMembershipCache(t, cm, tc.seed.dn, tc.seed.guid)
+			r := newTestGroupMembershipResource(cm)
 
-		state := emptyIDState(t, dn1)
-		plan := membershipModel(newMembershipSet(t, dn1), types.SetUnknown(memberDetailObjectType), types.BoolNull())
+			state := emptyIDState(t, dn1)
+			plan := membershipModel(newMembershipSet(t, tc.members...), types.SetUnknown(memberDetailObjectType), types.BoolNull())
 
-		got, resp := runMembershipModifyPlan(t, ctx, r, plan, state)
-		if resp.Diagnostics.HasError() {
-			t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
-		}
-		assertClassifiedDetails(t, got.MemberDetails, classifiedDetails{known: map[string]string{dn1: guid1}})
-	})
-
-	t.Run("prior id empty + fresh GUID + DN differs (rename) -> G", func(t *testing.T) {
-		cm := ldapclient.NewCacheManager()
-		seedMembershipCache(t, cm, dn1Rename, guid1)
-		r := newTestGroupMembershipResource(cm)
-
-		state := emptyIDState(t, dn1)
-		plan := membershipModel(newMembershipSet(t, guid1), types.SetUnknown(memberDetailObjectType), types.BoolNull())
-
-		got, resp := runMembershipModifyPlan(t, ctx, r, plan, state)
-		if resp.Diagnostics.HasError() {
-			t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
-		}
-		assertClassifiedDetails(t, got.MemberDetails, classifiedDetails{guidOnly: []string{guid1}})
-	})
-
-	t.Run("healing plan is not a no-op", func(t *testing.T) {
-		cm := ldapclient.NewCacheManager()
-		seedMembershipCache(t, cm, dn1, guid1)
-		r := newTestGroupMembershipResource(cm)
-
-		state := emptyIDState(t, dn1)
-		plan := membershipModel(newMembershipSet(t, dn1), types.SetUnknown(memberDetailObjectType), types.BoolNull())
-
-		got, _ := runMembershipModifyPlan(t, ctx, r, plan, state)
-		if got.MemberDetails.Equal(state.MemberDetails) {
-			t.Errorf("member_details planned as prior state; the empty id must be healed")
-		}
-	})
+			got, resp := runMembershipModifyPlan(t, ctx, r, plan, state)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
+			}
+			assertClassifiedDetails(t, got.MemberDetails, classifiedDetails{guidOnly: []string{guid1}})
+			if got.MemberDetails.Equal(state.MemberDetails) {
+				t.Errorf("member_details planned as prior state; the empty id must be healed")
+			}
+		})
+	}
 
 	t.Run("convergence: plan, apply result, refresh, re-plan is a no-op", func(t *testing.T) {
 		cm := ldapclient.NewCacheManager()
@@ -1511,9 +1496,7 @@ func TestGroupMembershipResource_ModifyPlanHealsEmptyPriorID(t *testing.T) {
 		if resp.Diagnostics.HasError() {
 			t.Fatalf("plan: unexpected error: %v", resp.Diagnostics.Errors())
 		}
-		assertClassifiedDetails(t, plan1.MemberDetails, classifiedDetails{
-			known: map[string]string{dn1: guid1}, guidOnly: []string{guid2},
-		})
+		assertClassifiedDetails(t, plan1.MemberDetails, classifiedDetails{guidOnly: []string{guid1, guid2}})
 
 		// Apply-time re-plan with the same prior state is compatible.
 		plan2, resp := runMembershipModifyPlan(t, ctx, r, plan, state)
@@ -1522,17 +1505,23 @@ func TestGroupMembershipResource_ModifyPlanHealsEmptyPriorID(t *testing.T) {
 		}
 		assertFinalPlanCompatible(t, plan1.MemberDetails, plan2.MemberDetails)
 
-		// The write path's result is compatible with the plan.
-		details, diags := reconcileMemberDetailsWithPlan(ctx, plan1.MemberDetails,
-			[]string{dn1, dn2}, map[string]string{dn1: guid1, dn2: guid2})
-		if diags.HasError() {
-			t.Fatalf("reconcile: %v", diags.Errors())
+		// The write path's result is compatible with the plan, also when
+		// member 1 was renamed earlier in the same apply.
+		apply := func(dn1Now string) types.Set {
+			details, diags := reconcileMemberDetailsWithPlan(ctx, plan1.MemberDetails,
+				[]string{dn1Now, dn2}, map[string]string{dn1Now: guid1, dn2: guid2})
+			if diags.HasError() {
+				t.Fatalf("reconcile: %v", diags.Errors())
+			}
+			applied, setDiags := types.SetValueFrom(ctx, memberDetailObjectType, details)
+			if setDiags.HasError() {
+				t.Fatalf("applied set: %v", setDiags.Errors())
+			}
+			assertFinalPlanCompatible(t, plan1.MemberDetails, applied)
+			return applied
 		}
-		applied, setDiags := types.SetValueFrom(ctx, memberDetailObjectType, details)
-		if setDiags.HasError() {
-			t.Fatalf("applied set: %v", setDiags.Errors())
-		}
-		assertFinalPlanCompatible(t, plan1.MemberDetails, applied)
+		applied := apply(dn1)
+		apply(dn1Rename)
 
 		// New state = applied result; the next plan is a no-op.
 		newState := membershipModel(plan.Members, applied, types.BoolNull())
@@ -1545,7 +1534,7 @@ func TestGroupMembershipResource_ModifyPlanHealsEmptyPriorID(t *testing.T) {
 		}
 	})
 
-	t.Run("helper: empty-id prior only matches by DN, case-insensitively; non-empty prior ids unaffected", func(t *testing.T) {
+	t.Run("helper: empty-id prior is never anchored by a resolved GUID; non-empty prior ids unaffected", func(t *testing.T) {
 		prior := []MemberDetailModel{
 			{DN: types.StringValue(dn1), ID: types.StringValue("")},
 			{DN: types.StringValue(dn2), ID: types.StringValue(guid2)},
@@ -1558,13 +1547,8 @@ func TestGroupMembershipResource_ModifyPlanHealsEmptyPriorID(t *testing.T) {
 			},
 			nil, prior,
 		)
-		if len(planned.guidOnly) != 0 || len(planned.known) != 2 {
-			t.Fatalf("planned = %+v, want two K elements", planned)
-		}
-		for _, k := range planned.known {
-			if k.DN.ValueString() == dn1 && k.ID.ValueString() != guid1 {
-				t.Errorf("healed element id = %q, want %q", k.ID.ValueString(), guid1)
-			}
+		if len(planned.guidOnly) != 1 || planned.guidOnly[0] != guid1 || len(planned.known) != 1 || planned.known[0].DN.ValueString() != dn2 {
+			t.Fatalf("planned = %+v, want G for member 1 and K for member 2", planned)
 		}
 	})
 }
@@ -1661,7 +1645,7 @@ func TestGroupMembershipResource_BuildPlannedMemberDetails(t *testing.T) {
 		assertClassifiedDetails(t, roundTrip(t, set), classifiedDetails{guidOnly: []string{guid2}})
 	})
 
-	t.Run("no-op exemption requires no G, no unanchored P, and K == prior", func(t *testing.T) {
+	t.Run("no-op exemption requires no G and K == prior", func(t *testing.T) {
 		priorSet := newMemberDetailSet(t, ctx, []string{dn1}, []string{guid1})
 		prior := []MemberDetailModel{{DN: types.StringValue(dn1), ID: types.StringValue(guid1)}}
 
@@ -1673,7 +1657,6 @@ func TestGroupMembershipResource_BuildPlannedMemberDetails(t *testing.T) {
 			{"K == prior", plannedMemberDetails{known: prior}, true},
 			{"K == prior + unresolved P", plannedMemberDetails{known: prior, unresolved: 1}, true},
 			{"K == prior + G", plannedMemberDetails{known: prior, guidOnly: []string{guid2}}, false},
-			{"K == prior + unanchored P", plannedMemberDetails{known: prior, unanchored: 1}, false},
 			{"K subset of prior", plannedMemberDetails{}, false},
 		}
 		for _, tc := range cases {

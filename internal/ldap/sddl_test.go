@@ -126,8 +126,8 @@ func TestSecurityDescriptor_RoundTrip_Protected(t *testing.T) {
 	assert.Equal(t, AccessDeniedACEType, parsed.DACL.ACEs[0].AceType)
 	assert.Equal(t, everyoneSIDValue.String(), parsed.DACL.ACEs[0].SID.String())
 	assert.Equal(t,
-		AccessMaskDelete|AccessMaskDeleteChild,
-		parsed.DACL.ACEs[0].AccessMask&(AccessMaskDelete|AccessMaskDeleteChild))
+		AccessMaskDelete|AccessMaskDeleteTree,
+		parsed.DACL.ACEs[0].AccessMask&(AccessMaskDelete|AccessMaskDeleteTree))
 }
 
 func TestSecurityDescriptor_HasDenyDeleteEveryoneACE_Negative(t *testing.T) {
@@ -156,7 +156,7 @@ func TestSecurityDescriptor_HasDenyDeleteEveryoneACE_Negative(t *testing.T) {
 					AclRevision: 2,
 					ACEs: []ACE{{
 						AceType:    AccessDeniedACEType,
-						AccessMask: AccessMaskDelete | AccessMaskDeleteChild,
+						AccessMask: AccessMaskDelete | AccessMaskDeleteTree,
 						SID: SID{
 							RevisionLevel:  1,
 							Authority:      5,
@@ -241,7 +241,7 @@ func TestRoundTrip_DACLOnly(t *testing.T) {
 			ACEs: []ACE{{
 				AceType:    AccessDeniedACEType,
 				AceFlags:   ContainerInheritACE,
-				AccessMask: AccessMaskDelete | AccessMaskDeleteChild,
+				AccessMask: AccessMaskDelete | AccessMaskDeleteTree,
 				SID:        everyoneSIDValue,
 			}},
 		},
@@ -280,7 +280,7 @@ func TestSecurityDescriptor_ObjectACE_RoundTrip(t *testing.T) {
 				{
 					AceType:    AccessDeniedACEType,
 					AceFlags:   ContainerInheritACE,
-					AccessMask: AccessMaskDelete | AccessMaskDeleteChild,
+					AccessMask: AccessMaskDelete | AccessMaskDeleteTree,
 					SID:        everyoneSIDValue,
 				},
 				{
@@ -304,7 +304,7 @@ func TestSecurityDescriptor_ObjectACE_RoundTrip(t *testing.T) {
 	assert.Equal(t, AccessDeniedACEType, parsed.DACL.ACEs[0].AceType)
 	assert.Nil(t, parsed.DACL.ACEs[0].RawBody)
 	assert.Equal(t,
-		AccessMaskDelete|AccessMaskDeleteChild,
+		AccessMaskDelete|AccessMaskDeleteTree,
 		parsed.DACL.ACEs[0].AccessMask)
 	assert.Equal(t, everyoneSIDValue.String(), parsed.DACL.ACEs[0].SID.String())
 
@@ -476,4 +476,25 @@ func TestUnmarshalACL_TinyAceSize(t *testing.T) {
 	_, err := UnmarshalSecurityDescriptor(sd)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "impossibly small")
+}
+
+func TestDenyDeleteEveryoneACE_Flags(t *testing.T) {
+	sd := &SecurityDescriptor{}
+	sd.AddDenyDeleteEveryoneACE()
+	require.Len(t, sd.DACL.ACEs, 1)
+	assert.Equal(t, uint8(0), sd.DACL.ACEs[0].AceFlags)
+	assert.True(t, sd.HasDenyDeleteEveryoneACE())
+}
+
+func TestDenyDeleteEveryoneACE_InheritedNotProtected(t *testing.T) {
+	inherited := ACE{
+		AceType:    AccessDeniedACEType,
+		AceFlags:   InheritedACE,
+		AccessMask: AccessMaskDelete | AccessMaskDeleteTree,
+		SID:        everyoneSIDValue,
+	}
+	sd := &SecurityDescriptor{DACL: &ACL{AclRevision: 2, ACEs: []ACE{inherited}}}
+	assert.False(t, sd.HasDenyDeleteEveryoneACE())
+	assert.False(t, sd.RemoveDenyDeleteEveryoneACE())
+	assert.Len(t, sd.DACL.ACEs, 1)
 }

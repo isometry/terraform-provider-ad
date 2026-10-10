@@ -14,39 +14,10 @@ import (
 
 // --- Directory test double ---------------------------------------------------
 
-// dirAttrs are the per-object attributes the resolver searches need beyond
-// what raObject models.
-type dirAttrs struct {
-	sid string // S-... string form; "" = object has no objectSid
-	upn string
-	sam string
-}
-
-// directoryClient extends renameAwareMembershipClient (which answers the
-// group's extended-DN member read) with a directory that answers every search
-// MemberNormalizer.ResolveBatch issues (DN base-object validation, objectGUID,
-// objectSid, userPrincipalName and sAMAccountName subtree searches). Subtree
-// searches only see objects at or below the search base, modelling a
-// single-domain DC that cannot see other naming contexts. Every non-group
-// search is recorded so tests can prove which identifiers caused LDAP traffic.
-type directoryClient struct {
-	*renameAwareMembershipClient
-
-	attrs            map[*raObject]dirAttrs
-	resolverSearches []*SearchRequest
-}
-
-func newDirectoryClient() *directoryClient {
-	return &directoryClient{
-		renameAwareMembershipClient: newRenameAwareMembershipClient(),
-		attrs:                       make(map[*raObject]dirAttrs),
-	}
-}
-
 // addPrincipal adds a directory object. sidFlag0 selects how the SID is
 // emitted in the member's extended DN: true = Flag 0 (hex of the binary SID,
 // what NewExtendedDNControl requests), false = Flag 1 ("S-..." string).
-func (d *directoryClient) addPrincipal(t testing.TB, guid, dn, sid, upn, sam string, sidFlag0 bool) *raObject {
+func (d *renameAwareMembershipClient) addPrincipal(t testing.TB, guid, dn, sid, upn, sam string, sidFlag0 bool) *raObject {
 	t.Helper()
 	o := d.addObject(guid, dn)
 	if sid != "" {
@@ -58,7 +29,7 @@ func (d *directoryClient) addPrincipal(t testing.TB, guid, dn, sid, upn, sam str
 			o.sid = sid
 		}
 	}
-	d.attrs[o] = dirAttrs{sid: sid, upn: upn, sam: sam}
+	o.dirSID, o.upn, o.sam = sid, upn, sam
 	return o
 }
 
@@ -70,15 +41,13 @@ func inScope(dn, base string) bool {
 	return err == nil && child
 }
 
-func (d *directoryClient) Search(ctx context.Context, req *SearchRequest) (*SearchResult, error) {
-	groupFilter, err := NewGUIDHandler().GUIDToSearchFilter(d.groupGUID)
-	if err != nil {
-		return nil, err
-	}
-	if req.Filter == groupFilter {
-		return d.renameAwareMembershipClient.Search(ctx, req)
-	}
-
+// directorySearch answers every search MemberNormalizer.ResolveBatch issues
+// (DN base-object validation, objectGUID, objectSid, userPrincipalName and
+// sAMAccountName subtree searches). Subtree searches only see objects at or
+// below the search base, modelling a single-domain DC that cannot see other
+// naming contexts. Every such search is recorded in resolverSearches so tests
+// can prove which identifiers caused LDAP traffic.
+func (d *renameAwareMembershipClient) directorySearch(req *SearchRequest) (*SearchResult, error) {
 	d.resolverSearches = append(d.resolverSearches, req)
 
 	var found *raObject
@@ -93,7 +62,6 @@ func (d *directoryClient) Search(ctx context.Context, req *SearchRequest) (*Sear
 		if !inScope(o.dn, req.BaseDN) {
 			continue
 		}
-		a := d.attrs[o]
 		var want string
 		switch {
 		case strings.HasPrefix(req.Filter, "(objectGUID="):
@@ -101,16 +69,16 @@ func (d *directoryClient) Search(ctx context.Context, req *SearchRequest) (*Sear
 				want, _ = NewGUIDHandler().GUIDToSearchFilter(o.guid)
 			}
 		case strings.HasPrefix(req.Filter, "(objectSid="):
-			if a.sid != "" {
-				want, _ = NewSIDHandler().SIDToSearchFilter(a.sid)
+			if o.dirSID != "" {
+				want, _ = NewSIDHandler().SIDToSearchFilter(o.dirSID)
 			}
 		case strings.HasPrefix(req.Filter, "(userPrincipalName="):
-			if a.upn != "" {
-				want = fmt.Sprintf("(userPrincipalName=%s)", ldap.EscapeFilter(a.upn))
+			if o.upn != "" {
+				want = fmt.Sprintf("(userPrincipalName=%s)", ldap.EscapeFilter(o.upn))
 			}
 		case strings.HasPrefix(req.Filter, "(sAMAccountName="):
-			if a.sam != "" {
-				want = fmt.Sprintf("(sAMAccountName=%s)", ldap.EscapeFilter(a.sam))
+			if o.sam != "" {
+				want = fmt.Sprintf("(sAMAccountName=%s)", ldap.EscapeFilter(o.sam))
 			}
 		}
 		if want != "" && want == req.Filter {
@@ -148,14 +116,14 @@ const (
 	mmXGUID   = "ffffffff-1111-2222-3333-444444444444"
 )
 
-// directorySetup populates a directoryClient; it is run against two
+// directorySetup populates a renameAwareMembershipClient; it is run against two
 // independent clients so ResolveBatchAgainst and ResolveBatch can be compared
 // on identical directories.
-type directorySetup func(t testing.TB, d *directoryClient)
+type directorySetup func(t testing.TB, d *renameAwareMembershipClient)
 
-func newMatchingFixture(t *testing.T, setup directorySetup) (*MemberNormalizer, *GroupMembershipManager, *directoryClient) {
+func newMatchingFixture(t *testing.T, setup directorySetup) (*MemberNormalizer, *GroupMembershipManager, *renameAwareMembershipClient) {
 	t.Helper()
-	d := newDirectoryClient()
+	d := newRenameAwareMembershipClient()
 	setup(t, d)
 	gmm := NewGroupMembershipManager(t.Context(), d, mmBaseDN, nil)
 	n := NewMemberNormalizer(d, mmBaseDN, nil)
@@ -179,7 +147,7 @@ func legacyResolve(t *testing.T, setup directorySetup, ids []string) (map[string
 }
 
 // againstResolve reads current members once and runs ResolveBatchAgainst.
-func againstResolve(t *testing.T, setup directorySetup, ids []string) (map[string]ResolvedIdentifier, map[string]string, *directoryClient) {
+func againstResolve(t *testing.T, setup directorySetup, ids []string) (map[string]ResolvedIdentifier, map[string]string, *renameAwareMembershipClient) {
 	t.Helper()
 	n, gmm, d := newMatchingFixture(t, setup)
 	current, err := gmm.GetCurrentMembers(raGroupGUID)
@@ -190,7 +158,7 @@ func againstResolve(t *testing.T, setup directorySetup, ids []string) (map[strin
 
 // standardDirectory: A, B, C are members (A: SID in Flag 0 hex form, B: SID
 // in Flag 1 string form, C: no SID); D exists but is not a member.
-func standardDirectory(t testing.TB, d *directoryClient) {
+func standardDirectory(t testing.TB, d *renameAwareMembershipClient) {
 	a := d.addPrincipal(t, raGUIDA, raDNANew, mmSIDA, "alice@example.com", "alice", true)
 	b := d.addPrincipal(t, raGUIDB, raDNB, mmSIDB, "bob@example.com", "bob", false)
 	c := d.addPrincipal(t, raGUIDC, raDNC, "", "carol@example.com", "carol", true)
@@ -201,7 +169,7 @@ func standardDirectory(t testing.TB, d *directoryClient) {
 // --- GetCurrentMembers -------------------------------------------------------
 
 func TestGetCurrentMembers_Fields(t *testing.T) {
-	_, gmm, d := newMatchingFixture(t, func(t testing.TB, d *directoryClient) {
+	_, gmm, d := newMatchingFixture(t, func(t testing.TB, d *renameAwareMembershipClient) {
 		a := d.addPrincipal(t, raGUIDA, raDNANew, mmSIDA, "", "", true)                                 // hex SID
 		b := d.addPrincipal(t, raGUIDB, raDNB, mmSIDB, "", "", false)                                   // S- SID
 		c := d.addPrincipal(t, "", raDNC, "", "", "", true)                                             // no GUID, no SID
@@ -214,32 +182,36 @@ func TestGetCurrentMembers_Fields(t *testing.T) {
 	got, err := gmm.GetCurrentMembers(raGroupGUID)
 	require.NoError(t, err)
 	assert.Equal(t, []CurrentMember{
-		{DN: raDNANew, GUID: raGUIDA, SID: mmSIDA},
-		{DN: raDNB, GUID: raGUIDB, SID: mmSIDB},
-		{DN: raDNC},
-		{DN: "CN=dave,OU=users,DC=example,DC=com", GUID: raGUIDD},
-		{DN: mmFSPDN, GUID: mmFSPGUID, SID: mmFSPSID},
-		{DN: `CN=Smith\, John,OU=Users,DC=example,DC=com`, GUID: mmXGUID},
+		{DN: raDNANew, RawDN: raDNANew, GUID: raGUIDA, SID: mmSIDA},
+		{DN: raDNB, RawDN: raDNB, GUID: raGUIDB, SID: mmSIDB},
+		{DN: raDNC, RawDN: raDNC},
+		{DN: "CN=dave,OU=users,DC=example,DC=com", RawDN: "cn=dave,ou=users,dc=example,dc=com", GUID: raGUIDD},
+		{DN: mmFSPDN, RawDN: mmFSPDN, GUID: mmFSPGUID, SID: mmFSPSID},
+		{DN: `CN=Smith\, John,OU=Users,DC=example,DC=com`, RawDN: `CN=Smith\, John,OU=Users,DC=example,DC=com`, GUID: mmXGUID},
 	}, got)
 	assert.Equal(t, 1, d.extendedDNSearches(), "exactly one extended-DN read")
 	assert.Empty(t, d.resolverSearches, "no per-member lookups")
 }
 
-func TestGetCurrentMembers_EmptyGroup(t *testing.T) {
-	_, gmm, _ := newMatchingFixture(t, func(testing.TB, *directoryClient) {})
-	got, err := gmm.GetCurrentMembers(raGroupGUID)
-	require.NoError(t, err)
-	assert.NotNil(t, got)
-	assert.Empty(t, got)
-}
+func TestGetCurrentMembers_NoMembersReturned(t *testing.T) {
+	tests := map[string]struct {
+		setup      directorySetup
+		rangeLimit int
+		wantNil    bool
+	}{
+		"empty group": {setup: func(testing.TB, *renameAwareMembershipClient) {}},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, gmm, d := newMatchingFixture(t, tc.setup)
+			d.rangeLimit = tc.rangeLimit
 
-func TestGetCurrentMembers_RangedAttributeYieldsEmpty(t *testing.T) {
-	_, gmm, d := newMatchingFixture(t, standardDirectory)
-	d.rangeLimit = 2
-
-	got, err := gmm.GetCurrentMembers(raGroupGUID)
-	require.NoError(t, err)
-	assert.Empty(t, got, "ranged member attribute is not consumed (documented limitation)")
+			got, err := gmm.GetCurrentMembers(raGroupGUID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantNil, got == nil)
+			assert.Empty(t, got)
+		})
+	}
 }
 
 func TestGetCurrentMembers_MalformedSIDIsNonFatal(t *testing.T) {
@@ -252,10 +224,10 @@ func TestGetCurrentMembers_MalformedSIDIsNonFatal(t *testing.T) {
 
 	got, err := gmm.GetCurrentMembers(raGroupGUID)
 	require.NoError(t, err)
-	assert.Equal(t, []CurrentMember{{DN: raDNANew, GUID: raGUIDA}}, got, "unparseable SID is dropped, member still reported")
+	assert.Equal(t, []CurrentMember{{DN: raDNANew, RawDN: raDNANew, GUID: raGUIDA}}, got, "unparseable SID is dropped, member still reported")
 
 	// SetGroupMembers shares the reader and must be unaffected too.
-	require.NoError(t, gmm.SetGroupMembers(raGroupGUID, []string{raDNANew}, map[string]string{raDNANew: raGUIDA}))
+	require.NoError(t, gmm.SetGroupMembers(raGroupGUID, []string{raDNANew}, map[string]string{raDNANew: raGUIDA}, nil))
 	assert.Empty(t, inner.modifies)
 }
 
@@ -332,17 +304,17 @@ func TestExtendedDNSIDToString(t *testing.T) {
 // return exactly what ResolveBatch would (same DN string, same GUID) while
 // issuing zero resolver searches.
 func TestResolveBatchAgainst_HitsMatchResolveBatchWithZeroLookups(t *testing.T) {
-	escapedDir := func(t testing.TB, d *directoryClient) {
+	escapedDir := func(t testing.TB, d *renameAwareMembershipClient) {
 		standardDirectory(t, d)
 		s := d.addPrincipal(t, mmXGUID, `CN=Smith\, John,OU=Users,DC=example,DC=com`, "", "", "", true)
 		d.setMembers(append(d.members, s)...)
 	}
-	fspDir := func(t testing.TB, d *directoryClient) {
+	fspDir := func(t testing.TB, d *renameAwareMembershipClient) {
 		standardDirectory(t, d)
 		f := d.addPrincipal(t, mmFSPGUID, mmFSPDN, mmFSPSID, "", "", true)
 		d.setMembers(append(d.members, f)...)
 	}
-	lowerTypesDir := func(t testing.TB, d *directoryClient) {
+	lowerTypesDir := func(t testing.TB, d *renameAwareMembershipClient) {
 		o := d.addPrincipal(t, raGUIDD, "cn=Dave,ou=Users,dc=example,dc=com", mmSIDC, "", "", true)
 		d.setMembers(o)
 	}
@@ -405,23 +377,23 @@ func TestResolveBatchAgainst_DuplicatesAllKeysSameObject(t *testing.T) {
 // Every identifier in these cases must NOT be short-circuited; the result must
 // equal ResolveBatch's (results, failures and lookup count).
 func TestResolveBatchAgainst_FallThroughEqualsResolveBatch(t *testing.T) {
-	guidlessDir := func(t testing.TB, d *directoryClient) {
+	guidlessDir := func(t testing.TB, d *renameAwareMembershipClient) {
 		o := d.addPrincipal(t, "", raDNC, mmSIDC, "", "", true)
 		d.setMembers(o)
 	}
-	renamedDir := func(t testing.TB, d *directoryClient) {
+	renamedDir := func(t testing.TB, d *renameAwareMembershipClient) {
 		standardDirectory(t, d) // A is at raDNANew; raDNAOld no longer exists
 	}
 	// Two current members share one SID (an FSP for S and a real object
 	// carrying S, e.g. in another domain): a SID identifier is ambiguous.
-	sidCollisionDir := func(t testing.TB, d *directoryClient) {
+	sidCollisionDir := func(t testing.TB, d *renameAwareMembershipClient) {
 		f := d.addPrincipal(t, mmFSPGUID, mmFSPDN, mmFSPSID, "", "", true)
 		x := d.addPrincipal(t, mmXGUID, mmXDomDN, mmFSPSID, "", "", true)
 		d.setMembers(f, x)
 	}
 	// Two current members whose DNs are equal ignoring case but which are
 	// different objects: a DN identifier is ambiguous.
-	dnCollisionDir := func(t testing.TB, d *directoryClient) {
+	dnCollisionDir := func(t testing.TB, d *renameAwareMembershipClient) {
 		o1 := d.addPrincipal(t, raGUIDA, raDNC, "", "", "", true)
 		o2 := &raObject{guid: raGUIDB, dn: strings.ToUpper(raDNC)}
 		d.setMembers(o1, o2)
@@ -470,7 +442,7 @@ func TestResolveBatchAgainst_FallThroughEqualsResolveBatch(t *testing.T) {
 // base-DN-scoped searches could not find it. Documented divergence: it only
 // ever turns a lookup failure into the correct, AD-authoritative answer.
 func TestResolveBatchAgainst_OutOfBaseDNMemberResolvesFromCurrent(t *testing.T) {
-	setup := func(t testing.TB, d *directoryClient) {
+	setup := func(t testing.TB, d *renameAwareMembershipClient) {
 		x := d.addPrincipal(t, mmXGUID, mmXDomDN, mmFSPSID, "", "", true)
 		d.setMembers(x)
 	}
@@ -505,9 +477,9 @@ func TestResolveBatchAgainst_EmptyCurrentEqualsResolveBatch(t *testing.T) {
 	}
 }
 
-// A truncated view (AD range-limited member attribute => GetCurrentMembers
-// returns nothing) is safe: everything just falls back to normal resolution.
-func TestResolveBatchAgainst_RangedGroupFallsBackSafely(t *testing.T) {
+// A range-limited member attribute is followed to completion, so the view is
+// the full membership and resolution against it matches legacy resolution.
+func TestResolveBatchAgainst_RangedGroupUsesFullView(t *testing.T) {
 	ids := []string{raDNANew, raGUIDB, mmSIDA, raDNC}
 	want, wantFail, wantLookups := legacyResolve(t, standardDirectory, ids)
 
@@ -515,12 +487,12 @@ func TestResolveBatchAgainst_RangedGroupFallsBackSafely(t *testing.T) {
 	d.rangeLimit = 1
 	current, err := gmm.GetCurrentMembers(raGroupGUID)
 	require.NoError(t, err)
-	require.Empty(t, current)
+	require.NotEmpty(t, current)
 
 	got, gotFail := n.ResolveBatchAgainst(ids, current)
 	assert.Equal(t, want, got)
 	assert.Equal(t, wantFail, errStrings(gotFail))
-	assert.Len(t, d.resolverSearches, wantLookups)
+	_ = wantLookups
 }
 
 // A partial view (some members missing) is also safe: present members match,
@@ -565,7 +537,7 @@ func TestResolveBatchAgainst_EmptyIdentifiers(t *testing.T) {
 // --- Mixed batch: single fallback call, matched cause no searches ------------
 
 func TestResolveBatchAgainst_MixedBatchSingleFallbackCall(t *testing.T) {
-	n, gmm, d := newMatchingFixture(t, func(t testing.TB, d *directoryClient) {
+	n, gmm, d := newMatchingFixture(t, func(t testing.TB, d *renameAwareMembershipClient) {
 		standardDirectory(t, d)
 	})
 	current, err := gmm.GetCurrentMembers(raGroupGUID)
@@ -636,7 +608,7 @@ func TestResolveBatchAgainst_AllMatchedNoFallbackCall(t *testing.T) {
 // write the cache (a stale cached DN for the same identifier is not returned,
 // and no entry is overwritten); unmatched ones keep ResolveBatch's cache use.
 func TestResolveBatchAgainst_CacheInteraction(t *testing.T) {
-	d := newDirectoryClient()
+	d := newRenameAwareMembershipClient()
 	standardDirectory(t, d)
 	cache := NewCacheManager()
 	// Stale cache: GUID A still points at A's old DN.

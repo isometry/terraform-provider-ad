@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"testing"
@@ -118,44 +119,59 @@ func detailsOf(t *testing.T, ctx context.Context, m *GroupMembershipResourceMode
 	return extractMemberDetails(t, ctx, m.MemberDetails)
 }
 
-func TestGroupMembershipRead_SnapshotZeroResolverSearches(t *testing.T) {
-	ctx := t.Context()
-	r, stub := newSnapResource(t, snapServe(liveA, liveB, snapExt))
+// Read builds member_details from one snapshot (no resolver or legacy reads),
+// leaves the configured `members` untouched, and keeps an empty id for a
+// member whose snapshot value carries no GUID.
+func TestGroupMembershipRead_Snapshot(t *testing.T) {
+	tests := []struct {
+		name       string
+		setup      func(*stubMembershipClient)
+		configured []string
+		want       map[string]string
+	}{
+		{
+			name:       "members outside the base DN carry their GUID",
+			setup:      snapServe(liveA, liveB, snapExt),
+			configured: []string{liveDNA},
+			want:       map[string]string{liveDNA: liveGUIDA, liveDNB: liveGUIDB, snapDNExt: snapGUIDExt},
+		},
+		{
+			name:       "members are not AD's DNs",
+			setup:      snapServe(liveA, liveB),
+			configured: []string{liveGUIDA, "upn@example.com"},
+			want:       map[string]string{liveDNA: liveGUIDA, liveDNB: liveGUIDB},
+		},
+		{
+			name: "snapshot value without GUID keeps empty id",
+			setup: func(s *stubMembershipClient) {
+				s.serveGroup = true
+				s.groupValues = []string{liveA.groupValue(), "<SID=" + liveSIDB + ">;" + liveDNB}
+			},
+			want: map[string]string{liveDNA: liveGUIDA, liveDNB: ""},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			r, stub := newSnapResource(t, tc.setup)
 
-	out, resp := runRead(t, ctx, r, snapState(t, []string{liveDNA}, types.SetNull(memberDetailObjectType)))
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
-	}
-	want := map[string]string{liveDNA: liveGUIDA, liveDNB: liveGUIDB, snapDNExt: snapGUIDExt}
-	got := detailsOf(t, ctx, out)
-	if len(got) != len(want) {
-		t.Fatalf("member_details = %v, want %v", got, want)
-	}
-	for dn, g := range want {
-		if got[dn] != g {
-			t.Fatalf("member_details[%s] = %q, want %q (all: %v)", dn, got[dn], g, got)
-		}
-	}
-	reads, queries := stub.counts()
-	if reads != 1 || len(queries) != 0 || stub.legacyReads != 0 {
-		t.Fatalf("want 1 snapshot read, 0 resolver searches, 0 legacy reads; got %d, %v, %d", reads, queries, stub.legacyReads)
-	}
-}
-
-func TestGroupMembershipRead_DoesNotMutateMembers(t *testing.T) {
-	ctx := t.Context()
-	r, _ := newSnapResource(t, snapServe(liveA, liveB))
-
-	configured := []string{liveGUIDA, "upn@example.com"} // not AD's DNs
-	out, resp := runRead(t, ctx, r, snapState(t, configured, types.SetNull(memberDetailObjectType)))
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
-	}
-	got := extractSortedMembers(t, ctx, out.Members)
-	want := slices.Clone(configured)
-	sort.Strings(want)
-	if !slices.Equal(got, want) {
-		t.Fatalf("members mutated: got %v want %v", got, want)
+			out, resp := runRead(t, ctx, r, snapState(t, tc.configured, types.SetNull(memberDetailObjectType)))
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
+			}
+			if got := detailsOf(t, ctx, out); !maps.Equal(got, tc.want) {
+				t.Fatalf("member_details = %v, want %v", got, tc.want)
+			}
+			wantMembers := slices.Clone(tc.configured)
+			sort.Strings(wantMembers)
+			if got := extractSortedMembers(t, ctx, out.Members); !slices.Equal(got, wantMembers) {
+				t.Fatalf("members mutated: got %v want %v", got, wantMembers)
+			}
+			reads, queries := stub.counts()
+			if reads != 1 || len(queries) != 0 || stub.legacyReads != 0 {
+				t.Fatalf("want 1 snapshot read, 0 resolver searches, 0 legacy reads; got %d, %v, %d", reads, queries, stub.legacyReads)
+			}
+		})
 	}
 }
 
@@ -169,22 +185,6 @@ func TestGroupMembershipRead_EmptyGroup(t *testing.T) {
 	}
 	if out.MemberDetails.IsNull() || out.MemberDetails.IsUnknown() || len(out.MemberDetails.Elements()) != 0 {
 		t.Fatalf("want empty non-null set, got %v", out.MemberDetails)
-	}
-}
-
-func TestGroupMembershipRead_EmptySnapshotGUIDKeepsEmptyID(t *testing.T) {
-	ctx := t.Context()
-	r, _ := newSnapResource(t, func(s *stubMembershipClient) {
-		s.serveGroup = true
-		s.groupValues = []string{liveA.groupValue(), "<SID=" + liveSIDB + ">;" + liveDNB}
-	})
-	out, resp := runRead(t, ctx, r, snapState(t, nil, types.SetNull(memberDetailObjectType)))
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
-	}
-	got := detailsOf(t, ctx, out)
-	if got[liveDNA] != liveGUIDA || got[liveDNB] != "" || len(got) != 2 {
-		t.Fatalf("member_details = %v", got)
 	}
 }
 
@@ -222,15 +222,23 @@ func mustManager(t *testing.T, ctx context.Context, r *GroupMembershipResource) 
 	return m
 }
 
+// A missing group removes the resource, whichever reader notices it.
 func TestGroupMembershipRead_GroupNotFoundRemovesResource(t *testing.T) {
-	ctx := t.Context()
-	r, _ := newSnapResource(t, func(s *stubMembershipClient) { s.groupNotFound = true })
-	out, resp := runRead(t, ctx, r, snapState(t, []string{liveDNA}, types.SetNull(memberDetailObjectType)))
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
+	tests := map[string]func(*stubMembershipClient){
+		"snapshot read": func(s *stubMembershipClient) { s.groupNotFound = true },
+		"fallback read": func(s *stubMembershipClient) {
+			s.groupErr = critExtErr()
+			s.legacyNotFound = true
+		},
 	}
-	if out != nil {
-		t.Fatalf("resource should have been removed, got %v", out)
+	for name, setup := range tests {
+		t.Run(name, func(t *testing.T) {
+			r, _ := newSnapResource(t, setup)
+			out, resp := runRead(t, t.Context(), r, snapState(t, []string{liveDNA}, types.SetNull(memberDetailObjectType)))
+			if resp.Diagnostics.HasError() || out != nil {
+				t.Fatalf("want removal; out=%v diags=%v", out, resp.Diagnostics)
+			}
+		})
 	}
 }
 
@@ -318,18 +326,6 @@ func TestGroupMembershipRead_OtherSnapshotErrorsSurface(t *testing.T) {
 				t.Fatalf("want 1 group read, 0 legacy, 0 resolver; got %d, %d, %v", reads, stub.legacyReads, queries)
 			}
 		})
-	}
-}
-
-func TestGroupMembershipRead_FallbackGroupNotFoundRemovesResource(t *testing.T) {
-	ctx := t.Context()
-	r, _ := newSnapResource(t, func(s *stubMembershipClient) {
-		s.groupErr = critExtErr()
-		s.legacyNotFound = true
-	})
-	out, resp := runRead(t, ctx, r, snapState(t, nil, types.SetNull(memberDetailObjectType)))
-	if resp.Diagnostics.HasError() || out != nil {
-		t.Fatalf("want removal; out=%v diags=%v", out, resp.Diagnostics)
 	}
 }
 

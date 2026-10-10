@@ -186,6 +186,17 @@ func (m *MockGroupMembershipClient) Modify(ctx context.Context, req *ModifyReque
 		copy(group.Members, replaceMembers)
 	}
 
+	// Handle value-level deletion
+	for _, del := range req.DeleteValues["member"] {
+		kept := group.Members[:0:0]
+		for _, existing := range group.Members {
+			if !DNEqual(existing, del) {
+				kept = append(kept, existing)
+			}
+		}
+		group.Members = kept
+	}
+
 	// Handle member deletion
 	for _, attr := range req.DeleteAttributes {
 		if attr == "member" {
@@ -824,7 +835,7 @@ func TestSetGroupMembers(t *testing.T) {
 		user2DN, // DN format for user2
 	}
 
-	err := gmm.SetGroupMembers(groupGUID, desiredMembers, nil)
+	err := gmm.SetGroupMembers(groupGUID, desiredMembers, nil, nil)
 
 	if err != nil {
 		t.Fatalf("SetGroupMembers failed: %v", err)
@@ -861,7 +872,7 @@ func TestSetGroupMembersEmptyDesiredList(t *testing.T) {
 	// Set empty membership
 	desiredMembers := []string{}
 
-	err := gmm.SetGroupMembers(groupGUID, desiredMembers, nil)
+	err := gmm.SetGroupMembers(groupGUID, desiredMembers, nil, nil)
 
 	if err != nil {
 		t.Fatalf("SetGroupMembers failed: %v", err)
@@ -1037,7 +1048,7 @@ func TestSimplifiedDNOnlyApproach(t *testing.T) {
 	}
 
 	// Test 3: SetGroupMembers should also reject non-DN formats
-	err = gmm.SetGroupMembers(groupGUID, nonDNMembers, nil)
+	err = gmm.SetGroupMembers(groupGUID, nonDNMembers, nil, nil)
 	if err == nil {
 		t.Error("Expected validation error for non-DN format in SetGroupMembers, but got none")
 	} else if !strings.Contains(err.Error(), "invalid member DN") {

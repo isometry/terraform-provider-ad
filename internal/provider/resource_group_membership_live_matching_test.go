@@ -429,10 +429,10 @@ func TestGroupMembershipLiveMatching_WriteFallback(t *testing.T) {
 	data := func() *GroupMembershipResourceModel { return w.plan(t) }
 
 	legacyR, _ := w.newResource(t, w.cacheObjs, nil)
-	oldDNs, oldGUIDs, oldDiags := legacyR.resolveMembersForWriteFallback(ctx, data())
+	oldDNs, oldGUIDs, oldCurrent, oldDiags := legacyR.resolveMembersForWriteFallback(ctx, data())
 
 	liveR, liveStub := w.newResource(t, nil, w.stubSetup)
-	dns, guids, diags := liveR.resolveMembersForWriteFallback(ctx, data())
+	dns, guids, current, diags := liveR.resolveMembersForWriteFallback(ctx, data())
 	if diags.HasError() || oldDiags.HasError() {
 		t.Fatalf("unexpected errors: live %v legacy %v", diags.Errors(), oldDiags.Errors())
 	}
@@ -441,6 +441,11 @@ func TestGroupMembershipLiveMatching_WriteFallback(t *testing.T) {
 	}
 	if fmt.Sprint(guids) != fmt.Sprint(oldGUIDs) {
 		t.Errorf("GUID map differs: live %v legacy %v", guids, oldGUIDs)
+	}
+	// The live path hands SetGroupMembers the group snapshot it resolved
+	// against; the legacy path has none.
+	if len(current) != 3 || oldCurrent != nil {
+		t.Errorf("snapshot = %v (legacy %v), want the group's 3 members (legacy nil)", current, oldCurrent)
 	}
 	wantDNs := []string{liveDNA, liveDNB, liveDNC, liveDNUPN}
 	if !slices.Equal(dns, wantDNs) {
@@ -494,7 +499,7 @@ func TestGroupMembershipLiveMatching_NoLDAPWhenNothingToResolve(t *testing.T) {
 		w := w
 		w.members = nil
 		r, stub := w.newResource(t, nil, w.stubSetup)
-		if _, _, diags := r.resolveMembersForWriteFallback(ctx, w.plan(t)); diags.HasError() {
+		if _, _, _, diags := r.resolveMembersForWriteFallback(ctx, w.plan(t)); diags.HasError() {
 			t.Fatalf("unexpected error: %v", diags.Errors())
 		}
 		assertNoCalls(t, stub)
@@ -506,7 +511,7 @@ func TestGroupMembershipLiveMatching_NoLDAPWhenNothingToResolve(t *testing.T) {
 		r, stub := w.newResource(t, []liveObj{liveA}, w.stubSetup)
 		data := w.plan(t)
 		data.GroupID = types.StringUnknown()
-		if _, _, diags := r.resolveMembersForWriteFallback(ctx, data); diags.HasError() {
+		if _, _, _, diags := r.resolveMembersForWriteFallback(ctx, data); diags.HasError() {
 			t.Fatalf("unexpected error: %v", diags.Errors())
 		}
 		if reads, _ := stub.counts(); reads != 0 {

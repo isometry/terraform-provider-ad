@@ -704,9 +704,8 @@ func (c *client) Add(ctx context.Context, req *AddRequest) error {
 		ldapReq.Attribute(attr, values)
 	}
 
-	return c.withRetry(ctx, func() error {
-		return connOps(conn).Add(ldapReq)
-	})
+	// Writes are not retried: a timed-out write may already have been applied.
+	return connOps(conn).Add(ldapReq)
 }
 
 // Modify modifies an existing LDAP entry.
@@ -739,9 +738,13 @@ func (c *client) Modify(ctx context.Context, req *ModifyRequest) error {
 		ldapReq.Delete(attr, []string{})
 	}
 
-	return c.withRetry(ctx, func() error {
-		return connOps(conn).Modify(ldapReq)
-	})
+	// Delete specific values
+	for attr, vals := range req.DeleteValues {
+		ldapReq.Delete(attr, vals)
+	}
+
+	// Writes are not retried: a timed-out write may already have been applied.
+	return connOps(conn).Modify(ldapReq)
 }
 
 // ModifyDN moves or renames an LDAP entry.
@@ -767,9 +770,8 @@ func (c *client) ModifyDN(ctx context.Context, req *ModifyDNRequest) error {
 	// Convert our ModifyDNRequest to go-ldap ModifyDNRequest
 	ldapReq := ldap.NewModifyDNRequest(req.DN, req.NewRDN, req.DeleteOldRDN, req.NewSuperior)
 
-	return c.withRetry(ctx, func() error {
-		return connOps(conn).ModifyDN(ldapReq)
-	})
+	// Writes are not retried: a timed-out write may already have been applied.
+	return connOps(conn).ModifyDN(ldapReq)
 }
 
 // Delete removes an LDAP entry.
@@ -786,9 +788,8 @@ func (c *client) Delete(ctx context.Context, dn string) error {
 
 	ldapReq := ldap.NewDelRequest(dn, nil)
 
-	return c.withRetry(ctx, func() error {
-		return connOps(conn).Del(ldapReq)
-	})
+	// Writes are not retried: a timed-out write may already have been applied.
+	return connOps(conn).Del(ldapReq)
 }
 
 // Ping tests connectivity to the LDAP server.
@@ -902,9 +903,7 @@ func (c *client) isRetryableError(err error) bool {
 	// Check for specific LDAP error codes that are retryable
 	if ldap.IsErrorWithCode(err, ldap.LDAPResultBusy) ||
 		ldap.IsErrorWithCode(err, ldap.LDAPResultUnavailable) ||
-		ldap.IsErrorWithCode(err, ldap.LDAPResultUnwillingToPerform) ||
-		ldap.IsErrorWithCode(err, ldap.LDAPResultServerDown) ||
-		ldap.IsErrorWithCode(err, ldap.LDAPResultOperationsError) {
+		ldap.IsErrorWithCode(err, ldap.LDAPResultServerDown) {
 		return true
 	}
 

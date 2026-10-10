@@ -34,7 +34,7 @@ import "strings"
 // identity for it.
 //
 // Only unambiguous matches short-circuit. A current member is not eligible
-// for matching at all unless it has a valid GUID and a parseable DN (so a
+// for matching at all unless it has a GUID and a DN (so a
 // matched result always carries a GUID and is guaranteed identical to what a
 // lookup would produce); and a DN, GUID or SID key shared by two different
 // current members (for example an FSP and a real object in another domain
@@ -63,7 +63,7 @@ func (m *MemberNormalizer) resolveBatchAgainst(identifiers []string, current []C
 		return fallback(identifiers)
 	}
 
-	index := m.indexCurrentMembers(current)
+	index := indexCurrentMembers(current)
 	results := make(map[string]ResolvedIdentifier, len(identifiers))
 	failures := make(map[string]error)
 
@@ -116,7 +116,7 @@ func dnMatchKey(normalizedDN string) string {
 	return strings.ToLower(normalizedDN)
 }
 
-func (m *MemberNormalizer) indexCurrentMembers(current []CurrentMember) *currentMemberIndex {
+func indexCurrentMembers(current []CurrentMember) *currentMemberIndex {
 	index := &currentMemberIndex{
 		members: make([]ResolvedIdentifier, 0, len(current)),
 		byDN:    make(map[string]int, len(current)),
@@ -124,28 +124,19 @@ func (m *MemberNormalizer) indexCurrentMembers(current []CurrentMember) *current
 		bySID:   make(map[string]int, len(current)),
 	}
 
+	// GetCurrentMembers already supplies canonical GUID, DN and SID forms.
 	for _, c := range current {
-		if c.GUID == "" {
+		if c.GUID == "" || c.DN == "" {
 			continue // ineligible: a lookup might find a GUID we cannot supply
-		}
-		guid, err := m.guidHandler.NormalizeGUID(c.GUID)
-		if err != nil {
-			continue
-		}
-		dn, err := NormalizeDNCase(c.DN)
-		if err != nil || dn == "" {
-			continue
 		}
 
 		pos := len(index.members)
-		index.members = append(index.members, ResolvedIdentifier{DN: dn, GUID: guid})
+		index.members = append(index.members, ResolvedIdentifier{DN: c.DN, GUID: c.GUID})
 
-		index.put(index.byDN, dnMatchKey(dn), pos)
-		index.put(index.byGUID, guid, pos)
+		index.put(index.byDN, dnMatchKey(c.DN), pos)
+		index.put(index.byGUID, c.GUID, pos)
 		if c.SID != "" {
-			if sid, err := ParseSID(strings.TrimSpace(c.SID)); err == nil {
-				index.put(index.bySID, sid.String(), pos)
-			}
+			index.put(index.bySID, c.SID, pos)
 		}
 	}
 
