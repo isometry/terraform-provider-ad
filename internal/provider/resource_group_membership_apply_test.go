@@ -3,10 +3,13 @@ package provider
 import (
 	"context"
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/go-ldap/ldap/v3"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -134,8 +137,27 @@ func (c *recordingMembershipClient) groupEntry() *ldap.Entry {
 // member list, so that subsequent Search-driven lookups within the same
 // SetGroupMembers call (e.g. RemoveGroupMembers re-reading current state
 // after AddGroupMembers already ran) see up-to-date membership.
+// DeleteValues["member"] removes matching DNs case-insensitively; absent
+// values are a no-op, mirroring AD's permissive-modify behaviour.
 func (c *recordingMembershipClient) Modify(ctx context.Context, req *ldapclient.ModifyRequest) error {
 	c.modifyRequests = append(c.modifyRequests, req)
+
+	if del, ok := req.DeleteValues["member"]; ok {
+		kept := c.members[:0:0]
+		for _, m := range c.members {
+			drop := false
+			for _, d := range del {
+				if strings.EqualFold(m, d) {
+					drop = true
+					break
+				}
+			}
+			if !drop {
+				kept = append(kept, m)
+			}
+		}
+		c.members = kept
+	}
 
 	if add, ok := req.AddAttributes["member"]; ok {
 		c.members = append(c.members, add...)
@@ -258,11 +280,11 @@ func runMembershipUpdate(
 
 // nonGroupLookupSearches returns every recorded Search filter that was NOT
 // the "objectGUID=" group-by-GUID lookup GetGroupMembers/AddGroupMembers/
-// RemoveGroupMembers legitimately issue. In the new plan-time-GUID-capture
-// design this must always be empty for Create/Update's common case (fully
-// known member_details): resolving member identities happens ZERO times at
-// apply time, so the only Search traffic at all is the group's own DN/
-// current-member lookup.
+// RemoveGroupMembers legitimately issue. In the per-element
+// member_details design this must always be empty for Create/Update's common
+// case (fully known member_details, every element anchored to prior state):
+// member identities are not resolved at apply time, so the only Search
+// traffic at all is the group's own DN/current-member lookup.
 func (c *recordingMembershipClient) nonGroupLookupSearches() []string {
 	var out []string
 	for _, filter := range c.searchFilters {
@@ -273,20 +295,21 @@ func (c *recordingMembershipClient) nonGroupLookupSearches() []string {
 	return out
 }
 
-// TestGroupMembershipResource_CreateUpdateTrustPlanTimeMemberDetails is the
-// direct regression test for the design that replaced apply-time
-// re-resolution (re-resolving `members` fresh, live/cached, immediately
-// before the AD write) with plan-time GUID capture: `member_details` is
-// resolved exactly once, by ModifyPlan, and trusted verbatim through apply.
-// This is safe — even if a referenced object is renamed by an unordered
-// sibling resource later in the very same apply — because an AD object's
-// objectGUID never changes for its lifetime, and the write below always
-// prefers the GUID-alt-DN form over the literal (possibly now-stale) DN
-// string.
+// TestGroupMembershipResource_CreateUpdateTrustPlanTimeMemberDetails covers
+// row A1: when the planned `member_details` is FULLY known (every element
+// case K, anchored to prior state — e.g. members only removed, or drift
+// being corrected), Create/Update trust it verbatim and perform ZERO LDAP
+// calls to resolve member identity. This is safe — even if a referenced
+// object is renamed by an unordered sibling resource later in the very same
+// apply — because an AD object's objectGUID never changes for its lifetime:
+// the Add leg uses the GUID-alt-DN form rather than the (possibly stale) DN
+// string, and SetGroupMembers diffs by GUID when memberGUIDs supplies one.
+// The fully-known path trusts the state-anchored DNs; a stale DN in state is
+// corrected by the next refresh.
 //
 // Each subtest hand-constructs a model where MemberDetails already holds a
 // resolved (dn, id) pair whose dn deliberately looks "stale", as if
-// captured before some unrelated rename — and deliberately does NOT seed
+// recorded before some unrelated rename — and deliberately does NOT seed
 // the cache manager for that identifier. recordingMembershipClient fails
 // loudly on any Search beyond the legitimate group-by-GUID lookup, so if
 // Create/Update regressed to re-resolving `members` fresh (the old design),
@@ -294,13 +317,13 @@ func (c *recordingMembershipClient) nonGroupLookupSearches() []string {
 // for a bare identifier, failing the test loudly rather than silently
 // succeeding. Invariants asserted:
 //
-//  1. The underlying AD write uses member_details' captured GUID (via its
+//  1. The underlying AD write uses member_details' planned GUID (via its
 //     "<GUID=...>" alternative-DN form) — proving the write is driven by
 //     member_details, not by any re-resolution of `members`.
 //  2. Every Search call recorded is the legitimate group-by-GUID lookup —
 //     zero LDAP calls were made to resolve member identity.
 //  3. resp.State's saved member_details equals exactly what ModifyPlan had
-//     already captured in the input plan — proving Create/Update never
+//     already planned in the input plan — proving Create/Update never
 //     rewrite it in the common case.
 func TestGroupMembershipResource_CreateUpdateTrustPlanTimeMemberDetails(t *testing.T) {
 	ctx := t.Context()
@@ -419,7 +442,10 @@ func TestGroupMembershipResource_CreateUpdateTrustPlanTimeMemberDetails(t *testi
 }
 
 // TestGroupMembershipResource_CreateUpdateFallBackWhenMemberDetailsUnknown
-// covers the EXCEPTION path: when member_details is Unknown at apply time
+// covers row A2, the wholly-Unknown case of the fresh-resolution path (rows
+// A3/A4 cover the per-element mixed case, see
+// TestGroupMembershipResource_CreateUpdateMixedPlanMemberDetails): when
+// member_details is Unknown at apply time
 // (ModifyPlan itself could not resolve members at plan time — e.g. `members`
 // depended on a computed attribute of another resource being created in the
 // very same apply, so its value only becomes known once that resource is
@@ -547,4 +573,174 @@ func TestGroupMembershipResource_CreateUpdateFallBackWhenMemberDetailsUnknown(t 
 			t.Errorf("member_details = %v, want %v", gotDetails, wantDetails)
 		}
 	})
+}
+
+// TestGroupMembershipResource_CreateUpdateMixedPlanMemberDetails covers the
+// write path for a per-element planned member_details (rows A3/A4): a plan
+// mixing case K (known, anchored to prior state), case G (id known, dn
+// unknown) and case P (fully unknown placeholder) elements. Create/Update
+// must resolve `members` fresh, keep every known planned element verbatim
+// (its state-anchored DN, even when AD now reports a different DN), fill G
+// and P from the fresh resolution, and produce a result compatible with the
+// plan under Terraform's set rules.
+func TestGroupMembershipResource_CreateUpdateMixedPlanMemberDetails(t *testing.T) {
+	ctx := t.Context()
+
+	const (
+		groupGUID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+		groupDN   = "CN=MixedTestGroup,OU=Groups,DC=example,DC=com"
+
+		// Member 1: in prior state under dnState1, renamed in AD to dnFresh1.
+		dnState1 = "CN=Member1,OU=Users,DC=example,DC=com"
+		dnFresh1 = "CN=Member1Renamed,OU=Users,DC=example,DC=com"
+		guid1    = "11111111-1111-1111-1111-111111111111"
+
+		// Member 2: referenced by GUID, not in prior state (case G).
+		dn2   = "CN=Member2,OU=Users,DC=example,DC=com"
+		guid2 = "22222222-2222-2222-2222-222222222222"
+
+		// Member 3: referenced by DN, did not exist at plan time (case P),
+		// exists by apply time.
+		dn3   = "CN=Member3,OU=Groups,DC=example,DC=com"
+		guid3 = "33333333-3333-3333-3333-333333333333"
+
+		// Never exists.
+		dnMissing = "CN=NeverCreated,OU=Groups,DC=example,DC=com"
+	)
+
+	altDN := func(guid string) string {
+		alt, err := ldapclient.GUIDToAltDN(guid)
+		if err != nil {
+			panic(err)
+		}
+		return alt
+	}
+
+	sorted := func(in []string) []string {
+		out := slices.Clone(in)
+		sort.Strings(out)
+		return out
+	}
+
+	tests := []struct {
+		name    string
+		seed    []pair // resolvable from the cache at apply time
+		initial []string
+		members []string
+		planned func(t *testing.T) types.Set
+		update  bool // prior state holds member 1 under dnState1
+		ignore  types.Bool
+
+		wantAdded    []string
+		wantFinal    []string // final group membership; nil = not asserted
+		noLiveSearch bool
+		wantWarning  bool
+		wantKnown    map[string]string
+	}{
+		{
+			// AD already reports member 1 under its renamed DN, so it is not
+			// removed and re-added: only members 2 and 3 are added.
+			name:    "A3: Update with K + G + P",
+			seed:    []pair{{dnFresh1, guid1}, {dn2, guid2}, {dn3, guid3}},
+			initial: []string{dnFresh1},
+			members: []string{guid1, guid2, dn3},
+			planned: func(t *testing.T) types.Set {
+				return newMemberDetailSetOf(t, knownDetail(t, dnState1, guid1), guidOnlyDetail(t, guid2), placeholderDetail(t))
+			},
+			update:       true,
+			ignore:       types.BoolNull(),
+			wantAdded:    []string{altDN(guid2), altDN(guid3)},
+			wantFinal:    []string{dnFresh1, altDN(guid2), altDN(guid3)},
+			noLiveSearch: true,
+			// K keeps the planned (state-anchored) DN; G and P are filled
+			// from fresh resolution.
+			wantKnown: map[string]string{dnState1: guid1, dn2: guid2, dn3: guid3},
+		},
+		{
+			name:    "A3: Create with G + P",
+			seed:    []pair{{dn2, guid2}, {dn3, guid3}},
+			members: []string{guid2, dn3},
+			planned: func(t *testing.T) types.Set {
+				return newMemberDetailSetOf(t, guidOnlyDetail(t, guid2), placeholderDetail(t))
+			},
+			ignore:    types.BoolNull(),
+			wantAdded: []string{altDN(guid2), altDN(guid3)},
+			wantKnown: map[string]string{dn2: guid2, dn3: guid3},
+		},
+		{
+			// dnMissing is deliberately unseeded: it still does not exist.
+			name:    "A4: Update with K + P, P still unresolved at apply (ignore-missing)",
+			seed:    []pair{{dnState1, guid1}},
+			initial: []string{dnState1},
+			members: []string{guid1, dnMissing},
+			planned: func(t *testing.T) types.Set {
+				return newMemberDetailSetOf(t, knownDetail(t, dnState1, guid1), placeholderDetail(t))
+			},
+			update:      true,
+			ignore:      types.BoolValue(true),
+			wantWarning: true,
+			wantKnown:   map[string]string{dnState1: guid1},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cm := ldapclient.NewCacheManager()
+			for _, p := range tc.seed {
+				seedMembershipCache(t, cm, p.dn, p.guid)
+			}
+			client := newRecordingMembershipClient(groupGUID, groupDN, tc.initial...)
+			r := newTestGroupMembershipResourceWithClient(client, cm)
+
+			plannedDetails := tc.planned(t)
+			planModel := &GroupMembershipResourceModel{
+				ID:                   types.StringUnknown(),
+				GroupID:              types.StringValue(groupGUID),
+				Members:              newMembershipSet(t, tc.members...),
+				MemberDetails:        plannedDetails,
+				IgnoreMissingMembers: tc.ignore,
+			}
+
+			var out *GroupMembershipResourceModel
+			var diags diag.Diagnostics
+			if tc.update {
+				planModel.ID = types.StringValue(groupGUID)
+				stateModel := &GroupMembershipResourceModel{
+					ID:                   types.StringValue(groupGUID),
+					GroupID:              types.StringValue(groupGUID),
+					Members:              newMembershipSet(t, guid1),
+					MemberDetails:        newMemberDetailSet(t, ctx, []string{dnState1}, []string{guid1}),
+					IgnoreMissingMembers: tc.ignore,
+				}
+				var resp *resource.UpdateResponse
+				out, resp = runMembershipUpdate(t, ctx, r, planModel, stateModel)
+				diags = resp.Diagnostics
+			} else {
+				var resp *resource.CreateResponse
+				out, resp = runMembershipCreate(t, ctx, r, planModel)
+				diags = resp.Diagnostics
+			}
+			if diags.HasError() {
+				t.Fatalf("unexpected error: %v", diags.Errors())
+			}
+			if tc.wantWarning != hasWarningSummary(diags, "Member could not be resolved") {
+				t.Errorf("'Member could not be resolved' warning present = %v, want %v: %v", !tc.wantWarning, tc.wantWarning, diags)
+			}
+
+			if got := sorted(client.addedMemberValues()); !slices.Equal(got, sorted(tc.wantAdded)) {
+				t.Errorf("AD adds = %v, want %v", got, sorted(tc.wantAdded))
+			}
+			if tc.wantFinal != nil {
+				if got := sorted(client.members); !slices.Equal(got, sorted(tc.wantFinal)) {
+					t.Errorf("final group membership = %v, want %v (member 1 must not be removed and re-added)", got, sorted(tc.wantFinal))
+				}
+			}
+			if extra := client.nonGroupLookupSearches(); tc.noLiveSearch && len(extra) != 0 {
+				t.Errorf("unexpected live Search calls (members should resolve from cache): %v", extra)
+			}
+
+			// The result is fully known and compatible with the plan.
+			assertClassifiedDetails(t, out.MemberDetails, classifiedDetails{known: tc.wantKnown})
+			assertFinalPlanCompatible(t, plannedDetails, out.MemberDetails)
+		})
+	}
 }

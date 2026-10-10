@@ -930,7 +930,7 @@ func TestAccUserResource_passwordVersion(t *testing.T) {
 				ResourceName:            "ad_user.test",
 				ImportState:             true,
 				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"password"},
+				ImportStateVerifyIgnore: []string{"password", "password_version"},
 			},
 		},
 	})

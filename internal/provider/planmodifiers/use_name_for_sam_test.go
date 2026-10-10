@@ -455,3 +455,70 @@ func TestUseNameForSAMAccountName_EdgeCases(t *testing.T) {
 		}
 	})
 }
+
+func TestUseNameForSAMAccountName_PlanModifyString_State(t *testing.T) {
+	s := schema.Schema{
+		Attributes: map[string]schema.Attribute{
+			"name":             schema.StringAttribute{Required: true},
+			"sam_account_name": schema.StringAttribute{Optional: true, Computed: true},
+		},
+	}
+	objType := tftypes.Object{AttributeTypes: map[string]tftypes.Type{
+		"name":             tftypes.String,
+		"sam_account_name": tftypes.String,
+	}}
+	raw := func(name, sam string) tftypes.Value {
+		return tftypes.NewValue(objType, map[string]tftypes.Value{
+			"name":             tftypes.NewValue(tftypes.String, name),
+			"sam_account_name": tftypes.NewValue(tftypes.String, sam),
+		})
+	}
+	nullRaw := tftypes.NewValue(objType, nil)
+
+	tests := map[string]struct {
+		config   types.String
+		plan     tftypes.Value
+		state    tftypes.Value
+		stateSAM types.String
+		want     types.String
+	}{
+		"create_derives_from_name": {
+			config: types.StringNull(), plan: raw("Admins", ""), state: nullRaw,
+			stateSAM: types.StringNull(), want: types.StringValue("Admins"),
+		},
+		"update_name_unchanged_keeps_state": {
+			config: types.StringNull(), plan: raw("Admins", ""), state: raw("Admins", "ADM-01"),
+			stateSAM: types.StringValue("ADM-01"), want: types.StringValue("ADM-01"),
+		},
+		"update_name_changed_derives_from_new_name": {
+			config: types.StringNull(), plan: raw("Admins2", ""), state: raw("Admins", "ADM-01"),
+			stateSAM: types.StringValue("ADM-01"), want: types.StringValue("Admins2"),
+		},
+		"update_config_wins": {
+			config: types.StringValue("explicit"), plan: raw("Admins", "explicit"), state: raw("Admins", "ADM-01"),
+			stateSAM: types.StringValue("ADM-01"), want: types.StringValue("explicit"),
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			req := planmodifier.StringRequest{
+				Path:        path.Root("sam_account_name"),
+				ConfigValue: tc.config,
+				StateValue:  tc.stateSAM,
+				Plan:        tfsdk.Plan{Schema: s, Raw: tc.plan},
+				State:       tfsdk.State{Schema: s, Raw: tc.state},
+			}
+			resp := &planmodifier.StringResponse{PlanValue: tc.config}
+
+			planmodifiers.UseNameForSAMAccountName(false).PlanModifyString(t.Context(), req, resp)
+
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
+			}
+			if !resp.PlanValue.Equal(tc.want) {
+				t.Errorf("expected %v, got %v", tc.want, resp.PlanValue)
+			}
+		})
+	}
+}

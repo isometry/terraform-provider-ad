@@ -91,7 +91,7 @@ func BenchmarkGroupMembership(b *testing.B) {
 	// Add members to first test group
 	mainGroupID := testGroups[0]
 	membershipManager := ldapclient.NewGroupMembershipManager(ctx, helper.client, helper.config.BaseDN, ldapclient.NewCacheManager())
-	err = membershipManager.SetGroupMembers(mainGroupID, memberDNs, nil)
+	err = membershipManager.SetGroupMembers(mainGroupID, memberDNs, nil, nil)
 	if err != nil {
 		b.Fatalf("Failed to set members: %v", err)
 	}

@@ -121,6 +121,18 @@ func NewConnectionPool(ctx context.Context, config *ConnectionConfig) (Connectio
 		})
 	}
 
+	// Load the client certificate once; it is presented for both ldaps:// and StartTLS.
+	if config.TLSClientCertFile != "" && config.TLSClientKeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(config.TLSClientCertFile, config.TLSClientKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load TLS client certificate %s / key %s: %w", config.TLSClientCertFile, config.TLSClientKeyFile, err)
+		}
+		if config.TLSConfig == nil {
+			config.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		config.TLSConfig.Certificates = []tls.Certificate{cert}
+	}
+
 	pool := &connectionPool{
 		ctx:         ctx, // Store context for logging
 		config:      config,

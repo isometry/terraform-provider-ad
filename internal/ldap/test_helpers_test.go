@@ -2,6 +2,7 @@ package ldap
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"testing"
 
@@ -53,6 +54,7 @@ func (m *mockPool) HealthCheck(ctx context.Context) error {
 // *ldap.SearchRequest, *ldap.AddRequest, etc. that the client builds and
 // would otherwise send to the remote directory server.
 type mockLDAPOps struct {
+	encrypted bool
 	mock.Mock
 }
 
@@ -144,4 +146,20 @@ func captureArg[T any](tb testing.TB, dst *T) func(mock.Arguments) {
 		}
 		*dst = v
 	}
+}
+
+// tlsState controls what TLSConnectionState reports on mockLDAPOps.
+// It is intentionally not testify-driven so existing tests need no setup.
+func (m *mockLDAPOps) TLSConnectionState() (tls.ConnectionState, bool) {
+	return tls.ConnectionState{}, m.encrypted
+}
+
+// mockExternalBinder records ExternalBind calls; it has no Bind method, so a
+// plain Bind cannot be called through it.
+type mockExternalBinder struct {
+	mock.Mock
+}
+
+func (m *mockExternalBinder) ExternalBind() error {
+	return m.Called().Error(0)
 }

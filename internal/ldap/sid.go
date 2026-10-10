@@ -2,6 +2,7 @@ package ldap
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -238,6 +239,39 @@ func (h *SIDHandler) StringToSIDBytes(sidString string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to parse SID string: %w", err)
 	}
 	return sid.Bytes()
+}
+
+// ExtendedDNSIDToString converts the sid_value of an Active Directory
+// extended DN ("<SID=sid_value>", see LDAP_SERVER_EXTENDED_DN_OID in MS-ADTS
+// 3.1.1.3.4.1.5) to the standard "S-1-..." string form.
+//
+// Both server output forms are accepted:
+//   - Flag 0 / control value omitted (hex form): the hex of the binary
+//     objectSid, decoded via DecodeSID.
+//   - Flag 1 (string form): an "S-..." SID string, canonicalised via ParseSID.
+func (h *SIDHandler) ExtendedDNSIDToString(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("extended DN SID value cannot be empty")
+	}
+
+	if strings.HasPrefix(value, "S-") || strings.HasPrefix(value, "s-") {
+		sid, err := ParseSID("S-" + value[2:])
+		if err != nil {
+			return "", fmt.Errorf("invalid extended DN SID string %q: %w", value, err)
+		}
+		return sid.String(), nil
+	}
+
+	raw, err := hex.DecodeString(value)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode extended DN SID hex %q: %w", value, err)
+	}
+	sid, err := DecodeSID(raw)
+	if err != nil {
+		return "", fmt.Errorf("invalid extended DN SID %q: %w", value, err)
+	}
+	return sid.String(), nil
 }
 
 // SIDToSearchFilter creates an LDAP search filter for a SID using binary format.

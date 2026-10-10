@@ -152,3 +152,16 @@ func TestBuildUpdateRequest_NilWhenPlanMatchesRefreshedState(t *testing.T) {
 		t.Fatalf("expected nil update request when plan and refreshed state agree on tracked attrs, got %+v", req)
 	}
 }
+
+// An imported user must hold password_version=0 so the next plan (default 0)
+// is not treated as a rotation that requires a password.
+func TestApplyImportDefaults_PasswordVersionDoesNotTriggerRotation(t *testing.T) {
+	t.Parallel()
+
+	var data UserResourceModel
+	applyImportDefaults(&data)
+
+	if got := evaluatePasswordRotation(types.Int64Value(0), data.PasswordVersion, types.StringNull()); got != rotationOutcomeNone {
+		t.Errorf("evaluatePasswordRotation after import = %d, want %d", got, rotationOutcomeNone)
+	}
+}

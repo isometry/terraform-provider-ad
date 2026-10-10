@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
+	ldap "github.com/go-ldap/ldap/v3"
 	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
 	"github.com/isometry/terraform-provider-ad/internal/provider/helpers"
 	"github.com/isometry/terraform-provider-ad/internal/provider/validators"
@@ -267,7 +268,7 @@ func (d *OUDataSource) retrieveOU(ctx context.Context, data *OUDataSourceModel, 
 		path := data.Path.ValueString()
 
 		// Construct the full DN from name and path
-		ouDN := fmt.Sprintf("OU=%s,%s", name, path)
+		ouDN := ouDNFromNameAndPath(name, path)
 		tflog.Debug(ctx, "Looking up OU by name and path", map[string]any{
 			"name":    name,
 			"path":    path,
@@ -350,4 +351,9 @@ func (d *OUDataSource) isValidGUID(guid string) bool {
 	// GUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 	guidRegex := regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 	return guidRegex.MatchString(guid)
+}
+
+// ouDNFromNameAndPath builds an OU DN; name is escaped, path is already a DN.
+func ouDNFromNameAndPath(name, path string) string {
+	return fmt.Sprintf("OU=%s,%s", ldap.EscapeDN(name), path)
 }

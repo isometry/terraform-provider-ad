@@ -50,8 +50,8 @@ const (
 // Access mask bits relevant to OU delete protection.
 // Standard rights: MS-DTYP 2.4.3; AD-specific in MS-ADTS.
 const (
-	AccessMaskDelete      uint32 = 0x00010000
-	AccessMaskDeleteChild uint32 = 0x00000040
+	AccessMaskDelete     uint32 = 0x00010000
+	AccessMaskDeleteTree uint32 = 0x00000040 // ADS_RIGHT_DS_DELETE_TREE
 )
 
 // LDAP_SERVER_SD_FLAGS_OID control value bits. Only DACL is requested/written
@@ -413,19 +413,20 @@ func isEveryoneSID(s SID) bool {
 }
 
 // isDenyDeleteEveryoneACE reports whether the ACE is the canonical
-// "protect from accidental deletion" entry: deny DELETE+DELETE_CHILD to
+// "protect from accidental deletion" entry: deny DELETE+DELETE_TREE to
 // Everyone, with no opaque body.
 func isDenyDeleteEveryoneACE(ace ACE) bool {
 	return ace.RawBody == nil &&
 		ace.AceType == AccessDeniedACEType &&
+		ace.AceFlags&InheritedACE == 0 && // inherited copies are not protection on this object
 		ace.AccessMask&AccessMaskDelete != 0 &&
-		ace.AccessMask&AccessMaskDeleteChild != 0 &&
+		ace.AccessMask&AccessMaskDeleteTree != 0 &&
 		isEveryoneSID(ace.SID)
 }
 
 // HasDenyDeleteEveryoneACE reports whether the DACL contains the specific deny
 // ACE used by Windows "protect from accidental deletion". The match requires
-// both DELETE and DELETE_CHILD in the access mask and SID == S-1-1-0.
+// both DELETE and DELETE_TREE in the access mask and SID == S-1-1-0.
 func (sd *SecurityDescriptor) HasDenyDeleteEveryoneACE() bool {
 	if sd == nil || sd.DACL == nil {
 		return false
@@ -439,8 +440,8 @@ func (sd *SecurityDescriptor) HasDenyDeleteEveryoneACE() bool {
 func (sd *SecurityDescriptor) AddDenyDeleteEveryoneACE() {
 	ace := ACE{
 		AceType:    AccessDeniedACEType,
-		AceFlags:   ContainerInheritACE,
-		AccessMask: AccessMaskDelete | AccessMaskDeleteChild,
+		AceFlags:   0, // matches ADUC: (D;;DTSD;;;WD), applies to the object only
+		AccessMask: AccessMaskDelete | AccessMaskDeleteTree,
 		SID:        everyoneSIDValue,
 	}
 	if sd.DACL == nil {
