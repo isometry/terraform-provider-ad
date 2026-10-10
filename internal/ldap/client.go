@@ -2,6 +2,8 @@ package ldap
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -31,6 +33,24 @@ type ldapOps interface {
 	ModifyDN(*ldap.ModifyDNRequest) error
 	Del(*ldap.DelRequest) error
 	WhoAmI([]ldap.Control) (*ldap.WhoAmIResult, error)
+	TLSConnectionState() (tls.ConnectionState, bool)
+}
+
+var errPasswordNotEncrypted = errors.New("refusing to send a password over an unencrypted LDAP connection; use an ldaps:// URL or set use_tls = true")
+
+// requireEncryptedForPassword is the single gate for unicodePwd writes. It
+// checks the live connection (ldaps:// or successful StartTLS), not the
+// use_tls flag.
+func requireEncryptedForPassword(ops ldapOps, attrs ...string) error {
+	for _, a := range attrs {
+		if strings.EqualFold(a, "unicodePwd") {
+			if _, ok := ops.TLSConnectionState(); !ok {
+				return errPasswordNotEncrypted
+			}
+			return nil
+		}
+	}
+	return nil
 }
 
 // connOps returns the ldapOps implementation backing a PooledConnection.
@@ -38,6 +58,11 @@ type ldapOps interface {
 // implementation. In production it simply returns the live *ldap.Conn.
 var connOps = func(pc *PooledConnection) ldapOps {
 	return pc.conn
+}
+
+// externalBinder is the SASL EXTERNAL bind capability of *ldap.Conn.
+type externalBinder interface {
+	ExternalBind() error
 }
 
 // NewClient creates a new LDAP client with connection pooling and logging context.
@@ -317,21 +342,33 @@ func (c *client) authenticateKerberos(ctx context.Context, conn *ldap.Conn) erro
 	return performKerberosAuthWithContext(ctx, conn, c.config, serverInfo)
 }
 
-// authenticateExternal performs external/certificate authentication.
-func (c *client) authenticateExternal(ctx context.Context, conn *ldap.Conn) error {
-	// External authentication typically relies on TLS client certificates
-	// The authentication happens at the TLS layer, so we just need to
-	// perform an empty bind to complete the LDAP authentication
+// authenticateExternal performs SASL EXTERNAL authentication using the TLS
+// client certificate presented during the handshake.
+func (c *client) authenticateExternal(ctx context.Context, conn externalBinder) error {
+	if !c.usesTLS() {
+		return errors.New("client certificate authentication needs TLS: use an ldaps:// URL or set use_tls = true")
+	}
 
-	// Use context for timeout handling during the bind operation
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
-		// Proceed with the bind
 	}
 
-	return conn.Bind("", "")
+	return conn.ExternalBind()
+}
+
+// usesTLS reports whether connections are configured for ldaps:// or StartTLS.
+func (c *client) usesTLS() bool {
+	if c.config.UseTLS && !c.config.SkipTLS {
+		return true
+	}
+	for _, u := range c.config.LDAPURLs {
+		if strings.HasPrefix(strings.ToLower(u), "ldaps://") {
+			return true
+		}
+	}
+	return false
 }
 
 // performSearch is a helper function that performs search operations with comprehensive logging.
@@ -704,6 +741,14 @@ func (c *client) Add(ctx context.Context, req *AddRequest) error {
 		ldapReq.Attribute(attr, values)
 	}
 
+	attrs := make([]string, 0, len(req.Attributes))
+	for a := range req.Attributes {
+		attrs = append(attrs, a)
+	}
+	if err := requireEncryptedForPassword(connOps(conn), attrs...); err != nil {
+		return err
+	}
+
 	// Writes are not retried: a timed-out write may already have been applied.
 	return connOps(conn).Add(ldapReq)
 }
@@ -741,6 +786,14 @@ func (c *client) Modify(ctx context.Context, req *ModifyRequest) error {
 	// Delete specific values
 	for attr, vals := range req.DeleteValues {
 		ldapReq.Delete(attr, vals)
+	}
+
+	var attrs []string
+	for _, ch := range ldapReq.Changes {
+		attrs = append(attrs, ch.Modification.Type)
+	}
+	if err := requireEncryptedForPassword(connOps(conn), attrs...); err != nil {
+		return err
 	}
 
 	// Writes are not retried: a timed-out write may already have been applied.

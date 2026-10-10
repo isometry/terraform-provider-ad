@@ -199,114 +199,35 @@ func createGSSAPIClientWithFile(ctx context.Context, cfg *ConnectionConfig, krb5
 
 // createGSSAPIClientWithConfigPath creates a GSSAPI client using a krb5 configuration file path.
 func createGSSAPIClientWithConfigPath(ctx context.Context, cfg *ConnectionConfig, krb5confPath string) (ldap.GSSAPIClient, error) {
-	// Priority 1: Explicit credential cache
-	if cfg.KerberosCCache != "" && fileExists(cfg.KerberosCCache) {
+	method, path := selectKerberosCredential(cfg)
+	if method != kerberosNone {
 		tflog.SubsystemDebug(ctx, "ldap", "Kerberos credentials selected", map[string]any{
-			"method": "explicit_ccache",
-			"path":   cfg.KerberosCCache,
-		})
-		client, err := gssapi.NewClientFromCCache(cfg.KerberosCCache, krb5confPath, krb5client.DisablePAFXFAST(true))
-		if err != nil {
-			tflog.SubsystemError(ctx, "ldap", "Kerberos credential cache failed", map[string]any{
-				"path":  cfg.KerberosCCache,
-				"error": err.Error(),
-			})
-			return nil, err
-		}
-		tflog.SubsystemDebug(ctx, "ldap", "Kerberos credential cache loaded", map[string]any{
-			"path": cfg.KerberosCCache,
-		})
-		return client, nil
-	}
-
-	// Priority 2: Default credential cache (if exists)
-	defaultCCache := getDefaultCCachePath()
-	if fileExists(defaultCCache) {
-		tflog.SubsystemDebug(ctx, "ldap", "Kerberos credentials selected", map[string]any{
-			"method": "default_ccache",
-			"path":   defaultCCache,
-		})
-		client, err := gssapi.NewClientFromCCache(defaultCCache, krb5confPath, krb5client.DisablePAFXFAST(true))
-		if err != nil {
-			tflog.SubsystemError(ctx, "ldap", "Kerberos credential cache failed", map[string]any{
-				"path":  defaultCCache,
-				"error": err.Error(),
-			})
-			return nil, err
-		}
-		tflog.SubsystemDebug(ctx, "ldap", "Kerberos credential cache loaded", map[string]any{
-			"path": defaultCCache,
-		})
-		return client, nil
-	}
-
-	// Priority 3: Explicit keytab
-	if cfg.KerberosKeytab != "" && fileExists(cfg.KerberosKeytab) {
-		tflog.SubsystemDebug(ctx, "ldap", "Kerberos credentials selected", map[string]any{
-			"method":   "explicit_keytab",
-			"path":     cfg.KerberosKeytab,
+			"method":   string(method),
+			"path":     path,
 			"username": cfg.Username,
 			"realm":    cfg.KerberosRealm,
 		})
-		client, err := gssapi.NewClientWithKeytab(cfg.Username, cfg.KerberosRealm, cfg.KerberosKeytab, krb5confPath, krb5client.DisablePAFXFAST(true))
+	}
+
+	var client ldap.GSSAPIClient
+	var err error
+	switch method {
+	case kerberosExplicitCCache, kerberosDefaultCCache:
+		client, err = gssapi.NewClientFromCCache(path, krb5confPath, krb5client.DisablePAFXFAST(true))
+	case kerberosExplicitKeytab, kerberosDefaultKeytab:
+		client, err = gssapi.NewClientWithKeytab(cfg.Username, cfg.KerberosRealm, path, krb5confPath, krb5client.DisablePAFXFAST(true))
+	case kerberosPassword:
+		client, err = gssapi.NewClientWithPassword(cfg.Username, cfg.KerberosRealm, cfg.Password, krb5confPath, krb5client.DisablePAFXFAST(true))
+	}
+	if method != kerberosNone {
 		if err != nil {
-			tflog.SubsystemError(ctx, "ldap", "Kerberos keytab failed", map[string]any{
-				"path":  cfg.KerberosKeytab,
-				"error": err.Error(),
+			tflog.SubsystemError(ctx, "ldap", "Kerberos credential setup failed", map[string]any{
+				"method": string(method),
+				"path":   path,
+				"error":  err.Error(),
 			})
 			return nil, err
 		}
-		tflog.SubsystemDebug(ctx, "ldap", "Kerberos keytab loaded", map[string]any{
-			"path": cfg.KerberosKeytab,
-		})
-		return client, nil
-	}
-
-	// Priority 4: Default keytab (if exists and username provided)
-	if cfg.Username != "" {
-		defaultKeytab := getDefaultKeytabPath()
-		if fileExists(defaultKeytab) {
-			tflog.SubsystemDebug(ctx, "ldap", "Kerberos credentials selected", map[string]any{
-				"method":   "default_keytab",
-				"path":     defaultKeytab,
-				"username": cfg.Username,
-				"realm":    cfg.KerberosRealm,
-			})
-			client, err := gssapi.NewClientWithKeytab(cfg.Username, cfg.KerberosRealm, defaultKeytab, krb5confPath, krb5client.DisablePAFXFAST(true))
-			if err != nil {
-				tflog.SubsystemError(ctx, "ldap", "Kerberos keytab failed", map[string]any{
-					"path":  defaultKeytab,
-					"error": err.Error(),
-				})
-				return nil, err
-			}
-			tflog.SubsystemDebug(ctx, "ldap", "Kerberos keytab loaded", map[string]any{
-				"path": defaultKeytab,
-			})
-			return client, nil
-		}
-	}
-
-	// Priority 5: Password authentication
-	if cfg.Username != "" && cfg.Password != "" {
-		tflog.SubsystemDebug(ctx, "ldap", "Kerberos credentials selected", map[string]any{
-			"method":   "password",
-			"username": cfg.Username,
-			"realm":    cfg.KerberosRealm,
-		})
-		client, err := gssapi.NewClientWithPassword(cfg.Username, cfg.KerberosRealm, cfg.Password, krb5confPath, krb5client.DisablePAFXFAST(true))
-		if err != nil {
-			tflog.SubsystemError(ctx, "ldap", "Kerberos password auth failed", map[string]any{
-				"username": cfg.Username,
-				"realm":    cfg.KerberosRealm,
-				"error":    err.Error(),
-			})
-			return nil, err
-		}
-		tflog.SubsystemDebug(ctx, "ldap", "Kerberos password auth success", map[string]any{
-			"username": cfg.Username,
-			"realm":    cfg.KerberosRealm,
-		})
 		return client, nil
 	}
 
@@ -538,4 +459,38 @@ func generateExampleKrb5Conf(cfg *ConnectionConfig) string {
 		kdcHost, kdcHost,
 		strings.ToLower(strings.ReplaceAll(realm, ".", ".")), realm,
 		strings.ToLower(strings.ReplaceAll(realm, ".", ".")), realm)
+}
+
+type kerberosCredential string
+
+const (
+	kerberosNone           kerberosCredential = ""
+	kerberosExplicitCCache kerberosCredential = "explicit_ccache"
+	kerberosExplicitKeytab kerberosCredential = "explicit_keytab"
+	kerberosPassword       kerberosCredential = "password"
+	kerberosDefaultCCache  kerberosCredential = "default_ccache"
+	kerberosDefaultKeytab  kerberosCredential = "default_keytab"
+)
+
+// selectKerberosCredential picks the credential source. Anything explicitly
+// configured wins; the ambient default cache/keytab are only a fallback, so a
+// stray `kinit` ticket cannot override the configured identity.
+func selectKerberosCredential(cfg *ConnectionConfig) (kerberosCredential, string) {
+	switch {
+	case cfg.KerberosCCache != "" && fileExists(cfg.KerberosCCache):
+		return kerberosExplicitCCache, cfg.KerberosCCache
+	case cfg.KerberosKeytab != "" && fileExists(cfg.KerberosKeytab):
+		return kerberosExplicitKeytab, cfg.KerberosKeytab
+	case cfg.Username != "" && cfg.Password != "":
+		return kerberosPassword, ""
+	}
+	if p := getDefaultCCachePath(); fileExists(p) {
+		return kerberosDefaultCCache, p
+	}
+	if cfg.Username != "" {
+		if p := getDefaultKeytabPath(); fileExists(p) {
+			return kerberosDefaultKeytab, p
+		}
+	}
+	return kerberosNone, ""
 }
