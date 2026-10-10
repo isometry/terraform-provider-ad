@@ -3,6 +3,7 @@ package ldap
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/go-ldap/ldap/v3"
@@ -59,6 +60,9 @@ func rangeEntry(dn, attr string, vals ...string) *ldap.Entry {
 
 // serveRanges mocks the initial search plus two follow-up range requests.
 func serveRanges(m *MockGroupClient, dn string, first *ldap.Entry, wantControls int) {
+	// Like AD, reject any base DN in extended form.
+	m.On("Search", mock.Anything, mock.MatchedBy(func(r *SearchRequest) bool { return strings.HasPrefix(r.BaseDN, "<") })).
+		Return((*SearchResult)(nil), ldap.NewError(ldap.LDAPResultInvalidDNSyntax, errors.New("0000208F: NameErr: DSID-03100235, problem 2006 (BAD_NAME)"))).Maybe()
 	m.On("Search", mock.Anything, mock.MatchedBy(func(r *SearchRequest) bool { return r.Scope != ScopeBaseObject })).
 		Return(&SearchResult{Entries: []*ldap.Entry{first}}, nil).Once()
 	m.On("Search", mock.Anything, mock.MatchedBy(func(r *SearchRequest) bool {
@@ -74,7 +78,8 @@ func TestGetCurrentMembers_FollowsRanges(t *testing.T) {
 	const dn = "CN=G,DC=t"
 	m := &MockGroupClient{}
 	gmm := NewGroupMembershipManager(t.Context(), m, "DC=t", nil)
-	serveRanges(m, dn, rangeEntry(dn, "member;range=0-1", "CN=a,DC=t", "CN=b,DC=t"), 1)
+	extDN := "<GUID=85e1b9e0a1b2c3d4e5f60718293a4b5c>;<SID=010500000000000515000000>;" + dn
+	serveRanges(m, dn, rangeEntry(extDN, "member;range=0-1", "CN=a,DC=t", "CN=b,DC=t"), 1)
 
 	members, err := gmm.getCurrentMembersWithGUIDs(guid)
 	require.NoError(t, err)
@@ -145,4 +150,16 @@ type recordModify struct {
 func (r *recordModify) Modify(ctx context.Context, req *ModifyRequest) error {
 	r.last = req
 	return r.MockGroupMembershipClient.Modify(ctx, req)
+}
+
+func TestPlainDN(t *testing.T) {
+	const g = "<GUID=85e1b9e0a1b2c3d4e5f60718293a4b5c>"
+	for in, want := range map[string]string{
+		"CN=a,DC=x":                 "CN=a,DC=x",
+		g + ";<SID=0105>;CN=a,DC=x": "CN=a,DC=x",
+		g + `;CN=a\;b,DC=x`:         `CN=a\;b,DC=x`,
+		`CN=Smith\, J,OU=u,DC=x`:    `CN=Smith\, J,OU=u,DC=x`,
+	} {
+		assert.Equal(t, want, PlainDN(in), in)
+	}
 }

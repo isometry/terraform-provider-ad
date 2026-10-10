@@ -435,6 +435,8 @@ func (gm *GroupManager) getAllMembers(entry *ldap.Entry, controls []ldap.Control
 		return entry.GetAttributeValues("member"), nil
 	}
 
+	// With the extended-DN control entry.DN is "<GUID=..>;<SID=..>;dn", which AD rejects as a search base.
+	baseDN := PlainDN(entry.DN)
 	all := append([]string(nil), values...)
 	for {
 		_, spec, _ := strings.Cut(name, "=")
@@ -448,7 +450,7 @@ func (gm *GroupManager) getAllMembers(entry *ldap.Entry, controls []ldap.Control
 		}
 
 		result, err := gm.client.Search(gm.ctx, &SearchRequest{
-			BaseDN:     entry.DN,
+			BaseDN:     baseDN,
 			Scope:      ScopeBaseObject,
 			Filter:     "(objectClass=*)",
 			Attributes: []string{fmt.Sprintf("member;range=%d-*", last+1)},

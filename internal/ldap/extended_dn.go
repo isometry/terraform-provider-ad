@@ -78,3 +78,13 @@ func ParseExtendedDN(value string) (*ExtendedDN, error) {
 
 	return result, nil
 }
+
+// PlainDN strips any leading "<TAG=value>;" extended components from an
+// extended DN, returning a DN usable as a search base. Plain DNs, and values
+// that do not parse, are returned unchanged.
+func PlainDN(value string) string {
+	if parsed, err := ParseExtendedDN(value); err == nil {
+		return parsed.DN
+	}
+	return value
+}
