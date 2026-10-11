@@ -160,11 +160,20 @@ func TestDNStringValue_StringSemanticEquals(t *testing.T) {
 			new:           DNString("cn=Test,dc=example,dc=com"),
 			expectedEqual: true,
 		},
-		"case_diff_but_value_case_preserved_should_differ": {
-			// Note: the normalizer uppercases attribute TYPES but leaves VALUES as-is.
-			// So two DNs whose values differ in case should NOT be semantically equal.
+		"value_case_differs_should_be_equal": {
+			// AD DNs are case-insensitive, values included.
 			old:           DNString("CN=Test,DC=example,DC=com"),
 			new:           DNString("CN=test,DC=example,DC=com"),
+			expectedEqual: true,
+		},
+		"value_and_type_case_differ_in_ou_should_be_equal": {
+			old:           DNString("OU=Users,DC=example,DC=com"),
+			new:           DNString("ou=USERS,dc=Example,dc=COM"),
+			expectedEqual: true,
+		},
+		"different_dn_with_case_diff_should_differ": {
+			old:           DNString("OU=Users,DC=example,DC=com"),
+			new:           DNString("ou=admins,dc=example,dc=com"),
 			expectedEqual: false,
 		},
 		"structural_difference": {
@@ -325,4 +334,31 @@ func TestDNStringValue_RoundTrip(t *testing.T) {
 	eq, diags := original.StringSemanticEquals(ctx, dnv)
 	require.False(t, diags.HasError())
 	assert.True(t, eq, "round-tripped value must be semantically equal to the original")
+}
+
+// TestDNEqual verifies the helper used for move/replace decisions ignores value case.
+func TestDNEqual(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	assert.True(t, DNEqual(ctx, DNString("OU=Users,DC=x,DC=y"), DNString("ou=users,dc=x,dc=y")))
+	assert.False(t, DNEqual(ctx, DNString("OU=Users,DC=x,DC=y"), DNString("OU=Admins,DC=x,DC=y")))
+	assert.True(t, DNEqual(ctx, DNStringNull(), DNStringNull()))
+	assert.False(t, DNEqual(ctx, DNStringNull(), DNString("OU=Users,DC=x,DC=y")))
+}
+
+// TestDNStringType_ValueFromString_CaseRoundTrip covers the managed_by/manager
+// path: a lower-case configured value must equal AD's spelling.
+func TestDNStringType_ValueFromString_CaseRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	cfg, diags := DNStringType{}.ValueFromString(ctx, basetypes.NewStringValue("cn=john,ou=users,dc=example,dc=com"))
+	require.False(t, diags.HasError())
+
+	eq, diags := DNString("CN=John,OU=Users,DC=example,DC=com").StringSemanticEquals(ctx, cfg)
+	require.False(t, diags.HasError())
+	assert.True(t, eq)
 }

@@ -50,7 +50,7 @@ type GroupResourceModel struct {
 	Scope          types.String              `tfsdk:"scope"`            // Optional+Computed+Default: "global"
 	Category       types.String              `tfsdk:"category"`         // Optional+Computed+Default: "security"
 	Description    types.String              `tfsdk:"description"`      // Optional
-	ManagedBy      types.String              `tfsdk:"managed_by"`       // Optional+Computed - managedBy attribute
+	ManagedBy      customtypes.DNStringValue `tfsdk:"managed_by"`       // Optional+Computed - managedBy attribute
 	// Computed attributes
 	DistinguishedName customtypes.DNStringValue `tfsdk:"dn"`  // Computed
 	SID               types.String              `tfsdk:"sid"` // Computed
@@ -138,7 +138,8 @@ func (r *GroupResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				MarkdownDescription: "Distinguished Name (DN) of the user or computer that manages this group. " +
 					"Must be a valid DN format (e.g., `CN=User,OU=Users,DC=example,DC=com`). " +
 					"Omit (or set to `null`) to clear; AD treats an absent attribute as unset.",
-				Optional: true,
+				Optional:   true,
+				CustomType: customtypes.DNStringType{},
 				Validators: []validator.String{
 					validators.IsValidDN(),
 				},
@@ -435,7 +436,7 @@ func (r *GroupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	}
 
 	// Check for container changes (triggers group move)
-	if !data.Container.Equal(currentData.Container) {
+	if !customtypes.DNEqual(ctx, data.Container, currentData.Container) {
 		container := data.Container.ValueString()
 		updateReq.Container = &container
 		hasChanges = true
@@ -446,7 +447,7 @@ func (r *GroupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	// against a state holding the prior DN; helpers.StringChanged emits &""
 	// as the LDAP clear signal in that case. plan == state → no-op; plan
 	// has a value → &value.
-	if helpers.StringChanged(data.ManagedBy, currentData.ManagedBy, &updateReq.ManagedBy) {
+	if !customtypes.DNEqual(ctx, data.ManagedBy, currentData.ManagedBy) && helpers.StringChanged(data.ManagedBy.StringValue, currentData.ManagedBy.StringValue, &updateReq.ManagedBy) {
 		hasChanges = true
 	}
 
@@ -608,7 +609,7 @@ func (r *GroupResource) updateModelFromGroup(ctx context.Context, model *GroupRe
 
 	// Handle optional description and managedBy
 	model.Description = helpers.StringOrNull(group.Description)
-	model.ManagedBy = helpers.StringOrNull(group.ManagedBy)
+	model.ManagedBy = dnOrNull(ctx, group.ManagedBy)
 }
 
 // getGroupManager creates a GroupManager instance with base DN lookup.
@@ -621,4 +622,12 @@ func (r *GroupResource) getGroupManager(ctx context.Context) (*ldapclient.GroupM
 
 	// Create GroupManager
 	return ldapclient.NewGroupManager(ctx, r.client, baseDN, r.cacheManager), nil
+}
+
+// dnOrNull wraps an AD-supplied DN as a DNStringValue, or null when empty.
+func dnOrNull(ctx context.Context, dn string) customtypes.DNStringValue {
+	if dn == "" {
+		return customtypes.DNStringNull()
+	}
+	return customtypes.DNString(helpers.NormalizeDN(ctx, dn))
 }

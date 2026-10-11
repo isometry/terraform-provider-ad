@@ -135,8 +135,16 @@ func (v DNStringValue) StringSemanticEquals(ctx context.Context, newValuable bas
 		return strings.EqualFold(oldDN, newDN), diags
 	}
 
-	// Compare normalized DNs (should be identical if they represent the same DN)
-	return oldNormalized == newNormalized, diags
+	// AD DNs are case-insensitive in both attribute types and values.
+	return strings.EqualFold(oldNormalized, newNormalized), diags
+}
+
+// DNEqual reports whether a and b are the same DN, ignoring case and
+// insignificant whitespace. Use it instead of Equal when deciding whether a
+// plan-vs-state difference is real (e.g. whether an object must be moved).
+func DNEqual(ctx context.Context, a, b DNStringValue) bool {
+	eq, diags := a.StringSemanticEquals(ctx, b)
+	return eq && !diags.HasError()
 }
 
 // DNString is a helper function to create a DNStringValue.
