@@ -533,3 +533,28 @@ func TestBuildHierarchy_EmptyRootValues(t *testing.T) {
 	require.Contains(t, result, "obj2")
 	require.Contains(t, result, "obj3")
 }
+
+func TestParseBuildHierarchyConfig_Defaults(t *testing.T) {
+	ctx := t.Context()
+	f := provider.BuildHierarchyFunction{}
+
+	cfg, err := f.ParseBuildHierarchyConfig(ctx, types.DynamicNull())
+	require.NoError(t, err)
+	assert.Equal(t, "parent", cfg.ParentField)
+	assert.Equal(t, "root", cfg.RootField)
+	assert.Equal(t, "children", cfg.ChildrenField)
+	assert.Equal(t, int64(5), cfg.MaxDepth)
+	assert.Equal(t, "", cfg.GetDefaultRoot())
+
+	val, err := helpers.GoValueToTerraform(ctx, map[string]any{
+		"parent_field": "p", "root_field": "r", "children_field": "c", "max_depth": int64(2), "default_root": "x",
+	})
+	require.NoError(t, err)
+	cfg, err = f.ParseBuildHierarchyConfig(ctx, types.DynamicValue(val))
+	require.NoError(t, err)
+	assert.Equal(t, "p", cfg.ParentField)
+	assert.Equal(t, "r", cfg.RootField)
+	assert.Equal(t, "c", cfg.ChildrenField)
+	assert.Equal(t, int64(2), cfg.MaxDepth)
+	assert.Equal(t, "x", cfg.GetDefaultRoot())
+}

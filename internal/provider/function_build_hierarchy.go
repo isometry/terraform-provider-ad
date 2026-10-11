@@ -2,12 +2,10 @@ package provider
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"sort"
 
-	"github.com/creasty/defaults"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/function"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -17,26 +15,26 @@ import (
 var _ function.Function = &BuildHierarchyFunction{}
 
 // BuildHierarchyConfig represents the configuration options for the build_hierarchy function.
-// It uses struct tags for default values and JSON marshaling for future extensibility.
+// Defaults are applied in ParseBuildHierarchyConfig.
 type BuildHierarchyConfig struct {
 	// DefaultRoot specifies the default root value for objects without explicit root or parent.
 	// If empty, objects without parent/root relationships are treated as root objects.
-	DefaultRoot *string `json:"default_root,omitempty" default:""`
+	DefaultRoot *string `json:"default_root,omitempty"`
 
 	// ParentField specifies the field name used to identify parent relationships in input objects.
-	ParentField string `json:"parent_field,omitempty" default:"parent"`
+	ParentField string `json:"parent_field,omitempty"`
 
 	// RootField specifies the field name used to identify root relationships in input objects.
 	// Supports boolean values (root: true to mark explicit roots) and string values
 	// (root: "name" to reference a root, creating it implicitly if needed).
-	RootField string `json:"root_field,omitempty" default:"root"`
+	RootField string `json:"root_field,omitempty"`
 
 	// ChildrenField specifies the field name used for the children collection in output objects.
-	ChildrenField string `json:"children_field,omitempty" default:"children"`
+	ChildrenField string `json:"children_field,omitempty"`
 
 	// MaxDepth limits the maximum depth of the hierarchy tree to prevent infinite recursion.
 	// Must be greater than 0.
-	MaxDepth int64 `json:"max_depth,omitempty" default:"5"`
+	MaxDepth int64 `json:"max_depth,omitempty"`
 }
 
 // BuildHierarchyFunction implements the build_hierarchy function.
@@ -356,7 +354,7 @@ func (f BuildHierarchyFunction) detectCycles(parentMap map[string]string) error 
 }
 
 // ParseBuildHierarchyConfig converts a Terraform Dynamic config value to a BuildHierarchyConfig struct.
-// It applies default values using the creasty/defaults library and handles null/empty config gracefully.
+// It applies default values and handles null/empty config gracefully.
 //
 // Parameters:
 //   - ctx: Context for the operation
@@ -366,11 +364,11 @@ func (f BuildHierarchyFunction) detectCycles(parentMap map[string]string) error 
 //   - *BuildHierarchyConfig: Parsed configuration with defaults applied
 //   - error: Any error encountered during parsing or validation
 func (f BuildHierarchyFunction) ParseBuildHierarchyConfig(ctx context.Context, configValue types.Dynamic) (*BuildHierarchyConfig, error) {
-	config := &BuildHierarchyConfig{}
-
-	// Apply defaults first
-	if err := defaults.Set(config); err != nil {
-		return nil, fmt.Errorf("failed to set default values: %w", err)
+	config := &BuildHierarchyConfig{
+		ParentField:   "parent",
+		RootField:     "root",
+		ChildrenField: "children",
+		MaxDepth:      5,
 	}
 
 	// Handle null or unknown config - return defaults
@@ -472,32 +470,6 @@ func (c *BuildHierarchyConfig) GetDefaultRoot() string {
 		return ""
 	}
 	return *c.DefaultRoot
-}
-
-// ToTerraformMap converts the configuration back to a map suitable for Terraform operations.
-// This can be useful for testing, debugging, or state operations.
-func (c *BuildHierarchyConfig) ToTerraformMap() map[string]any {
-	result := map[string]any{
-		"parent_field":   c.ParentField,
-		"root_field":     c.RootField,
-		"children_field": c.ChildrenField,
-		"max_depth":      c.MaxDepth,
-	}
-
-	if c.DefaultRoot != nil && *c.DefaultRoot != "" {
-		result["default_root"] = *c.DefaultRoot
-	}
-
-	return result
-}
-
-// ToJSON converts the configuration to JSON format for debugging or logging purposes.
-func (c *BuildHierarchyConfig) ToJSON() (string, error) {
-	data, err := json.Marshal(c)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal config to JSON: %w", err)
-	}
-	return string(data), nil
 }
 
 // extractConfigFromDynamic extracts a Go map from a dynamic value wrapping
