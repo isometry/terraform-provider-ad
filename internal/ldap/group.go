@@ -362,7 +362,7 @@ func (gm *GroupManager) CreateGroup(req *CreateGroupRequest) (*Group, error) {
 	// Retrieve the created group to get its GUID and other computed attributes
 	group, err := gm.getGroupByDN(groupDN)
 	if err != nil {
-		return nil, WrapError("retrieve_created_group", err)
+		return nil, rollbackCreate(gm.ctx, gm.client, groupDN, "retrieve_created_group", err)
 	}
 
 	return group, nil

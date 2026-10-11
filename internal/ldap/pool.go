@@ -31,6 +31,9 @@ const (
 	MaxConnectionPoolLimit = 100
 )
 
+// dialURL is a seam so tests can supply in-memory connections.
+var dialURL = ldap.DialURL
+
 // connectionPool implements ConnectionPool interface.
 type connectionPool struct {
 	ctx         context.Context // Logging context with LDAP subsystem
@@ -316,10 +319,10 @@ func (p *connectionPool) createSingleConnection(_ context.Context, server *Serve
 
 	if server.UseTLS {
 		// Direct TLS connection (LDAPS)
-		conn, err = ldap.DialURL(url, ldap.DialWithTLSConfig(tlsConfig))
+		conn, err = dialURL(url, ldap.DialWithTLSConfig(tlsConfig))
 	} else {
 		// Plain connection, will use StartTLS if needed
-		conn, err = ldap.DialURL(url)
+		conn, err = dialURL(url)
 		if err == nil && p.config.UseTLS && !p.config.SkipTLS {
 			// Upgrade to TLS using StartTLS
 			err = conn.StartTLS(tlsConfig)
@@ -327,6 +330,9 @@ func (p *connectionPool) createSingleConnection(_ context.Context, server *Serve
 	}
 
 	if err != nil {
+		if conn != nil { // dial succeeded but StartTLS failed
+			conn.Close()
+		}
 		return nil, fmt.Errorf("failed to connect to %s: %w", url, err)
 	}
 
@@ -445,6 +451,11 @@ func (p *connectionPool) returnConnection(conn *PooledConnection) {
 // isConnectionHealthy checks if a connection is healthy.
 func (p *connectionPool) isConnectionHealthy(conn *PooledConnection) bool {
 	if conn == nil || conn.conn == nil || !conn.healthy {
+		return false
+	}
+
+	// The reader goroutine has already seen the socket die (DC restart, idle drop).
+	if conn.conn.IsClosing() {
 		return false
 	}
 

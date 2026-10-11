@@ -422,7 +422,7 @@ func (c *client) Search(ctx context.Context, req *SearchRequest) (*SearchResult,
 			})
 			return nil, fmt.Errorf("failed to get connection: %w", err)
 		}
-		defer conn.Close()
+		defer func() { conn.Close() }() // execRetry may swap conn
 
 		// Convert our SearchRequest to go-ldap SearchRequest
 		ldapReq := ldap.NewSearchRequest(
@@ -438,9 +438,9 @@ func (c *client) Search(ctx context.Context, req *SearchRequest) (*SearchResult,
 		)
 
 		var result *ldap.SearchResult
-		err = c.withRetry(ctx, func() error {
+		err = c.execRetry(ctx, &conn, func(ops ldapOps) error {
 			var searchErr error
-			result, searchErr = connOps(conn).Search(ldapReq)
+			result, searchErr = ops.Search(ldapReq)
 			return searchErr
 		})
 
@@ -518,7 +518,7 @@ func (c *client) SearchWithPaging(ctx context.Context, req *SearchRequest) (*Sea
 		tflog.SubsystemError(c.ctx, "ldap", "Failed to get connection for paged search", fields)
 		return nil, fmt.Errorf("failed to get connection: %w", err)
 	}
-	defer conn.Close()
+	defer func() { conn.Close() }() // execRetry may swap conn
 
 	tflog.SubsystemTrace(c.ctx, "ldap", "Connection acquired for paged search", fields)
 
@@ -625,9 +625,9 @@ func (c *client) SearchWithPaging(ctx context.Context, req *SearchRequest) (*Sea
 		)
 
 		var result *ldap.SearchResult
-		err = c.withRetry(ctx, func() error {
+		err = c.execRetry(ctx, &conn, func(ops ldapOps) error {
 			var searchErr error
-			result, searchErr = connOps(conn).Search(ldapReq)
+			result, searchErr = ops.Search(ldapReq)
 			return searchErr
 		})
 
@@ -750,7 +750,7 @@ func (c *client) Add(ctx context.Context, req *AddRequest) error {
 	}
 
 	// Writes are not retried: a timed-out write may already have been applied.
-	return connOps(conn).Add(ldapReq)
+	return markNetworkFailure(conn, connOps(conn).Add(ldapReq))
 }
 
 // Modify modifies an existing LDAP entry.
@@ -797,7 +797,7 @@ func (c *client) Modify(ctx context.Context, req *ModifyRequest) error {
 	}
 
 	// Writes are not retried: a timed-out write may already have been applied.
-	return connOps(conn).Modify(ldapReq)
+	return markNetworkFailure(conn, connOps(conn).Modify(ldapReq))
 }
 
 // ModifyDN moves or renames an LDAP entry.
@@ -824,7 +824,7 @@ func (c *client) ModifyDN(ctx context.Context, req *ModifyDNRequest) error {
 	ldapReq := ldap.NewModifyDNRequest(req.DN, req.NewRDN, req.DeleteOldRDN, req.NewSuperior)
 
 	// Writes are not retried: a timed-out write may already have been applied.
-	return connOps(conn).ModifyDN(ldapReq)
+	return markNetworkFailure(conn, connOps(conn).ModifyDN(ldapReq))
 }
 
 // Delete removes an LDAP entry.
@@ -842,7 +842,7 @@ func (c *client) Delete(ctx context.Context, dn string) error {
 	ldapReq := ldap.NewDelRequest(dn, nil)
 
 	// Writes are not retried: a timed-out write may already have been applied.
-	return connOps(conn).Del(ldapReq)
+	return markNetworkFailure(conn, connOps(conn).Del(ldapReq))
 }
 
 // Ping tests connectivity to the LDAP server.
@@ -981,12 +981,12 @@ func (c *client) WhoAmI(ctx context.Context) (*WhoAmIResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get connection: %w", err)
 	}
-	defer conn.Close()
+	defer func() { conn.Close() }() // execRetry may swap conn
 
 	var result *ldap.WhoAmIResult
-	err = c.withRetry(ctx, func() error {
+	err = c.execRetry(ctx, &conn, func(ops ldapOps) error {
 		var whoamiErr error
-		result, whoamiErr = connOps(conn).WhoAmI(nil)
+		result, whoamiErr = ops.WhoAmI(nil)
 		return whoamiErr
 	})
 
@@ -1177,4 +1177,50 @@ func (c *client) GetRootDSE(ctx context.Context) (*RootDSEInfo, error) {
 	}
 
 	return info, nil
+}
+
+// isNetworkError reports whether err means the underlying socket is dead
+// (as opposed to the server rejecting the request).
+func isNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if ldap.IsErrorWithCode(err, ldap.ErrorNetwork) {
+		return true
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "connection closed") ||
+		strings.Contains(s, "eof") ||
+		strings.Contains(s, "broken pipe") ||
+		strings.Contains(s, "connection reset")
+}
+
+// markNetworkFailure flags conn unhealthy when err is network-class, so the
+// pool discards it instead of re-pooling a dead socket. It returns err.
+func markNetworkFailure(conn *PooledConnection, err error) error {
+	if isNetworkError(err) {
+		conn.healthy = false
+	}
+	return err
+}
+
+// execRetry runs op under withRetry. After a network-class failure the next
+// attempt swaps *connp for a fresh pooled connection (the dead one is
+// released and thereby discarded by the pool).
+func (c *client) execRetry(ctx context.Context, connp **PooledConnection, op func(ldapOps) error) error {
+	needFresh := false
+	return c.withRetry(ctx, func() error {
+		if needFresh {
+			fresh, err := c.pool.Get(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to get connection: %w", err)
+			}
+			(*connp).Close()
+			*connp = fresh
+			needFresh = false
+		}
+		err := markNetworkFailure(*connp, op(connOps(*connp)))
+		needFresh = isNetworkError(err)
+		return err
+	})
 }

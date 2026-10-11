@@ -594,9 +594,7 @@ func (um *UserManager) CreateUser(req *CreateUserRequest) (*User, error) {
 	// Set password if provided (must be done after user creation)
 	if req.InitialPassword != "" {
 		if err := um.setPasswordByDN(userDN, req.InitialPassword); err != nil {
-			// Try to clean up the partially created user
-			_ = um.client.Delete(um.ctx, userDN)
-			return nil, WrapError("set_initial_password", err)
+			return nil, rollbackCreate(um.ctx, um.client, userDN, "set_initial_password", err)
 		}
 		tflog.SubsystemDebug(um.ctx, "ldap", "Initial password set", map[string]any{
 			"user_dn": userDN,
@@ -630,7 +628,7 @@ func (um *UserManager) CreateUser(req *CreateUserRequest) (*User, error) {
 	}
 
 	if err := um.client.Modify(um.ctx, modReq); err != nil {
-		return nil, WrapError("apply_user_flags", err)
+		return nil, rollbackCreate(um.ctx, um.client, userDN, "apply_user_flags", err)
 	}
 
 	tflog.SubsystemDebug(um.ctx, "ldap", "User flags applied", map[string]any{
@@ -641,7 +639,7 @@ func (um *UserManager) CreateUser(req *CreateUserRequest) (*User, error) {
 	// Retrieve the created user to get its GUID and other computed attributes
 	user, err := um.getUserByDN(userDN)
 	if err != nil {
-		return nil, WrapError("retrieve_created_user", err)
+		return nil, rollbackCreate(um.ctx, um.client, userDN, "retrieve_created_user", err)
 	}
 
 	tflog.SubsystemInfo(um.ctx, "ldap", "User created successfully", map[string]any{
