@@ -733,64 +733,6 @@ func (gm *GroupManager) renameAndMoveGroup(currentGroup *Group, newName, newCont
 	return updatedGroup, nil
 }
 
-// MoveGroup moves a group to a different organizational unit.
-func (gm *GroupManager) MoveGroup(groupGUID string, newContainerDN string) (*Group, error) {
-	if groupGUID == "" {
-		return nil, fmt.Errorf("group GUID cannot be empty")
-	}
-
-	if newContainerDN == "" {
-		return nil, fmt.Errorf("new container DN cannot be empty")
-	}
-
-	// Get the current group to obtain its DN and CN
-	group, err := gm.GetGroup(groupGUID)
-	if err != nil {
-		return nil, WrapError("get_group_for_move", err)
-	}
-
-	// Check if already in the target container
-	if DNEqual(group.Container, newContainerDN) {
-		// Already in the target location, no move needed
-		return group, nil
-	}
-
-	// Parse the current DN to extract the RDN (CN=GroupName)
-	parsedDN, err := ldap.ParseDN(group.DistinguishedName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse group DN: %w", err)
-	}
-
-	if len(parsedDN.RDNs) == 0 {
-		return nil, fmt.Errorf("invalid DN structure")
-	}
-
-	// Get the RDN (first component, e.g., "CN=GroupName")
-	rdn := parsedDN.RDNs[0].String()
-
-	// Create the ModifyDN request
-	modifyDNReq := &ModifyDNRequest{
-		DN:           group.DistinguishedName,
-		NewRDN:       rdn,
-		DeleteOldRDN: true,
-		NewSuperior:  newContainerDN,
-	}
-
-	// Execute the move operation
-	if err := gm.client.ModifyDN(gm.ctx, modifyDNReq); err != nil {
-		return nil, WrapError("move_group", err)
-	}
-
-	// Retrieve the group from its new location to get updated DN
-	// The objectGUID remains the same, so we can still use it
-	movedGroup, err := gm.GetGroup(groupGUID)
-	if err != nil {
-		return nil, WrapError("get_moved_group", err)
-	}
-
-	return movedGroup, nil
-}
-
 // DeleteGroup deletes a group by its objectGUID.
 func (gm *GroupManager) DeleteGroup(guid string) error {
 	if guid == "" {
@@ -1145,40 +1087,6 @@ func (gm *GroupManager) validateScopeChange(currentScope, newScope GroupScope) e
 	return nil
 }
 
-// ListGroupsByContainer lists all groups in a specific container.
-func (gm *GroupManager) ListGroupsByContainer(containerDN string) ([]*Group, error) {
-	if containerDN == "" {
-		containerDN = gm.baseDN
-	}
-
-	filter := "(objectClass=group)"
-	attributes := gm.getAllGroupAttributes()
-
-	searchReq := &SearchRequest{
-		BaseDN:     containerDN,
-		Scope:      ScopeWholeSubtree,
-		Filter:     filter,
-		Attributes: attributes,
-		TimeLimit:  gm.timeout,
-	}
-
-	result, err := gm.client.Search(gm.ctx, searchReq)
-	if err != nil {
-		return nil, WrapError("list_groups_by_container", err)
-	}
-
-	groups := make([]*Group, 0, len(result.Entries))
-	for _, entry := range result.Entries {
-		group, err := gm.entryToGroup(entry)
-		if err != nil {
-			continue // Skip malformed entries
-		}
-		groups = append(groups, group)
-	}
-
-	return groups, nil
-}
-
 // validateSearchFilter validates the user-provided search filter.
 func (gm *GroupManager) validateSearchFilter(filter *GroupSearchFilter) error {
 	if filter == nil {
@@ -1393,27 +1301,6 @@ func (gm *GroupManager) searchGroupsInContainer(baseDN, filter string, attribute
 	tflog.SubsystemInfo(gm.ctx, "ldap", "searchGroupsInContainer completed", searchFields)
 
 	return groups, nil
-}
-
-// GetGroupStats returns statistics about groups in the directory.
-func (gm *GroupManager) GetGroupStats() (map[string]int, error) {
-	stats := make(map[string]int)
-
-	// Count total groups
-	allGroups, err := gm.SearchGroups("", []string{"groupType"})
-	if err != nil {
-		return nil, WrapError("get_group_stats", err)
-	}
-
-	stats["total"] = len(allGroups)
-
-	// Count by scope and category
-	for _, group := range allGroups {
-		stats[fmt.Sprintf("scope_%s", strings.ToLower(string(group.Scope)))]++
-		stats[fmt.Sprintf("category_%s", strings.ToLower(string(group.Category)))]++
-	}
-
-	return stats, nil
 }
 
 // GetFlattenedUserMembers returns a flattened list of user members from a group,

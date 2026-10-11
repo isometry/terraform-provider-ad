@@ -526,20 +526,6 @@ func (p *connectionPool) Stats() PoolStats {
 	return stats
 }
 
-// HealthCheck performs health checks on all connections.
-func (p *connectionPool) HealthCheck(ctx context.Context) error {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	if p.closed {
-		return errors.New("pool is closed")
-	}
-
-	// Health check implementation would test connections
-	// For now, just return success if pool is operational
-	return nil
-}
-
 // startHealthChecker starts the periodic health checker.
 func (p *connectionPool) startHealthChecker() {
 	p.healthTicker = time.NewTicker(p.config.HealthCheck)
@@ -659,16 +645,4 @@ func (pc *PooledConnection) Close() {
 
 func (pc *PooledConnection) Conn() *ldap.Conn {
 	return pc.conn
-}
-
-func (pc *PooledConnection) ServerInfo() *ServerInfo {
-	return pc.serverInfo
-}
-
-func (pc *PooledConnection) IsHealthy() bool {
-	return pc.healthy
-}
-
-func (pc *PooledConnection) LastUsed() time.Time {
-	return pc.lastUsed
 }

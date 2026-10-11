@@ -91,10 +91,6 @@ func (m *MockGroupMembershipClient) Close() error {
 	return nil
 }
 
-func (m *MockGroupMembershipClient) Bind(ctx context.Context, username, password string) error {
-	return nil
-}
-
 func (m *MockGroupMembershipClient) BindWithConfig(ctx context.Context) error {
 	return nil
 }
@@ -958,54 +954,6 @@ func TestValidateMembers(t *testing.T) {
 	}
 }
 
-func TestGetMembershipStats(t *testing.T) {
-	gmm, client := createTestMembershipManager(t)
-
-	// Setup test data
-	groupGUID := "12345678-1234-1234-1234-123456789012"
-	groupDN := "CN=TestGroup,OU=Groups,DC=example,DC=com"
-	groupName := "TestGroup"
-	client.AddMockGroup(groupGUID, groupDN, groupName, "testgroup")
-
-	// Add some members
-	user1DN := "CN=User1,OU=Users,DC=example,DC=com"
-	user2DN := "CN=User2,OU=Users,DC=example,DC=com"
-
-	group := client.groups[groupGUID]
-	group.Members = []string{user1DN, user2DN}
-
-	stats, err := gmm.GetMembershipStats(groupGUID)
-
-	if err != nil {
-		t.Fatalf("GetMembershipStats failed: %v", err)
-	}
-
-	// Verify stats content
-	if stats["group_dn"] != groupDN {
-		t.Errorf("Expected group_dn %s, got %s", groupDN, stats["group_dn"])
-	}
-
-	if stats["group_name"] != groupName {
-		t.Errorf("Expected group_name %s, got %s", groupName, stats["group_name"])
-	}
-
-	if stats["member_count"] != 2 {
-		t.Errorf("Expected member_count 2, got %v", stats["member_count"])
-	}
-
-	memberDNs, ok := stats["member_dns"].([]string)
-	if !ok {
-		t.Errorf("Expected member_dns to be []string, got %T", stats["member_dns"])
-	} else if len(memberDNs) != 2 {
-		t.Errorf("Expected 2 member DNs, got %d", len(memberDNs))
-	}
-
-	// Should not include cache stats since normalization is external now
-	if _, exists := stats["cache_stats"]; exists {
-		t.Error("Did not expect cache_stats in response since normalization is external")
-	}
-}
-
 func TestSimplifiedDNOnlyApproach(t *testing.T) {
 	// This test verifies that the simplified GroupMembershipManager only accepts DNs
 	// and no longer performs internal normalization
@@ -1101,46 +1049,6 @@ func TestBatchOperationsLargeSet(t *testing.T) {
 	if len(group.Members) != 2500 {
 		t.Errorf("Expected 2500 members added, got %d", len(group.Members))
 	}
-}
-
-func TestClearNormalizationCache(t *testing.T) {
-	gmm, _ := createTestMembershipManager(t)
-
-	// This is now a no-op method kept for backward compatibility
-	// Should not panic
-	gmm.ClearNormalizationCache()
-
-	// No verification needed since it's a no-op
-}
-
-func TestGetSupportedIdentifierFormats(t *testing.T) {
-	gmm, _ := createTestMembershipManager(t)
-
-	formats := gmm.GetSupportedIdentifierFormats()
-
-	if len(formats) == 0 {
-		t.Error("Expected non-empty list of supported formats")
-	}
-
-	// Should only support DN format now
-	expected := []string{"DN"}
-	if !reflect.DeepEqual(formats, expected) {
-		t.Errorf("Expected only DN format %v, got %v", expected, formats)
-	}
-}
-
-func TestSetBaseDN(t *testing.T) {
-	gmm, _ := createTestMembershipManager(t)
-
-	newBaseDN := "DC=newdomain,DC=com"
-	gmm.SetBaseDN(newBaseDN)
-
-	// Verify the group manager was updated
-	if gmm.groupManager.baseDN != newBaseDN {
-		t.Errorf("Expected group manager baseDN %s, got %s", newBaseDN, gmm.groupManager.baseDN)
-	}
-
-	// No longer need to verify normalizer since it's not part of this manager anymore
 }
 
 // Benchmark tests for performance validation.

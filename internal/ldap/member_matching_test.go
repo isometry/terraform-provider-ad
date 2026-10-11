@@ -37,8 +37,12 @@ func inScope(dn, base string) bool {
 	if DNEqual(dn, base) {
 		return true
 	}
-	child, err := IsDNChild(dn, base)
-	return err == nil && child
+	pd, err := ldap.ParseDN(dn)
+	if err != nil {
+		return false
+	}
+	pb, err := ldap.ParseDN(base)
+	return err == nil && pb.AncestorOfFold(pd)
 }
 
 // directorySearch answers every search MemberNormalizer.ResolveBatch issues

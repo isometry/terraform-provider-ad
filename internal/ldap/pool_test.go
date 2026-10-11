@@ -261,38 +261,6 @@ func TestConnectionPool_DoubleClose(t *testing.T) {
 	}
 }
 
-func TestPooledConnection_Methods(t *testing.T) {
-	serverInfo := &ServerInfo{
-		Host:   "dc1.example.com",
-		Port:   636,
-		UseTLS: true,
-		Source: "test",
-	}
-
-	conn := &PooledConnection{
-		conn:       nil, // We can't create a real connection in unit tests
-		lastUsed:   time.Now(),
-		healthy:    true,
-		serverInfo: serverInfo,
-	}
-
-	// Test methods
-	if conn.ServerInfo() != serverInfo {
-		t.Error("ServerInfo() returned wrong value")
-	}
-
-	if !conn.IsHealthy() {
-		t.Error("IsHealthy() should return true")
-	}
-
-	if conn.LastUsed().IsZero() {
-		t.Error("LastUsed() should not be zero")
-	}
-
-	// Test Close() doesn't panic with nil returnToPool
-	conn.Close() // Should not panic
-}
-
 func TestConnectionError(t *testing.T) {
 	err := NewConnectionError("test operation failed", true, nil)
 

@@ -44,11 +44,6 @@ func (m *mockPool) Stats() PoolStats {
 	return PoolStats{}
 }
 
-func (m *mockPool) HealthCheck(ctx context.Context) error {
-	args := m.Called(ctx)
-	return args.Error(0)
-}
-
 // mockLDAPOps is a testify-style mock that implements the ldapOps
 // interface declared in client.go. It allows assertions on the exact
 // *ldap.SearchRequest, *ldap.AddRequest, etc. that the client builds and

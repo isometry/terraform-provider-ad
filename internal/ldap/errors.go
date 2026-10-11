@@ -71,11 +71,6 @@ func (e *LDAPError) GetCategory() ErrorCategory {
 	return e.Category
 }
 
-// GetLDAPCode returns the LDAP result code.
-func (e *LDAPError) GetLDAPCode() uint16 {
-	return e.LDAPCode
-}
-
 // NewLDAPError creates a new LDAP error.
 func NewLDAPError(operation string, err error) *LDAPError {
 	if err == nil {
@@ -383,24 +378,6 @@ func IsUnsupportedControlError(err error) bool {
 	return ldap.IsErrorWithCode(err, ldap.LDAPResultUnavailableCriticalExtension)
 }
 
-// IsRetryableError checks if an error is retryable.
-func IsRetryableError(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	if retryable, ok := err.(RetryableError); ok {
-		return retryable.IsRetryable()
-	}
-
-	if ldapErr, ok := err.(*LDAPError); ok {
-		return ldapErr.IsRetryable()
-	}
-
-	// Check for generic retryable conditions
-	return isGenericErrorRetryable(err)
-}
-
 // GetErrorCategory returns the category of an error.
 func GetErrorCategory(err error) ErrorCategory {
 	if err == nil {
@@ -429,14 +406,4 @@ func IsNotFoundError(err error) bool {
 // IsConflictError checks if an error indicates a conflict (already exists).
 func IsConflictError(err error) bool {
 	return GetErrorCategory(err) == ErrorCategoryConflict
-}
-
-// IsAuthenticationError checks if an error indicates an authentication problem.
-func IsAuthenticationError(err error) bool {
-	return GetErrorCategory(err) == ErrorCategoryAuthentication
-}
-
-// IsPermissionError checks if an error indicates a permission problem.
-func IsPermissionError(err error) bool {
-	return GetErrorCategory(err) == ErrorCategoryPermission
 }

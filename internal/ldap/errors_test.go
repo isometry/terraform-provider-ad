@@ -368,59 +368,6 @@ func TestWrapError(t *testing.T) {
 	}
 }
 
-func TestIsRetryableError(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{
-			name: "nil error",
-			err:  nil,
-			want: false,
-		},
-		{
-			name: "retryable connection error",
-			err:  NewConnectionError("connection failed", true, nil),
-			want: true,
-		},
-		{
-			name: "non-retryable connection error",
-			err:  NewConnectionError("config error", false, nil),
-			want: false,
-		},
-		{
-			name: "retryable LDAP error",
-			err:  NewLDAPError("search", ldap.NewError(ldap.LDAPResultBusy, errors.New("server busy"))),
-			want: true,
-		},
-		{
-			name: "non-retryable LDAP error",
-			err:  NewLDAPError("bind", ldap.NewError(ldap.LDAPResultInvalidCredentials, errors.New("bad password"))),
-			want: false,
-		},
-		{
-			name: "generic retryable error",
-			err:  errors.New("connection timeout"),
-			want: true,
-		},
-		{
-			name: "generic non-retryable error",
-			err:  errors.New("invalid syntax"),
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := IsRetryableError(tt.err)
-			if got != tt.want {
-				t.Errorf("IsRetryableError() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestGetErrorCategory(t *testing.T) {
 	tests := []struct {
 		name string
@@ -460,8 +407,6 @@ func TestErrorHelperFunctions(t *testing.T) {
 		err        error
 		isNotFound bool
 		isConflict bool
-		isAuth     bool
-		isPerm     bool
 	}{
 		{
 			name:       "not found error",
@@ -473,16 +418,6 @@ func TestErrorHelperFunctions(t *testing.T) {
 			err:        NewLDAPError("add", ldap.NewError(ldap.LDAPResultEntryAlreadyExists, errors.New("entry exists"))),
 			isConflict: true,
 		},
-		{
-			name:   "authentication error",
-			err:    NewLDAPError("bind", ldap.NewError(ldap.LDAPResultInvalidCredentials, errors.New("bad password"))),
-			isAuth: true,
-		},
-		{
-			name:   "permission error",
-			err:    NewLDAPError("modify", ldap.NewError(ldap.LDAPResultInsufficientAccessRights, errors.New("access denied"))),
-			isPerm: true,
-		},
 	}
 
 	for _, tt := range tests {
@@ -493,14 +428,6 @@ func TestErrorHelperFunctions(t *testing.T) {
 
 			if IsConflictError(tt.err) != tt.isConflict {
 				t.Errorf("IsConflictError() = %v, want %v", IsConflictError(tt.err), tt.isConflict)
-			}
-
-			if IsAuthenticationError(tt.err) != tt.isAuth {
-				t.Errorf("IsAuthenticationError() = %v, want %v", IsAuthenticationError(tt.err), tt.isAuth)
-			}
-
-			if IsPermissionError(tt.err) != tt.isPerm {
-				t.Errorf("IsPermissionError() = %v, want %v", IsPermissionError(tt.err), tt.isPerm)
 			}
 		})
 	}

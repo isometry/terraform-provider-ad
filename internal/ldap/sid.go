@@ -29,14 +29,6 @@ func (s SID) String() string {
 	return b.String()
 }
 
-// RID returns the Relative Identifier (last sub-authority).
-func (s SID) RID() uint32 {
-	if len(s.SubAuthorities) == 0 {
-		return 0
-	}
-	return s.SubAuthorities[len(s.SubAuthorities)-1]
-}
-
 // maxSIDAuthority is the largest value the 6-byte big-endian Authority field
 // of a Windows SID can hold (2^48 - 1).
 const maxSIDAuthority uint64 = 1<<48 - 1
@@ -157,27 +149,6 @@ func (h *SIDHandler) ConvertBinarySIDToString(binarySID []byte) (string, error) 
 	return sid.String(), nil
 }
 
-// ConvertBinarySIDToStringSafe converts a binary SID to string, returning empty string if conversion fails.
-func (h *SIDHandler) ConvertBinarySIDToStringSafe(binarySID []byte) string {
-	s, err := h.ConvertBinarySIDToString(binarySID)
-	if err != nil {
-		return ""
-	}
-	return s
-}
-
-// ExtractSID extracts the objectSid from an LDAP entry and returns it as a string.
-func (h *SIDHandler) ExtractSID(entry *ldap.Entry) (string, error) {
-	if entry == nil {
-		return "", fmt.Errorf("LDAP entry cannot be nil")
-	}
-	sidBytes := entry.GetRawAttributeValue("objectSid")
-	if len(sidBytes) == 0 {
-		return "", fmt.Errorf("objectSid attribute not found in entry")
-	}
-	return h.ConvertBinarySIDToString(sidBytes)
-}
-
 // ExtractSIDSafe extracts the objectSid from an LDAP entry, returning empty string if not found.
 // Handles both binary SID data (from real LDAP) and string SID data (for testing).
 func (h *SIDHandler) ExtractSIDSafe(entry *ldap.Entry) string {
@@ -208,28 +179,6 @@ func (h *SIDHandler) ExtractSIDSafe(entry *ldap.Entry) string {
 func (h *SIDHandler) ValidateSIDString(sidString string) error {
 	_, err := ParseSID(sidString)
 	return err
-}
-
-// IsWellKnownSID checks if the SID is a well-known SID.
-func (h *SIDHandler) IsWellKnownSID(sidString string) bool {
-	wellKnownPrefixes := []string{
-		"S-1-0",    // Null Authority
-		"S-1-1",    // World Authority
-		"S-1-2",    // Local Authority
-		"S-1-3",    // Creator Authority
-		"S-1-4",    // Non-unique Authority
-		"S-1-5-18", // Local System
-		"S-1-5-19", // Local Service
-		"S-1-5-20", // Network Service
-	}
-
-	for _, prefix := range wellKnownPrefixes {
-		if len(sidString) >= len(prefix) && sidString[:len(prefix)] == prefix {
-			return true
-		}
-	}
-
-	return false
 }
 
 // StringToSIDBytes converts a string SID to its binary representation.

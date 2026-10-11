@@ -108,33 +108,6 @@ func ValidateDNSyntax(dn string) error {
 	return nil
 }
 
-// ExtractRDNValue extracts the value of the first RDN component with the specified attribute type.
-// For example, extracting "CN" from "CN=John Doe,OU=Users,DC=example,DC=com" returns "John Doe".
-func ExtractRDNValue(dn, attrType string) (string, error) {
-	if dn == "" {
-		return "", fmt.Errorf("DN cannot be empty")
-	}
-
-	parsedDN, err := ldap.ParseDN(dn)
-	if err != nil {
-		return "", fmt.Errorf("invalid DN syntax: %w", err)
-	}
-
-	// Normalize the search attribute type to uppercase for comparison
-	normalizedAttrType := strings.ToUpper(attrType)
-
-	// Search through RDNs for the first matching attribute type
-	for _, rdn := range parsedDN.RDNs {
-		for _, attr := range rdn.Attributes {
-			if strings.ToUpper(attr.Type) == normalizedAttrType {
-				return attr.Value, nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("attribute type '%s' not found in DN '%s'", attrType, dn)
-}
-
 // GetDNParent returns the parent DN by removing the first RDN component.
 // For example, "CN=John,OU=Users,DC=example,DC=com" becomes "OU=Users,DC=example,DC=com".
 func GetDNParent(dn string) (string, error) {
@@ -174,21 +147,6 @@ func DNEqual(a, b string) bool {
 	return pa.EqualFold(pb)
 }
 
-// RDNEqual reports whether two RDN strings are semantically equal.
-// Each argument is parsed as a DN; only the first RDN component is compared.
-// Returns false if either string cannot be parsed or has no RDN components.
-func RDNEqual(a, b string) bool {
-	pa, err := ldap.ParseDN(a)
-	if err != nil || len(pa.RDNs) == 0 {
-		return false
-	}
-	pb, err := ldap.ParseDN(b)
-	if err != nil || len(pb.RDNs) == 0 {
-		return false
-	}
-	return pa.RDNs[0].EqualFold(pb.RDNs[0])
-}
-
 // DNToDNSName converts a Distinguished Name to a DNS domain name by extracting
 // DC components. For example: "DC=sub,DC=example,DC=com" -> "sub.example.com"
 // Non-DC components (CN, OU, etc.) are ignored.
@@ -216,23 +174,4 @@ func DNToDNSName(dn string) (string, error) {
 	}
 
 	return strings.Join(dcComponents, "."), nil
-}
-
-// IsDNChild checks if childDN is a direct or indirect child of parentDN.
-func IsDNChild(childDN, parentDN string) (bool, error) {
-	if childDN == "" || parentDN == "" {
-		return false, fmt.Errorf("DNs cannot be empty")
-	}
-
-	parsedChild, err := ldap.ParseDN(childDN)
-	if err != nil {
-		return false, fmt.Errorf("invalid child DN syntax: %w", err)
-	}
-
-	parsedParent, err := ldap.ParseDN(parentDN)
-	if err != nil {
-		return false, fmt.Errorf("invalid parent DN syntax: %w", err)
-	}
-
-	return parsedParent.AncestorOfFold(parsedChild), nil
 }

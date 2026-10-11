@@ -309,32 +309,6 @@ func (um *UserManager) SetTimeout(timeout time.Duration) {
 // Read Operations
 // -----------------------------------------------------------------------------
 
-// GetUser retrieves a user by various identifier types.
-// Supports lookup by DN, GUID, SID, UPN, or SAM account name.
-func (um *UserManager) GetUser(identifier string) (*User, error) {
-	if identifier == "" {
-		return nil, fmt.Errorf("user identifier cannot be empty")
-	}
-
-	// Detect identifier type and route to appropriate method
-	idType := um.normalizer.DetectIdentifierType(identifier)
-
-	switch idType {
-	case IdentifierTypeDN:
-		return um.getUserByDN(identifier)
-	case IdentifierTypeGUID:
-		return um.getUserByGUID(identifier)
-	case IdentifierTypeSID:
-		return um.getUserBySID(identifier)
-	case IdentifierTypeUPN:
-		return um.getUserByUPN(identifier)
-	case IdentifierTypeSAM:
-		return um.getUserBySAM(identifier)
-	default:
-		return nil, fmt.Errorf("unable to determine identifier type for: %s", identifier)
-	}
-}
-
 // GetUserByDN retrieves a user by distinguished name.
 func (um *UserManager) GetUserByDN(dn string) (*User, error) {
 	if dn == "" {

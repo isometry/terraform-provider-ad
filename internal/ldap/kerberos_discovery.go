@@ -85,16 +85,6 @@ func boolToString(b bool) string {
 	return "false"
 }
 
-// extractRealmFromDomain attempts to derive a Kerberos realm from a domain name.
-func extractRealmFromDomain(domain string) string {
-	if domain == "" {
-		return ""
-	}
-
-	// Simple heuristic: uppercase the domain name
-	return strings.ToUpper(domain)
-}
-
 // validateKerberosAutoDiscoveryConfig validates the configuration for auto-discovery.
 func validateKerberosAutoDiscoveryConfig(ctx context.Context, cfg *ConnectionConfig) error {
 	if cfg == nil {
@@ -104,15 +94,6 @@ func validateKerberosAutoDiscoveryConfig(ctx context.Context, cfg *ConnectionCon
 	// Auto-discovery requires either explicit realm or domain to derive realm from
 	if cfg.KerberosRealm == "" && cfg.Domain == "" {
 		return fmt.Errorf("either kerberos_realm or domain must be specified for auto-discovery")
-	}
-
-	// If realm is not specified, try to derive it from domain
-	if cfg.KerberosRealm == "" && cfg.Domain != "" {
-		cfg.KerberosRealm = extractRealmFromDomain(cfg.Domain)
-		tflog.SubsystemDebug(ctx, "ldap", "Derived Kerberos realm from domain", map[string]any{
-			"domain": cfg.Domain,
-			"realm":  cfg.KerberosRealm,
-		})
 	}
 
 	// Validate that we have authentication credentials

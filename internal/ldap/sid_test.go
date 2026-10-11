@@ -154,17 +154,6 @@ func TestSID_RoundTrip_String(t *testing.T) {
 	assert.Equal(t, b, reencoded)
 }
 
-func TestSID_RID(t *testing.T) {
-	sid, err := ParseSID("S-1-5-21-123456789-987654321-111222333-1001")
-	require.NoError(t, err)
-	assert.Equal(t, uint32(1001), sid.RID())
-}
-
-func TestSID_RID_Empty(t *testing.T) {
-	sid := SID{RevisionLevel: 1, Authority: 5}
-	assert.Equal(t, uint32(0), sid.RID())
-}
-
 func TestSIDHandler_SIDToSearchFilter(t *testing.T) {
 	h := NewSIDHandler()
 
@@ -201,14 +190,6 @@ func TestSIDHandler_ValidateSIDString(t *testing.T) {
 	assert.Error(t, h.ValidateSIDString("not-a-sid"))
 }
 
-func TestSIDHandler_IsWellKnownSID(t *testing.T) {
-	h := NewSIDHandler()
-
-	assert.True(t, h.IsWellKnownSID("S-1-5-18"))
-	assert.True(t, h.IsWellKnownSID("S-1-1-0"))
-	assert.False(t, h.IsWellKnownSID("S-1-5-21-123456789-987654321-111222333-1001"))
-}
-
 func TestSIDHandler_ConvertBinarySIDToString(t *testing.T) {
 	h := NewSIDHandler()
 
@@ -217,11 +198,4 @@ func TestSIDHandler_ConvertBinarySIDToString(t *testing.T) {
 
 	_, err = h.ConvertBinarySIDToString([]byte{})
 	assert.Error(t, err)
-}
-
-func TestSIDHandler_ConvertBinarySIDToStringSafe(t *testing.T) {
-	h := NewSIDHandler()
-
-	assert.Equal(t, "", h.ConvertBinarySIDToStringSafe(nil))
-	assert.Equal(t, "", h.ConvertBinarySIDToStringSafe([]byte{}))
 }

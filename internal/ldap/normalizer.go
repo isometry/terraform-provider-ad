@@ -536,24 +536,3 @@ func (m *MemberNormalizer) ValidateIdentifier(identifier string) error {
 
 	return nil
 }
-
-// GetSupportedFormats returns a list of supported identifier formats.
-func (m *MemberNormalizer) GetSupportedFormats() []string {
-	return []string{
-		"Distinguished Name (DN): CN=User,OU=Users,DC=example,DC=com",
-		"GUID: 12345678-1234-1234-1234-123456789012",
-		"Security Identifier (SID): S-1-5-21-123456789-123456789-123456789-1001",
-		"User Principal Name (UPN): user@example.com",
-		"SAM Account Name: DOMAIN\\username or username",
-	}
-}
-
-// SetBaseDN updates the base DN used for searches.
-func (m *MemberNormalizer) SetBaseDN(baseDN string) {
-	m.baseDN = baseDN
-}
-
-// GetBaseDN returns the current base DN.
-func (m *MemberNormalizer) GetBaseDN() string {
-	return m.baseDN
-}
