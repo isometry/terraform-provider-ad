@@ -48,6 +48,16 @@ func inScope(dn, base string) bool {
 // naming contexts. Every such search is recorded in resolverSearches so tests
 // can prove which identifiers caused LDAP traffic.
 func (d *renameAwareMembershipClient) directorySearch(req *SearchRequest) (*SearchResult, error) {
+	// NetBIOS-name discovery for DOMAIN\ prefixes is not a per-member lookup.
+	switch {
+	case req.BaseDN == "" && req.Scope == ScopeBaseObject:
+		return &SearchResult{Entries: []*ldap.Entry{{Attributes: []*ldap.EntryAttribute{
+			{Name: "configurationNamingContext", Values: []string{testConfigNC}}}}}}, nil
+	case req.BaseDN == "CN=Partitions,"+testConfigNC:
+		return &SearchResult{Entries: []*ldap.Entry{{Attributes: []*ldap.EntryAttribute{
+			{Name: "nETBIOSName", Values: []string{"EXAMPLE"}}}}}}, nil
+	}
+
 	d.resolverSearches = append(d.resolverSearches, req)
 
 	var found *raObject

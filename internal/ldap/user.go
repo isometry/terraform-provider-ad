@@ -987,12 +987,11 @@ func (um *UserManager) getUserByUPN(upn string) (*User, error) {
 
 // getUserBySAM is the internal implementation for SAM-based user retrieval.
 func (um *UserManager) getUserBySAM(samAccountName string) (*User, error) {
-	// Handle DOMAIN\username format
-	if strings.Contains(samAccountName, "\\") {
-		parts := strings.SplitN(samAccountName, "\\", 2)
-		if len(parts) == 2 {
-			samAccountName = parts[1] // Use only the username part
-		}
+	ctx, cancel := context.WithTimeout(um.ctx, um.timeout)
+	defer cancel()
+	samAccountName, err := um.normalizer.samUsername(ctx, samAccountName)
+	if err != nil {
+		return nil, err
 	}
 
 	searchReq := &SearchRequest{

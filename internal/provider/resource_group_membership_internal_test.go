@@ -165,6 +165,13 @@ func (s *stubMembershipClient) Search(ctx context.Context, req *ldapclient.Searc
 	if req != nil && req.Scope == ldapclient.ScopeWholeSubtree {
 		key = req.Filter
 	}
+	// The normalizer's NetBIOS-name lookups (rootDSE, then the Partitions
+	// container) are not member resolutions: don't record them, and fail them
+	// so the resolver's fail-open path is exercised.
+	if req != nil && ((req.BaseDN == "" && req.Scope == ldapclient.ScopeBaseObject) ||
+		strings.HasPrefix(req.BaseDN, "CN=Partitions,")) {
+		return nil, fmt.Errorf("stubMembershipClient: unexpected Search(%q) call — identifier should have been cache-resolved", baseDN)
+	}
 	s.resolverQueries = append(s.resolverQueries, key)
 	if obj, ok := s.resolvable[key]; ok {
 		attrs := []*ldap.EntryAttribute{}
@@ -1671,4 +1678,36 @@ func TestGroupMembershipResource_BuildPlannedMemberDetails(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestReportMemberFailures_ValidationIsAlwaysFatal(t *testing.T) {
+	notFound := ldapclient.NewNotFoundError("resolve", "no such object")
+	wrongDomain := &ldapclient.LDAPError{
+		Operation: "normalize",
+		Category:  ldapclient.ErrorCategoryValidation,
+		Message:   "domain OTHER does not match",
+	}
+
+	tests := []struct {
+		name         string
+		failures     map[string]error
+		ignore       bool
+		wantFatal    bool
+		wantErrors   int
+		wantWarnings int
+	}{
+		{"ignore: not-found stays a warning", map[string]error{"a": notFound}, true, false, 0, 1},
+		{"ignore: mixed aborts on validation", map[string]error{"a": notFound, "OTHER\\b": wrongDomain}, true, true, 1, 1},
+		{"ignore: validation alone is an error", map[string]error{"OTHER\\b": wrongDomain}, true, true, 1, 0},
+		{"strict: everything is an error", map[string]error{"a": notFound, "OTHER\\b": wrongDomain}, false, true, 2, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			diags, fatal := reportMemberFailures(context.Background(), tc.failures, tc.ignore)
+			if fatal != tc.wantFatal || diags.ErrorsCount() != tc.wantErrors || diags.WarningsCount() != tc.wantWarnings {
+				t.Fatalf("fatal=%v errors=%d warnings=%d, want %v/%d/%d: %v",
+					fatal, diags.ErrorsCount(), diags.WarningsCount(), tc.wantFatal, tc.wantErrors, tc.wantWarnings, diags)
+			}
+		})
+	}
 }

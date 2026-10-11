@@ -489,6 +489,7 @@ func TestUserManager_GetUserBySAM_DomainFormat(t *testing.T) {
 	mockEntry := createMockUserEntry()
 	domainSam := "EXAMPLE\\john.doe"
 	expectedSam := "john.doe"
+	mockNetBIOS(client, "EXAMPLE")
 
 	client.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 		return strings.Contains(req.Filter, fmt.Sprintf("sAMAccountName=%s", expectedSam))

@@ -511,6 +511,35 @@ func (r *GroupMembershipResource) effectiveIgnoreMissingMembers(ctx context.Cont
 	return r.ignoreMissingMembers
 }
 
+// reportMemberFailures turns member resolution failures into diagnostics.
+// In ignore-missing mode failures are warnings, except Validation-category
+// failures (e.g. a DOMAIN\user prefix naming another domain): those are not
+// "missing members" and are always errors. fatal reports whether any error
+// diagnostic was added.
+func reportMemberFailures(ctx context.Context, failures map[string]error, effectiveIgnoreMissing bool) (diags diag.Diagnostics, fatal bool) {
+	for identifier, err := range failures {
+		msg := fmt.Sprintf("Member '%s' could not be resolved: %s", identifier, err.Error())
+
+		switch {
+		case ldapclient.GetErrorCategory(err) == ldapclient.ErrorCategoryValidation:
+			diags.AddError("Member could not be resolved", msg+
+				". The identifier names a different domain than the provider is configured for; "+
+				"this is an error even when ignore_missing_members is set.")
+			fatal = true
+		case effectiveIgnoreMissing:
+			tflog.Warn(ctx, "Ignoring unresolvable member", map[string]any{
+				"identifier": identifier,
+				"error":      err.Error(),
+			})
+			diags.AddWarning("Member could not be resolved", msg)
+		default:
+			diags.AddError("Member could not be resolved", msg)
+			fatal = true
+		}
+	}
+	return diags, fatal
+}
+
 // resolveMembers resolves verbatim member identifiers to their DN+GUID pairs
 // at the current moment (live/cached), applying ignore-missing semantics.
 // Used by ModifyPlan (plan time, classifying each member into a planned
@@ -560,22 +589,12 @@ func (r *GroupMembershipResource) resolveMembers(
 
 	// Handle any resolution failures
 	if len(failures) > 0 {
-		for identifier, err := range failures {
-			msg := fmt.Sprintf("Member '%s' could not be resolved: %s", identifier, err.Error())
+		failDiags, fatal := reportMemberFailures(ctx, failures, effectiveIgnoreMissing)
+		diags.Append(failDiags...)
 
-			if effectiveIgnoreMissing {
-				tflog.Warn(ctx, "Ignoring unresolvable member", map[string]any{
-					"identifier": identifier,
-					"error":      err.Error(),
-				})
-				diags.AddWarning("Member could not be resolved", msg)
-			} else {
-				diags.AddError("Member could not be resolved", msg)
-			}
-		}
-
-		// In strict mode, stop if there are any errors
-		if !effectiveIgnoreMissing {
+		// Stop on any fatal failure: all of them in strict mode, only
+		// validation failures in ignore-missing mode.
+		if fatal {
 			return resolvedMap, failures, diags
 		}
 	}
