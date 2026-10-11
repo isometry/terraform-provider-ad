@@ -2433,3 +2433,62 @@ func TestUpdateGroupRenameAndMove(t *testing.T) {
 
 	mockClient.AssertExpectations(t)
 }
+
+func TestGetFlattenedUserMembers(t *testing.T) {
+	const guid = "12345678-1234-1234-1234-123456789012"
+	// DN with filter-special characters that must be escaped in the filter.
+	const groupDN = "CN=Team (A)*,CN=Users,DC=test,DC=local"
+	groupResult := func() *SearchResult {
+		return &SearchResult{Entries: []*ldap.Entry{createMockGroupEntry("Team", guid, groupDN, CalculateGroupType(GroupScopeGlobal, GroupCategorySecurity))}, Total: 1}
+	}
+	expectGroupLookup := func(m *MockGroupClient) {
+		m.On("Search", mock.Anything, mock.MatchedBy(func(r *SearchRequest) bool { return r.SizeLimit == 1 })).Return(groupResult(), nil).Once()
+	}
+	wantFilter := "(&(objectCategory=person)(objectClass=user)(memberOf:1.2.840.113556.1.4.1941:=CN=Team \\28A\\29\\2a,CN=Users,DC=test,DC=local))"
+
+	t.Run("single transitive search with escaped DN", func(t *testing.T) {
+		gm, m := createTestGroupManager(t)
+		expectGroupLookup(m)
+		m.On("SearchWithPaging", mock.Anything, mock.MatchedBy(func(r *SearchRequest) bool {
+			return r.Filter == wantFilter && r.BaseDN == "DC=test,DC=local" && r.Scope == ScopeWholeSubtree
+		})).Return(&SearchResult{Entries: []*ldap.Entry{
+			{DN: "CN=U1,CN=Users,DC=test,DC=local"}, {DN: "CN=U2,CN=Users,DC=test,DC=local"},
+		}}, nil).Once()
+
+		dns, err := gm.GetFlattenedUserMembers(guid)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"CN=U1,CN=Users,DC=test,DC=local", "CN=U2,CN=Users,DC=test,DC=local"}, dns)
+		m.AssertExpectations(t)
+	})
+
+	t.Run("search error is returned", func(t *testing.T) {
+		gm, m := createTestGroupManager(t)
+		expectGroupLookup(m)
+		m.On("SearchWithPaging", mock.Anything, mock.Anything).Return(nil, fmt.Errorf("timeout")).Once()
+
+		dns, err := gm.GetFlattenedUserMembers(guid)
+		require.Error(t, err)
+		assert.Nil(t, dns)
+		assert.Contains(t, err.Error(), "timeout")
+	})
+
+	t.Run("empty group returns empty slice", func(t *testing.T) {
+		gm, m := createTestGroupManager(t)
+		expectGroupLookup(m)
+		m.On("SearchWithPaging", mock.Anything, mock.Anything).Return(&SearchResult{}, nil).Once()
+
+		dns, err := gm.GetFlattenedUserMembers(guid)
+		require.NoError(t, err)
+		assert.NotNil(t, dns)
+		assert.Empty(t, dns)
+	})
+
+	t.Run("missing group is not found", func(t *testing.T) {
+		gm, m := createTestGroupManager(t)
+		m.On("Search", mock.Anything, mock.Anything).Return(&SearchResult{}, nil).Once()
+
+		_, err := gm.GetFlattenedUserMembers(guid)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}

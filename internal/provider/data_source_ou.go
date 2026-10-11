@@ -307,12 +307,11 @@ func (d *OUDataSource) mapOUToModel(ctx context.Context, ou *ldapclient.OU, data
 	// Get child OUs
 	children, err := d.ouManager.GetOUChildren(ctx, ou.DistinguishedName)
 	if err != nil {
-		tflog.Warn(ctx, "Failed to retrieve child OUs", map[string]any{
-			"ou_dn": ou.DistinguishedName,
-			"error": err.Error(),
-		})
-		// Set empty values on error but don't fail the operation
-		children = []*ldapclient.OU{}
+		diags.AddError(
+			"Failed to Retrieve Child OUs",
+			fmt.Sprintf("Could not list children of %s: %s", ou.DistinguishedName, err),
+		)
+		return
 	}
 
 	// Convert child OUs to a List with normalization
