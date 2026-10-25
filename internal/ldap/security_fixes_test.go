@@ -76,8 +76,7 @@ func TestAuthenticateExternal(t *testing.T) {
 	t.Run("uses SASL EXTERNAL", func(t *testing.T) {
 		b := &mockExternalBinder{}
 		b.On("ExternalBind").Return(nil).Once()
-		c := newTestClient(&mockPool{}, clientCertConfig("c", "k"))
-		require.NoError(t, c.authenticateExternal(t.Context(), b))
+		require.NoError(t, externalBind(clientCertConfig("c", "k"), b))
 		b.AssertExpectations(t)
 	})
 
@@ -86,8 +85,7 @@ func TestAuthenticateExternal(t *testing.T) {
 		cfg.LDAPURLs = []string{"ldap://dc.example.invalid:389"}
 		cfg.UseTLS = false
 		b := &mockExternalBinder{}
-		c := newTestClient(&mockPool{}, cfg)
-		err := c.authenticateExternal(t.Context(), b)
+		err := externalBind(cfg, b)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "needs TLS")
 		b.AssertNotCalled(t, "ExternalBind")

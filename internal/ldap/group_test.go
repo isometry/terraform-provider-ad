@@ -29,11 +29,6 @@ func (m *MockGroupClient) Close() error {
 	return args.Error(0)
 }
 
-func (m *MockGroupClient) BindWithConfig(ctx context.Context) error {
-	args := m.Called(ctx)
-	return args.Error(0)
-}
-
 func (m *MockGroupClient) Search(ctx context.Context, req *SearchRequest) (*SearchResult, error) {
 	args := m.Called(ctx, req)
 	if result := args.Get(0); result != nil {

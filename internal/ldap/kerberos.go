@@ -11,6 +11,7 @@ import (
 	"github.com/go-ldap/ldap/v3/gssapi"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	krb5client "github.com/jcmturner/gokrb5/v8/client"
+	"github.com/jcmturner/gokrb5/v8/keytab"
 )
 
 // performKerberosAuth performs Kerberos authentication on an LDAP connection.
@@ -203,7 +204,13 @@ func createGSSAPIClientWithConfigPath(ctx context.Context, cfg *ConnectionConfig
 	case kerberosExplicitCCache, kerberosDefaultCCache:
 		client, err = gssapi.NewClientFromCCache(path, krb5confPath, krb5client.DisablePAFXFAST(true))
 	case kerberosExplicitKeytab, kerberosDefaultKeytab:
-		client, err = gssapi.NewClientWithKeytab(cfg.Username, cfg.KerberosRealm, path, krb5confPath, krb5client.DisablePAFXFAST(true))
+		username := cfg.Username
+		if username == "" {
+			if username, err = keytabPrincipal(path); err != nil {
+				return nil, err
+			}
+		}
+		client, err = gssapi.NewClientWithKeytab(username, cfg.KerberosRealm, path, krb5confPath, krb5client.DisablePAFXFAST(true))
 	case kerberosPassword:
 		client, err = gssapi.NewClientWithPassword(cfg.Username, cfg.KerberosRealm, cfg.Password, krb5confPath, krb5client.DisablePAFXFAST(true))
 	}
@@ -223,7 +230,7 @@ func createGSSAPIClientWithConfigPath(ctx context.Context, cfg *ConnectionConfig
 		"checked_explicit_ccache": cfg.KerberosCCache != "",
 		"checked_default_ccache":  fileExists(getDefaultCCachePath()),
 		"checked_explicit_keytab": cfg.KerberosKeytab != "",
-		"checked_default_keytab":  cfg.Username != "" && fileExists(getDefaultKeytabPath()),
+		"checked_default_keytab":  fileExists(getDefaultKeytabPath()),
 		"has_password":            cfg.Password != "",
 	})
 
@@ -299,18 +306,12 @@ func prepareKerberosConfigWithContext(ctx context.Context, cfg *ConnectionConfig
 		return fmt.Errorf("kerberos realm is required (set kerberos_realm or include realm in username)")
 	}
 
-	if cfg.Username == "" {
-		return fmt.Errorf("username (principal) is required for Kerberos authentication")
-	}
-
-	// Validate that we have some form of credentials
-	hasExplicitCCache := cfg.KerberosCCache != "" && fileExists(cfg.KerberosCCache)
-	hasDefaultCCache := fileExists(getDefaultCCachePath())
-	hasExplicitKeytab := cfg.KerberosKeytab != "" && fileExists(cfg.KerberosKeytab)
-	hasDefaultKeytab := fileExists(getDefaultKeytabPath())
-	hasPassword := cfg.Password != ""
-
-	if !hasExplicitCCache && !hasDefaultCCache && !hasExplicitKeytab && !hasDefaultKeytab && !hasPassword {
+	// A username is only needed for password auth: ccache carries its own
+	// principal and keytab principals are derived from the keytab file.
+	if method, _ := selectKerberosCredential(cfg); method == kerberosNone {
+		if cfg.Password != "" {
+			return fmt.Errorf("username (principal) is required for Kerberos password authentication")
+		}
 		return fmt.Errorf("no suitable Kerberos credentials found: provide kerberos_ccache, kerberos_keytab, password, or ensure default credential cache/keytab exists")
 	}
 
@@ -419,6 +420,26 @@ func generateExampleKrb5Conf(cfg *ConnectionConfig) string {
 		strings.ToLower(realm), realm)
 }
 
+// keytabPrincipal derives the principal (without realm) from a keytab, preferring
+// a machine account entry (first component ending in `$`) over the first entry.
+func keytabPrincipal(path string) (string, error) {
+	kt, err := keytab.Load(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to read keytab %s: %w", path, err)
+	}
+	if len(kt.Entries) == 0 {
+		return "", fmt.Errorf("keytab %s has no entries; set username explicitly", path)
+	}
+	entry := kt.Entries[0]
+	for _, e := range kt.Entries {
+		if len(e.Principal.Components) > 0 && strings.HasSuffix(e.Principal.Components[0], "$") {
+			entry = e
+			break
+		}
+	}
+	return strings.Join(entry.Principal.Components, "/"), nil
+}
+
 type kerberosCredential string
 
 const (
@@ -445,10 +466,8 @@ func selectKerberosCredential(cfg *ConnectionConfig) (kerberosCredential, string
 	if p := getDefaultCCachePath(); fileExists(p) {
 		return kerberosDefaultCCache, p
 	}
-	if cfg.Username != "" {
-		if p := getDefaultKeytabPath(); fileExists(p) {
-			return kerberosDefaultKeytab, p
-		}
+	if p := getDefaultKeytabPath(); fileExists(p) {
+		return kerberosDefaultKeytab, p
 	}
 	return kerberosNone, ""
 }

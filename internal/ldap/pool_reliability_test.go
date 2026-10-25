@@ -160,3 +160,31 @@ func TestSearch_RetryUsesFreshConnectionAfterNetworkError(t *testing.T) {
 	assert.Equal(t, []*PooledConnection{dead, fresh}, used)
 	pool.AssertNumberOfCalls(t, "Get", 2)
 }
+
+func TestAuthenticateConnection_ExternalUsesSASLExternal(t *testing.T) {
+	pool := newTestPool(t, 1)
+	pool.config.TLSClientCertFile = "c"
+	pool.config.TLSClientKeyFile = "k"
+	conn, peer := newPipeLDAPConn(t)
+
+	req := make(chan []byte, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		n, err := peer.Read(buf)
+		if err == nil {
+			req <- buf[:n]
+			_, _ = peer.Write(bindErrResp)
+		}
+	}()
+
+	// A plain Bind("", "") fails locally (ErrorEmptyPassword) without any I/O.
+	err := pool.authenticateConnection(&PooledConnection{conn: conn})
+	require.Error(t, err)
+	assert.True(t, ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials), "%v", err)
+	select {
+	case b := <-req:
+		assert.Contains(t, string(b), "EXTERNAL")
+	case <-time.After(time.Second):
+		t.Fatal("no bind request sent")
+	}
+}

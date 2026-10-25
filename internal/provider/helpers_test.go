@@ -707,10 +707,6 @@ func (m *MockLDAPClient) Bind(ctx context.Context, username, password string) er
 	return m.err
 }
 
-func (m *MockLDAPClient) BindWithConfig(ctx context.Context) error {
-	return m.err
-}
-
 func (m *MockLDAPClient) Search(ctx context.Context, req *ldapclient.SearchRequest) (*ldapclient.SearchResult, error) {
 	if m.err != nil {
 		return nil, m.err

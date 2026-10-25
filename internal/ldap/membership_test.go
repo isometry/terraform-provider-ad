@@ -91,10 +91,6 @@ func (m *MockGroupMembershipClient) Close() error {
 	return nil
 }
 
-func (m *MockGroupMembershipClient) BindWithConfig(ctx context.Context) error {
-	return nil
-}
-
 func (m *MockGroupMembershipClient) Add(ctx context.Context, req *AddRequest) error {
 	m.operationLog = append(m.operationLog, fmt.Sprintf("Add: %s", req.DN))
 	return nil

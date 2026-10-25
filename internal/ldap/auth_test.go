@@ -67,6 +67,13 @@ func TestConnectionConfig_GetAuthMethod(t *testing.T) {
 	}
 }
 
+func TestConnectionConfig_GetAuthMethod_KerberosCCacheOnly(t *testing.T) {
+	cfg := &ConnectionConfig{KerberosRealm: "EXAMPLE.COM", KerberosCCache: "/tmp/krb5cc_1000"}
+	if got := cfg.GetAuthMethod(); got != AuthMethodKerberos {
+		t.Errorf("GetAuthMethod() = %v, expected kerberos", got)
+	}
+}
+
 func TestConnectionConfig_HasAuthentication(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -94,6 +101,14 @@ func TestConnectionConfig_HasAuthentication(t *testing.T) {
 			config: &ConnectionConfig{
 				Username:      "testuser",
 				KerberosRealm: "EXAMPLE.COM",
+			},
+			expected: true,
+		},
+		{
+			name: "has kerberos authentication with ccache only",
+			config: &ConnectionConfig{
+				KerberosRealm:  "EXAMPLE.COM",
+				KerberosCCache: "/tmp/krb5cc_1000",
 			},
 			expected: true,
 		},
