@@ -386,11 +386,7 @@ func (gm *GroupManager) GetGroup(guid string) (*Group, error) {
 	}
 
 	// Expand attributes to include all group-relevant fields
-	searchReq.Attributes = []string{
-		"objectGUID", "distinguishedName", "objectSid", "cn", "sAMAccountName",
-		"description", "groupType", "mail", "mailNickname", "member", "memberOf",
-		"whenCreated", "whenChanged", "managedBy",
-	}
+	searchReq.Attributes = gm.getAllGroupAttributes()
 	searchReq.TimeLimit = gm.timeout
 
 	result, err := gm.client.Search(gm.ctx, searchReq)
@@ -485,16 +481,12 @@ func (gm *GroupManager) GetGroupByDN(dn string) (*Group, error) {
 // getGroupByDN is the internal implementation for DN-based group retrieval.
 func (gm *GroupManager) getGroupByDN(dn string) (*Group, error) {
 	searchReq := &SearchRequest{
-		BaseDN: dn,
-		Scope:  ScopeBaseObject,
-		Filter: "(objectClass=group)",
-		Attributes: []string{
-			"objectGUID", "distinguishedName", "objectSid", "cn", "sAMAccountName",
-			"description", "groupType", "mail", "mailNickname", "member", "memberOf",
-			"whenCreated", "whenChanged", "managedBy",
-		},
-		SizeLimit: 1,
-		TimeLimit: gm.timeout,
+		BaseDN:     dn,
+		Scope:      ScopeBaseObject,
+		Filter:     "(objectClass=group)",
+		Attributes: gm.getAllGroupAttributes(),
+		SizeLimit:  1,
+		TimeLimit:  gm.timeout,
 	}
 
 	result, err := gm.client.Search(gm.ctx, searchReq)
@@ -510,6 +502,12 @@ func (gm *GroupManager) getGroupByDN(dn string) (*Group, error) {
 	if err != nil {
 		return nil, WrapError("parse_group_entry", err)
 	}
+
+	members, err := gm.getAllMembers(result.Entries[0], nil)
+	if err != nil {
+		return nil, WrapError("get_group_members_range", err)
+	}
+	group.MemberDNs = members
 
 	return group, nil
 }
@@ -573,8 +571,8 @@ func (gm *GroupManager) UpdateGroup(guid string, req *UpdateGroupRequest) (*Grou
 	// Handle description change
 	if req.Description != nil {
 		if *req.Description == "" {
-			// Delete description if empty string provided
-			modReq.DeleteAttributes = append(modReq.DeleteAttributes, "description")
+			// Clear description if empty string provided
+			modReq.ReplaceAttributes["description"] = []string{} // idempotent clear
 		} else {
 			modReq.ReplaceAttributes["description"] = []string{*req.Description}
 		}
@@ -584,8 +582,8 @@ func (gm *GroupManager) UpdateGroup(guid string, req *UpdateGroupRequest) (*Grou
 	// Handle mail change
 	if req.Mail != nil {
 		if *req.Mail == "" {
-			// Delete mail if empty string provided
-			modReq.DeleteAttributes = append(modReq.DeleteAttributes, "mail")
+			// Clear mail if empty string provided
+			modReq.ReplaceAttributes["mail"] = []string{} // idempotent clear
 		} else {
 			// Validate email format
 			if !strings.Contains(*req.Mail, "@") || !strings.Contains(*req.Mail, ".") {
@@ -599,7 +597,7 @@ func (gm *GroupManager) UpdateGroup(guid string, req *UpdateGroupRequest) (*Grou
 	// Handle mail nickname change
 	if req.MailNickname != nil {
 		if *req.MailNickname == "" {
-			modReq.DeleteAttributes = append(modReq.DeleteAttributes, "mailNickname")
+			modReq.ReplaceAttributes["mailNickname"] = []string{} // idempotent clear
 		} else {
 			modReq.ReplaceAttributes["mailNickname"] = []string{*req.MailNickname}
 		}
@@ -742,12 +740,8 @@ func (gm *GroupManager) DeleteGroup(guid string) error {
 	// Get group to determine DN
 	group, err := gm.GetGroup(guid)
 	if err != nil {
-		// Check if it's a "not found" error
-		if ldapErr, ok := err.(*LDAPError); ok {
-			if ldapErr.Message == fmt.Sprintf("group with GUID %s not found", guid) {
-				// Group already doesn't exist
-				return nil
-			}
+		if IsNotFoundError(err) {
+			return nil // already deleted
 		}
 		return WrapError("get_group_for_deletion", err)
 	}
@@ -890,96 +884,9 @@ func (gm *GroupManager) SearchGroupsWithFilter(filter *GroupSearchFilter) ([]*Gr
 	return groups, nil
 }
 
-// SearchGroups searches for groups using various criteria.
+// SearchGroups searches for groups under the base DN using various criteria.
 func (gm *GroupManager) SearchGroups(filter string, attributes []string) ([]*Group, error) {
-	start := time.Now()
-
-	originalFilter := filter
-	if filter == "" {
-		filter = "(objectClass=group)"
-	} else {
-		// Ensure we're only searching for groups
-		filter = fmt.Sprintf("(&(objectClass=group)%s)", filter)
-	}
-
-	searchFields := map[string]any{
-		"operation":       "search_groups",
-		"base_dn":         gm.baseDN,
-		"original_filter": originalFilter,
-		"final_filter":    filter,
-		"attributes":      attributes,
-		"timeout":         gm.timeout.String(),
-	}
-
-	tflog.SubsystemDebug(gm.ctx, "ldap", "Starting SearchGroups", searchFields)
-
-	if len(attributes) == 0 {
-		attributes = gm.getAllGroupAttributes()
-		searchFields["attributes"] = attributes
-		tflog.SubsystemTrace(gm.ctx, "ldap", "Using default attributes for group search", searchFields)
-	}
-
-	searchReq := &SearchRequest{
-		BaseDN:     gm.baseDN,
-		Scope:      ScopeWholeSubtree,
-		Filter:     filter,
-		Attributes: attributes,
-		TimeLimit:  gm.timeout,
-	}
-
-	tflog.SubsystemDebug(gm.ctx, "ldap", "Executing paged search for groups", searchFields)
-
-	result, err := gm.client.SearchWithPaging(gm.ctx, searchReq)
-	if err != nil {
-		searchFields["operation"] = "search_groups"
-		searchFields["error"] = err.Error()
-		searchFields["duration_ms"] = time.Since(start).Milliseconds()
-
-		// Add LDAP-specific error information if available
-		if ldapErr, ok := err.(*ldap.Error); ok {
-			searchFields["ldap_result_code"] = ldapErr.ResultCode
-			if ldapErr.MatchedDN != "" {
-				searchFields["ldap_matched_dn"] = ldapErr.MatchedDN
-			}
-			if ldapErr.Err != nil {
-				searchFields["ldap_diagnostic_message"] = ldapErr.Err.Error()
-			}
-		}
-
-		tflog.SubsystemError(gm.ctx, "ldap", "LDAP search groups operation failed", searchFields)
-		return nil, WrapError("search_groups", err)
-	}
-
-	searchFields["raw_entries_found"] = len(result.Entries)
-	tflog.SubsystemTrace(gm.ctx, "ldap", "Raw LDAP search completed, processing entries", searchFields)
-
-	groups := make([]*Group, 0, len(result.Entries))
-	processErrors := 0
-	for i, entry := range result.Entries {
-		group, err := gm.entryToGroup(entry)
-		if err != nil {
-			processErrors++
-			errorFields := map[string]any{
-				"operation":   "entry_to_group",
-				"entry_index": i,
-				"entry_dn":    entry.DN,
-				"error":       err.Error(),
-			}
-			tflog.SubsystemWarn(gm.ctx, "ldap", "Failed to convert LDAP entry to group, skipping", errorFields)
-			continue
-		}
-		groups = append(groups, group)
-	}
-
-	duration := time.Since(start)
-	searchFields["duration_ms"] = duration.Milliseconds()
-	searchFields["groups_processed"] = len(groups)
-	searchFields["process_errors"] = processErrors
-	searchFields["success_rate"] = float64(len(groups)) / float64(len(result.Entries)) * 100
-
-	tflog.SubsystemInfo(gm.ctx, "ldap", "SearchGroups completed", searchFields)
-
-	return groups, nil
+	return gm.searchGroupsInContainer(gm.baseDN, filter, attributes, ScopeWholeSubtree)
 }
 
 // entryToGroup converts an LDAP entry to a Group struct.
@@ -1285,6 +1192,11 @@ func (gm *GroupManager) searchGroupsInContainer(baseDN, filter string, attribute
 			tflog.SubsystemWarn(gm.ctx, "ldap", "Failed to convert LDAP entry to group in container search, skipping", errorFields)
 			continue
 		}
+		members, err := gm.getAllMembers(entry, nil)
+		if err != nil {
+			return nil, WrapError("get_group_members_range", err)
+		}
+		group.MemberDNs = members
 		groups = append(groups, group)
 	}
 
