@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"unicode/utf8"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -97,20 +98,6 @@ func (m useNameForSAMAccountName) PlanModifyString(ctx context.Context, req plan
 		objectType = "user"
 	}
 
-	// Check if name is too long for SAM account name
-	if len(nameStr) > charLimit {
-		resp.Diagnostics.AddAttributeError(
-			req.Path,
-			"SAM Account Name Required",
-			fmt.Sprintf(
-				"The %s name '%s' is %d characters long, which exceeds the %d character limit for SAM account names. "+
-					"Please explicitly specify a 'sam_account_name' that is %d characters or less.",
-				objectType, nameStr, len(nameStr), charLimit, charLimit,
-			),
-		)
-		return
-	}
-
 	// Check if name contains invalid characters for SAM account name
 	if !samAccountNameRegex.MatchString(nameStr) {
 		resp.Diagnostics.AddAttributeError(
@@ -121,6 +108,21 @@ func (m useNameForSAMAccountName) PlanModifyString(ctx context.Context, req plan
 					"SAM account names can only contain letters, numbers, dots, underscores, and hyphens. "+
 					"Please explicitly specify a valid 'sam_account_name'.",
 				objectType, nameStr,
+			),
+		)
+		return
+	}
+
+	runeCount := utf8.RuneCountInString(nameStr)
+	// Check if name is too long for SAM account name (characters, not bytes)
+	if runeCount > charLimit {
+		resp.Diagnostics.AddAttributeError(
+			req.Path,
+			"SAM Account Name Required",
+			fmt.Sprintf(
+				"The %s name '%s' is %d characters long, which exceeds the %d character limit for SAM account names. "+
+					"Please explicitly specify a 'sam_account_name' that is %d characters or less.",
+				objectType, nameStr, runeCount, charLimit, charLimit,
 			),
 		)
 		return

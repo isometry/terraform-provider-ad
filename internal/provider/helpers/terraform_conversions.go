@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"sort"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -315,8 +316,11 @@ func DNListOrNull(ctx context.Context, dns []string, diags *diag.Diagnostics) ty
 		return emptyList
 	}
 
-	elements := make([]attr.Value, len(dns))
-	for i, dn := range dns {
+	// Sorted so server-side ordering (e.g. memberOf) cannot cause plan drift.
+	sorted := append([]string(nil), dns...)
+	sort.Strings(sorted)
+	elements := make([]attr.Value, len(sorted))
+	for i, dn := range sorted {
 		normalizedDN := NormalizeDN(ctx, dn)
 		elements[i] = types.StringValue(normalizedDN)
 	}

@@ -1802,9 +1802,9 @@ func testCheckUserPwdLastSetZero(ctx context.Context, resourceName string) resou
 	}
 }
 
-// On Update for an imported user, change_password_at_logon must be preserved
-// from prior state when both it and password are omitted from config; the
-// attribute is only meaningful when paired with a password write.
+// An imported user whose password is already set in AD must plan cleanly with
+// change_password_at_logon = false and no password in config (no create-time
+// "requires a password" rule applies on update).
 func TestAccUserResource_ImportedAccountChangePasswordAtLogonPreserved(t *testing.T) {
 	name := GenerateTestName(TestUserPrefix + "chgPreserve-")
 	samName := GenerateTestSAMName("cpp")
@@ -1870,6 +1870,8 @@ resource "ad_user" "test" {
   sam_account_name = %[5]q
   container        = "%[6]s,${data.ad_rootdse.test.default_naming_context}"
   enabled          = true
+
+  change_password_at_logon = false
 }
 `, testProviderConfig(), testRootDSEDataSource(), name, upn, sam, DefaultTestContainer)
 }

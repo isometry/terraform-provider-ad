@@ -607,6 +607,15 @@ func TestDNListOrNull(t *testing.T) {
 		assert.Equal(t, types.StringValue("CN=bob,DC=example,DC=com"), got.Elements()[1])
 	})
 
+	t.Run("output is sorted without mutating input", func(t *testing.T) {
+		var diags diag.Diagnostics
+		in := []string{"cn=b,dc=x", "cn=a,dc=x"}
+		got := helpers.DNListOrNull(ctx, in, &diags)
+		require.Len(t, got.Elements(), 2)
+		assert.Equal(t, types.StringValue("CN=a,DC=x"), got.Elements()[0])
+		assert.Equal(t, []string{"cn=b,dc=x", "cn=a,dc=x"}, in)
+	})
+
 	t.Run("element type is string", func(t *testing.T) {
 		var diags diag.Diagnostics
 		got := helpers.DNListOrNull(ctx, []string{"cn=x,dc=y"}, &diags)
