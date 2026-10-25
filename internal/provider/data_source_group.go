@@ -434,15 +434,13 @@ func (d *GroupDataSource) mapGroupToModel(ctx context.Context, group *ldapclient
 		// Get flattened user members
 		flattenedUsers, err := d.groupManager.GetFlattenedUserMembers(group.ObjectGUID)
 		if err != nil {
-			tflog.Warn(ctx, "Failed to get flattened user members", map[string]any{
-				"group_guid": group.ObjectGUID,
-				"error":      err.Error(),
-			})
-			// Fall back to regular members
-			memberDNs = group.MemberDNs
-		} else {
-			memberDNs = flattenedUsers
+			diags.AddError(
+				"Failed to Flatten Group Members",
+				fmt.Sprintf("Could not resolve nested user members of group %s: %s", group.ObjectGUID, err),
+			)
+			return
 		}
+		memberDNs = flattenedUsers
 	} else {
 		// Use regular direct members
 		memberDNs = group.MemberDNs

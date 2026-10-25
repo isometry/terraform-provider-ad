@@ -1423,112 +1423,27 @@ func (gm *GroupManager) GetFlattenedUserMembers(groupGUID string) ([]string, err
 		return nil, fmt.Errorf("group GUID cannot be empty")
 	}
 
-	// Use a set to track already processed groups to prevent infinite loops
-	processedGroups := make(map[string]bool)
-	// Use a set to collect unique user DNs
-	userDNs := make(map[string]bool)
+	group, err := gm.GetGroup(groupGUID)
+	if err != nil {
+		return nil, WrapError("flatten_get_group", err)
+	}
 
-	// Start recursive traversal
-	if err := gm.flattenGroupMembersRecursive(groupGUID, processedGroups, userDNs); err != nil {
+	// Transitive membership in one query; does not cross domains/forests (foreign security principals).
+	result, err := gm.client.SearchWithPaging(gm.ctx, &SearchRequest{
+		BaseDN: gm.baseDN,
+		Scope:  ScopeWholeSubtree,
+		Filter: fmt.Sprintf("(&(objectCategory=person)(objectClass=user)(memberOf:1.2.840.113556.1.4.1941:=%s))",
+			ldap.EscapeFilter(group.DistinguishedName)),
+		Attributes: []string{"distinguishedName"},
+		TimeLimit:  gm.timeout,
+	})
+	if err != nil {
 		return nil, WrapError("flatten_group_members", err)
 	}
 
-	// Convert set to slice
-	result := make([]string, 0, len(userDNs))
-	for userDN := range userDNs {
-		result = append(result, userDN)
+	userDNs := make([]string, 0, len(result.Entries))
+	for _, entry := range result.Entries {
+		userDNs = append(userDNs, entry.DN)
 	}
-
-	return result, nil
-}
-
-// flattenGroupMembersRecursive recursively processes group members, adding users to the userDNs set
-// and recursively processing nested groups.
-func (gm *GroupManager) flattenGroupMembersRecursive(groupGUID string, processedGroups map[string]bool, userDNs map[string]bool) error {
-	// Check if we've already processed this group (prevent infinite loops)
-	if processedGroups[groupGUID] {
-		return nil
-	}
-	processedGroups[groupGUID] = true
-
-	// Get the group
-	group, err := gm.GetGroup(groupGUID)
-	if err != nil {
-		return fmt.Errorf("failed to get group %s: %w", groupGUID, err)
-	}
-
-	// Process each member
-	for _, memberDN := range group.MemberDNs {
-		// Check if this member is a group or user by searching for it
-		// First try to find it as a group
-		groupFilter := fmt.Sprintf("(&(objectClass=group)(distinguishedName=%s))", ldap.EscapeFilter(memberDN))
-		groupResults, err := gm.client.Search(gm.ctx, &SearchRequest{
-			BaseDN:     gm.baseDN,
-			Scope:      ScopeWholeSubtree,
-			Filter:     groupFilter,
-			Attributes: []string{"objectGUID"},
-			SizeLimit:  1,
-			TimeLimit:  gm.timeout,
-		})
-		if err != nil {
-			// Log warning and continue with next member
-			tflog.SubsystemWarn(gm.ctx, "ldap", "Failed to search for member as group", map[string]any{
-				"member_dn": memberDN,
-				"error":     err.Error(),
-			})
-			continue
-		}
-
-		if len(groupResults.Entries) > 0 {
-			// This member is a group, recursively process its members
-			memberGroupGUID, err := gm.guidHandler.ExtractGUID(groupResults.Entries[0])
-			if err != nil {
-				tflog.SubsystemWarn(gm.ctx, "ldap", "Failed to extract GUID from member group", map[string]any{
-					"member_dn": memberDN,
-					"error":     err.Error(),
-				})
-				continue
-			}
-
-			// Recursively process this group
-			if err := gm.flattenGroupMembersRecursive(memberGroupGUID, processedGroups, userDNs); err != nil {
-				tflog.SubsystemWarn(gm.ctx, "ldap", "Failed to recursively process member group", map[string]any{
-					"member_group_guid": memberGroupGUID,
-					"member_dn":         memberDN,
-					"error":             err.Error(),
-				})
-				continue
-			}
-		} else {
-			// This member is not a group, check if it's a user
-			userFilter := fmt.Sprintf("(&(objectClass=user)(distinguishedName=%s))", ldap.EscapeFilter(memberDN))
-			userResults, err := gm.client.Search(gm.ctx, &SearchRequest{
-				BaseDN:     gm.baseDN,
-				Scope:      ScopeWholeSubtree,
-				Filter:     userFilter,
-				Attributes: []string{"objectClass"},
-				SizeLimit:  1,
-				TimeLimit:  gm.timeout,
-			})
-			if err != nil {
-				tflog.SubsystemWarn(gm.ctx, "ldap", "Failed to search for member as user", map[string]any{
-					"member_dn": memberDN,
-					"error":     err.Error(),
-				})
-				continue
-			}
-
-			if len(userResults.Entries) > 0 {
-				// This is a user, add it to our set
-				userDNs[memberDN] = true
-			} else {
-				// Neither group nor user, log and skip
-				tflog.SubsystemDebug(gm.ctx, "ldap", "Member is neither group nor user, skipping", map[string]any{
-					"member_dn": memberDN,
-				})
-			}
-		}
-	}
-
-	return nil
+	return userDNs, nil
 }

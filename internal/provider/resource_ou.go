@@ -45,7 +45,7 @@ type OUResourceModel struct {
 	Path        customtypes.DNStringValue `tfsdk:"path"`        // Required - Parent container DN
 	Description types.String              `tfsdk:"description"` // Optional - OU description
 	Protected   types.Bool                `tfsdk:"protected"`   // Optional+Computed+Default: false
-	ManagedBy   types.String              `tfsdk:"managed_by"`  // Optional+Computed - managedBy attribute
+	ManagedBy   customtypes.DNStringValue `tfsdk:"managed_by"`  // Optional+Computed - managedBy attribute
 	// Computed attributes
 	DN   customtypes.DNStringValue `tfsdk:"dn"`   // Computed - Full Distinguished Name
 	GUID types.String              `tfsdk:"guid"` // Computed - GUID string (same as ID)
@@ -104,7 +104,8 @@ func (r *OUResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				MarkdownDescription: "Distinguished Name (DN) of the user or computer that manages this organizational unit. " +
 					"Must be a valid DN format (e.g., `CN=User,OU=Users,DC=example,DC=com`). " +
 					"Omit (or set to `null`) to clear; AD treats an absent attribute as unset.",
-				Optional: true,
+				Optional:   true,
+				CustomType: customtypes.DNStringType{},
 				Validators: []validator.String{
 					validators.IsValidDN(),
 				},
@@ -335,7 +336,7 @@ func (r *OUResource) Update(ctx context.Context, req resource.UpdateRequest, res
 	}
 
 	// Check for path changes (triggers OU move)
-	if !data.Path.Equal(currentData.Path) {
+	if !customtypes.DNEqual(ctx, data.Path, currentData.Path) {
 		pathValue := data.Path.ValueString()
 		updateReq.Path = &pathValue
 		hasChanges = true
@@ -346,7 +347,7 @@ func (r *OUResource) Update(ctx context.Context, req resource.UpdateRequest, res
 	// against a state holding the prior DN; helpers.StringChanged emits &""
 	// as the LDAP clear signal in that case. plan == state → no-op; plan
 	// has a value → &value.
-	if helpers.StringChanged(data.ManagedBy, currentData.ManagedBy, &updateReq.ManagedBy) {
+	if !customtypes.DNEqual(ctx, data.ManagedBy, currentData.ManagedBy) && helpers.StringChanged(data.ManagedBy.StringValue, currentData.ManagedBy.StringValue, &updateReq.ManagedBy) {
 		hasChanges = true
 	}
 
@@ -501,7 +502,7 @@ func (r *OUResource) updateModelFromOU(ctx context.Context, model *OUResourceMod
 
 	// Handle optional description and managedBy
 	model.Description = helpers.StringOrNull(ou.Description)
-	model.ManagedBy = helpers.StringOrNull(ou.ManagedBy)
+	model.ManagedBy = dnOrNull(ctx, ou.ManagedBy)
 }
 
 // getOUManager creates an OUManager instance with base DN lookup.

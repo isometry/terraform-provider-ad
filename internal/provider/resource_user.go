@@ -101,15 +101,15 @@ type UserResourceModel struct {
 	Country       types.String `tfsdk:"country"`
 	POBox         types.String `tfsdk:"po_box"`
 
-	Title          types.String `tfsdk:"title"`
-	Department     types.String `tfsdk:"department"`
-	Company        types.String `tfsdk:"company"`
-	Manager        types.String `tfsdk:"manager"`
-	EmployeeID     types.String `tfsdk:"employee_id"`
-	EmployeeNumber types.String `tfsdk:"employee_number"`
-	Office         types.String `tfsdk:"office"`
-	Division       types.String `tfsdk:"division"`
-	Organization   types.String `tfsdk:"organization"`
+	Title          types.String              `tfsdk:"title"`
+	Department     types.String              `tfsdk:"department"`
+	Company        types.String              `tfsdk:"company"`
+	Manager        customtypes.DNStringValue `tfsdk:"manager"`
+	EmployeeID     types.String              `tfsdk:"employee_id"`
+	EmployeeNumber types.String              `tfsdk:"employee_number"`
+	Office         types.String              `tfsdk:"office"`
+	Division       types.String              `tfsdk:"division"`
+	Organization   types.String              `tfsdk:"organization"`
 
 	HomeDirectory types.String `tfsdk:"home_directory"`
 	HomeDrive     types.String `tfsdk:"home_drive"`
@@ -442,6 +442,7 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			"manager": schema.StringAttribute{
 				MarkdownDescription: "The Distinguished Name of the user's manager.",
 				Optional:            true,
+				CustomType:          customtypes.DNStringType{},
 				Validators: []validator.String{
 					validators.IsValidDN(),
 				},
@@ -1148,7 +1149,7 @@ func (r *UserResource) modelToCreateRequest(model *UserResourceModel) *ldapclien
 	req.Title = helpers.GetString(model.Title)
 	req.Department = helpers.GetString(model.Department)
 	req.Company = helpers.GetString(model.Company)
-	req.Manager = helpers.GetString(model.Manager)
+	req.Manager = helpers.GetString(model.Manager.StringValue)
 	req.EmployeeID = helpers.GetString(model.EmployeeID)
 	req.EmployeeNumber = helpers.GetString(model.EmployeeNumber)
 	req.Office = helpers.GetString(model.Office)
@@ -1170,7 +1171,7 @@ func (r *UserResource) buildUpdateRequest(plan, state *UserResourceModel) *ldapc
 	hasChanges := false
 
 	// Check container change (triggers move)
-	if !plan.Container.Equal(state.Container) {
+	if !customtypes.DNEqual(context.Background(), plan.Container, state.Container) {
 		container := plan.Container.ValueString()
 		updateReq.Container = &container
 		hasChanges = true
@@ -1218,7 +1219,7 @@ func (r *UserResource) buildUpdateRequest(plan, state *UserResourceModel) *ldapc
 	hasChanges = helpers.StringChanged(plan.Title, state.Title, &updateReq.Title) || hasChanges
 	hasChanges = helpers.StringChanged(plan.Department, state.Department, &updateReq.Department) || hasChanges
 	hasChanges = helpers.StringChanged(plan.Company, state.Company, &updateReq.Company) || hasChanges
-	hasChanges = helpers.StringChanged(plan.Manager, state.Manager, &updateReq.Manager) || hasChanges
+	hasChanges = (!customtypes.DNEqual(context.Background(), plan.Manager, state.Manager) && helpers.StringChanged(plan.Manager.StringValue, state.Manager.StringValue, &updateReq.Manager)) || hasChanges
 	hasChanges = helpers.StringChanged(plan.EmployeeID, state.EmployeeID, &updateReq.EmployeeID) || hasChanges
 	hasChanges = helpers.StringChanged(plan.EmployeeNumber, state.EmployeeNumber, &updateReq.EmployeeNumber) || hasChanges
 	hasChanges = helpers.StringChanged(plan.Office, state.Office, &updateReq.Office) || hasChanges
@@ -1291,7 +1292,7 @@ func (r *UserResource) userToModel(ctx context.Context, user *ldapclient.User, m
 	model.Title = helpers.StringOrNull(user.Title)
 	model.Department = helpers.StringOrNull(user.Department)
 	model.Company = helpers.StringOrNull(user.Company)
-	model.Manager = helpers.StringOrNull(user.Manager)
+	model.Manager = dnOrNull(ctx, user.Manager)
 	model.EmployeeID = helpers.StringOrNull(user.EmployeeID)
 	model.EmployeeNumber = helpers.StringOrNull(user.EmployeeNumber)
 	model.Office = helpers.StringOrNull(user.Office)

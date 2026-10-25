@@ -71,6 +71,7 @@ type MemberNormalizer struct {
 	baseDN       string
 	cacheManager *CacheManager // Reference to shared cache
 	timeout      time.Duration
+	netbios      netbiosResolver
 }
 
 // NewMemberNormalizer creates a new member identifier normalizer.
@@ -448,13 +449,9 @@ func (m *MemberNormalizer) resolveSAM(sam string) (ResolvedIdentifier, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
 	defer cancel()
 
-	// Extract username from DOMAIN\username format
-	username := sam
-	if strings.Contains(sam, "\\") {
-		parts := strings.SplitN(sam, "\\", 2)
-		if len(parts) == 2 {
-			username = parts[1]
-		}
+	username, err := m.samUsername(ctx, sam)
+	if err != nil {
+		return ResolvedIdentifier{}, err
 	}
 
 	// Search by sAMAccountName

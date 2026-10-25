@@ -489,6 +489,9 @@ func TestMemberNormalizer_Resolve_SAM(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if strings.Contains(tt.sam, "\\") {
+				mockNetBIOS(mockClient, "DOMAIN")
+			}
 			// Mock the SAM search
 			mockClient.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
 				return req.BaseDN == "dc=example,dc=com" &&

@@ -1202,3 +1202,48 @@ func groupUniqueSuffix() string {
 }
 
 // Note: testAccPreCheck is defined in provider_test.go
+
+// TestAccGroupResource_dnValueCaseInsensitive guards against "inconsistent
+// result after apply" and permanent diffs when DN attribute values are written
+// in a different case from AD's spelling (container, managed_by).
+func TestAccGroupResource_dnValueCaseInsensitive(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccGroupResourceConfig_lowerCaseDNs("tf-test-group-dncase", "TFTestGroupDNCase"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("ad_group.test", "id"),
+					resource.TestCheckResourceAttrSet("ad_group.test", "managed_by"),
+				),
+			},
+			// Same config again: no diff (permanent-diff symptom).
+			{
+				Config:   testAccGroupResourceConfig_lowerCaseDNs("tf-test-group-dncase", "TFTestGroupDNCase"),
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+func testAccGroupResourceConfig_lowerCaseDNs(name, samName string) string {
+	return fmt.Sprintf(`
+%s
+
+%s
+
+resource "ad_group" "manager" {
+  name             = "%[3]s-manager"
+  sam_account_name = "%[4]sManager"
+  container        = "%[5]s,${data.ad_rootdse.test.default_naming_context}"
+}
+
+resource "ad_group" "test" {
+  name             = %[3]q
+  sam_account_name = %[4]q
+  container        = lower("%[5]s,${data.ad_rootdse.test.default_naming_context}")
+  managed_by       = lower(ad_group.manager.dn)
+}
+`, testProviderConfig(), testRootDSEDataSource(), name, samName, DefaultTestContainer)
+}
