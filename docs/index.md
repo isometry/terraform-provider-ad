@@ -292,7 +292,7 @@ provider "ad" {
 
 ### Optional
 
-- `base_dn` (String) Base DN for LDAP searches (e.g., `dc=example,dc=com`). If not specified, will be automatically discovered from the root DSE. Can be set via the `AD_BASE_DN` environment variable.
+- `base_dn` (String) Base DN for LDAP searches (e.g., `dc=example,dc=com`). When set, the value is used verbatim as the base for searches by all resources and data sources and for cache warming (a wrong value makes searches fail). If not specified, the domain's default naming context is discovered from the root DSE. Can be set via the `AD_BASE_DN` environment variable.
 - `connect_timeout` (Number) Connection timeout in seconds. Defaults to `30`. Valid range: 1–2147483647 seconds. Can be set via the `AD_CONNECT_TIMEOUT` environment variable.
 - `domain` (String) Active Directory domain name for SRV-based discovery (e.g., `example.com`). Mutually exclusive with `ldap_url`. Can be set via the `AD_DOMAIN` environment variable.
 - `ignore_missing_members` (Boolean) When `true`, member identifiers that cannot be resolved (e.g., deleted AD objects) emit warnings instead of errors during planning. Defaults to `false`. Can be set via the `AD_IGNORE_MISSING_MEMBERS` environment variable.
