@@ -183,17 +183,17 @@ func (om *OUManager) CreateOU(req *CreateOURequest) (*OU, error) {
 	// Retrieve the created OU to get its GUID and other computed attributes
 	ou, err := om.getOUByDN(ouDN)
 	if err != nil {
-		return nil, WrapError("retrieve_created_ou", err)
+		return nil, rollbackCreate(om.ctx, om.client, ouDN, "retrieve_created_ou", err)
 	}
 
 	// Set protection if requested. Re-read so Protected reflects server state.
 	if req.Protected {
 		if err := om.SetOUProtection(ouDN, true); err != nil {
-			return nil, WrapError("set_ou_protection", err)
+			return nil, om.rollbackCreateOU(ouDN, "set_ou_protection", err)
 		}
 		refreshed, err := om.getOUByDN(ouDN)
 		if err != nil {
-			return nil, WrapError("refresh_ou_after_protection", err)
+			return nil, om.rollbackCreateOU(ouDN, "refresh_ou_after_protection", err)
 		}
 		ou = refreshed
 	}
