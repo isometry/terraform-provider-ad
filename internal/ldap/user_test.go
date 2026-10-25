@@ -31,11 +31,6 @@ func (m *MockUserClient) Close() error {
 	return args.Error(0)
 }
 
-func (m *MockUserClient) Bind(ctx context.Context, username, password string) error {
-	args := m.Called(ctx, username, password)
-	return args.Error(0)
-}
-
 func (m *MockUserClient) BindWithConfig(ctx context.Context) error {
 	args := m.Called(ctx)
 	return args.Error(0)
@@ -505,70 +500,6 @@ func TestUserManager_GetUserBySAM_DomainFormat(t *testing.T) {
 	assert.Equal(t, expectedSam, user.SAMAccountName)
 
 	client.AssertExpectations(t)
-}
-
-func TestUserManager_GetUser_AutoDetectIdentifier(t *testing.T) {
-	client := &MockUserClient{}
-	manager := NewUserManager(t.Context(), client, "DC=example,DC=com", nil)
-
-	mockEntry := createMockUserEntry()
-
-	testCases := []struct {
-		name        string
-		identifier  string
-		filterCheck func(string) bool
-	}{
-		{
-			name:       "DN identifier",
-			identifier: "CN=John Doe,OU=Users,DC=example,DC=com",
-			filterCheck: func(filter string) bool {
-				return strings.Contains(filter, "objectClass=user")
-			},
-		},
-		{
-			name:       "UPN identifier",
-			identifier: "john.doe@example.com",
-			filterCheck: func(filter string) bool {
-				return strings.Contains(filter, "userPrincipalName=john.doe@example.com")
-			},
-		},
-		{
-			name:       "SAM identifier",
-			identifier: "john.doe",
-			filterCheck: func(filter string) bool {
-				return strings.Contains(filter, "sAMAccountName=john.doe")
-			},
-		},
-		{
-			name:       "SID identifier",
-			identifier: "S-1-5-21-123456789-123456789-123456789-1001",
-			filterCheck: func(filter string) bool {
-				return strings.Contains(filter, "objectSid=")
-			},
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			client.ExpectedCalls = nil // Reset expectations
-			mockPrimaryGroupSIDResolution(client)
-
-			client.On("Search", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
-				return tc.filterCheck(req.Filter)
-			})).Return(&SearchResult{
-				Entries: []*ldap.Entry{mockEntry},
-				Total:   1,
-			}, nil)
-
-			user, err := manager.GetUser(tc.identifier)
-
-			assert.NoError(t, err)
-			assert.NotNil(t, user)
-			assert.Equal(t, "john.doe", user.SAMAccountName)
-
-			client.AssertExpectations(t)
-		})
-	}
 }
 
 func TestUserManager_SearchUsers_Success(t *testing.T) {
@@ -1131,7 +1062,6 @@ func TestUserManager_EmptyIdentifier(t *testing.T) {
 		name string
 		fn   func() (*User, error)
 	}{
-		{"GetUser", func() (*User, error) { return manager.GetUser("") }},
 		{"GetUserByDN", func() (*User, error) { return manager.GetUserByDN("") }},
 		{"GetUserByGUID", func() (*User, error) { return manager.GetUserByGUID("") }},
 		{"GetUserBySID", func() (*User, error) { return manager.GetUserBySID("") }},

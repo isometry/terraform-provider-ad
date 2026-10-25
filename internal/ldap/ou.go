@@ -93,32 +93,6 @@ func (om *OUManager) BuildOUDN(name, parentDN string) string {
 	return fmt.Sprintf("OU=%s,%s", escapedName, parentDN)
 }
 
-// ValidateOUHierarchy validates that an OU can be created or moved within the hierarchy.
-func (om *OUManager) ValidateOUHierarchy(ouDN, parentDN string) error {
-	if ouDN == "" || parentDN == "" {
-		return fmt.Errorf("OU DN and parent DN cannot be empty")
-	}
-
-	// Parse both DNs to validate syntax
-	parsedOU, err := ldap.ParseDN(ouDN)
-	if err != nil {
-		return fmt.Errorf("invalid OU DN syntax: %w", err)
-	}
-
-	parsedParent, err := ldap.ParseDN(parentDN)
-	if err != nil {
-		return fmt.Errorf("invalid parent DN syntax: %w", err)
-	}
-
-	// Verify that the parent portion of the OU DN matches the parent DN
-	ouParentDN := &ldap.DN{RDNs: parsedOU.RDNs[1:]}
-	if len(parsedOU.RDNs) <= len(parsedParent.RDNs) || !ouParentDN.EqualFold(parsedParent) {
-		return fmt.Errorf("OU DN does not belong to the specified parent")
-	}
-
-	return nil
-}
-
 // ValidateOURequest validates an OU creation request.
 func (om *OUManager) ValidateOURequest(req *CreateOURequest) error {
 	if req == nil {
@@ -701,63 +675,4 @@ func (om *OUManager) isOUProtected(raw []byte) bool {
 		return false
 	}
 	return sd.HasDenyDeleteEveryoneACE()
-}
-
-// ListOUsByContainer lists all OUs in a specific container.
-func (om *OUManager) ListOUsByContainer(ctx context.Context, containerDN string) ([]*OU, error) {
-	if containerDN == "" {
-		containerDN = om.baseDN
-	}
-
-	filter := "(objectClass=organizationalUnit)"
-	attributes := om.getAllOUAttributes()
-
-	searchReq := &SearchRequest{
-		BaseDN:     containerDN,
-		Scope:      ScopeWholeSubtree,
-		Filter:     filter,
-		Attributes: attributes,
-		TimeLimit:  om.timeout,
-	}
-
-	result, err := om.client.Search(om.ctx, searchReq)
-	if err != nil {
-		return nil, WrapError("list_ous_by_container", err)
-	}
-
-	ous := make([]*OU, 0, len(result.Entries))
-	for _, entry := range result.Entries {
-		ou, err := om.entryToOU(entry)
-		if err != nil {
-			continue // Skip malformed entries
-		}
-		ous = append(ous, ou)
-	}
-
-	return ous, nil
-}
-
-// GetOUStats returns statistics about OUs in the directory.
-func (om *OUManager) GetOUStats(ctx context.Context) (map[string]int, error) {
-	stats := make(map[string]int)
-
-	// Count total OUs
-	allOUs, err := om.SearchOUs("", "")
-	if err != nil {
-		return nil, WrapError("get_ou_stats", err)
-	}
-
-	stats["total"] = len(allOUs)
-
-	// Count protected vs unprotected
-	protectedCount := 0
-	for _, ou := range allOUs {
-		if ou.Protected {
-			protectedCount++
-		}
-	}
-	stats["protected"] = protectedCount
-	stats["unprotected"] = len(allOUs) - protectedCount
-
-	return stats, nil
 }

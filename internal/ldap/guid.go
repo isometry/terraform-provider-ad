@@ -172,28 +172,6 @@ func (g *GUIDHandler) GUIDToSearchFilter(guidString string) (string, error) {
 	return filter, nil
 }
 
-// GUIDToHexSearchFilter creates an LDAP search filter using hex-encoded GUID.
-// This is an alternative format that some LDAP implementations support.
-func (g *GUIDHandler) GUIDToHexSearchFilter(guidString string) (string, error) {
-	guidBytes, err := g.StringToGUIDBytes(guidString)
-	if err != nil {
-		return "", fmt.Errorf("failed to convert GUID to bytes: %w", err)
-	}
-
-	// Create hex-encoded search filter
-	hexString := hex.EncodeToString(guidBytes)
-
-	// Format as hex with backslash escaping for each byte
-	var filterBytes []string
-	for i := 0; i < len(hexString); i += 2 {
-		filterBytes = append(filterBytes, "\\"+hexString[i:i+2])
-	}
-
-	filter := fmt.Sprintf("(objectGUID=%s)", strings.Join(filterBytes, ""))
-
-	return filter, nil
-}
-
 // ExtractGUID extracts the objectGUID from an LDAP entry and returns it as a string.
 func (g *GUIDHandler) ExtractGUID(entry *ldap.Entry) (string, error) {
 	if entry == nil {
@@ -223,21 +201,6 @@ func (g *GUIDHandler) ExtractGUIDSafe(entry *ldap.Entry) string {
 	return guid
 }
 
-// CompareGUIDs compares two GUID strings for equality, handling different formats.
-func (g *GUIDHandler) CompareGUIDs(guid1, guid2 string) (bool, error) {
-	normalized1, err := g.NormalizeGUID(guid1)
-	if err != nil {
-		return false, fmt.Errorf("failed to normalize first GUID: %w", err)
-	}
-
-	normalized2, err := g.NormalizeGUID(guid2)
-	if err != nil {
-		return false, fmt.Errorf("failed to normalize second GUID: %w", err)
-	}
-
-	return strings.EqualFold(normalized1, normalized2), nil
-}
-
 // GenerateGUIDSearchRequest creates a SearchRequest for finding an object by GUID.
 func (g *GUIDHandler) GenerateGUIDSearchRequest(baseDN, guidString string) (*SearchRequest, error) {
 	filter, err := g.GUIDToSearchFilter(guidString)
@@ -252,47 +215,6 @@ func (g *GUIDHandler) GenerateGUIDSearchRequest(baseDN, guidString string) (*Sea
 		Attributes: []string{"objectGUID", "distinguishedName", "objectClass"},
 		SizeLimit:  1, // GUID should be unique
 	}, nil
-}
-
-// ValidateGUIDBytes validates that bytes represent a valid GUID.
-func (g *GUIDHandler) ValidateGUIDBytes(guidBytes []byte) error {
-	if len(guidBytes) != GUIDBytesLength {
-		return fmt.Errorf("invalid GUID byte length: expected %d, got %d", GUIDBytesLength, len(guidBytes))
-	}
-
-	// Check for nil GUID (all zeros)
-	allZero := true
-	for _, b := range guidBytes {
-		if b != 0 {
-			allZero = false
-			break
-		}
-	}
-
-	if allZero {
-		return fmt.Errorf("GUID cannot be all zeros")
-	}
-
-	return nil
-}
-
-// ParseGUIDFromDN attempts to extract a GUID from a distinguished name if it contains one.
-// Some DNs might include GUIDs in special formats.
-func (g *GUIDHandler) ParseGUIDFromDN(dn string) (string, bool) {
-	// Look for GUID patterns in the DN
-	if hyphenatedGUIDRegex.MatchString(dn) {
-		return dn, true
-	}
-
-	// Look for compact GUID patterns
-	if compactGUIDRegex.MatchString(dn) {
-		normalized, err := g.NormalizeGUID(dn)
-		if err == nil {
-			return normalized, true
-		}
-	}
-
-	return "", false
 }
 
 // ExtendedDNGUIDToString converts the guid_value of an Active Directory

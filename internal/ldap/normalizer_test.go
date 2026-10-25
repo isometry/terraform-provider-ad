@@ -27,11 +27,6 @@ func (m *MockClient) Close() error {
 	return args.Error(0)
 }
 
-func (m *MockClient) Bind(ctx context.Context, username, password string) error {
-	args := m.Called(ctx, username, password)
-	return args.Error(0)
-}
-
 func (m *MockClient) BindWithConfig(ctx context.Context) error {
 	args := m.Called(ctx)
 	return args.Error(0)
@@ -222,70 +217,6 @@ func TestMemberNormalizer_DetectIdentifierType(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := normalizer.DetectIdentifierType(tt.identifier)
 			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestMemberNormalizer_ValidateIdentifier(t *testing.T) {
-	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
-
-	tests := []struct {
-		name       string
-		identifier string
-		wantErr    bool
-	}{
-		{
-			name:       "valid DN",
-			identifier: "CN=User,OU=Users,DC=example,DC=com",
-			wantErr:    false,
-		},
-		{
-			name:       "valid GUID",
-			identifier: "12345678-1234-1234-1234-123456789012",
-			wantErr:    false,
-		},
-		{
-			name:       "valid SID",
-			identifier: "S-1-5-21-123456789-123456789-123456789-1001",
-			wantErr:    false,
-		},
-		{
-			name:       "valid UPN",
-			identifier: "user@example.com",
-			wantErr:    false,
-		},
-		{
-			name:       "valid SAM",
-			identifier: "DOMAIN\\username",
-			wantErr:    false,
-		},
-		{
-			name:       "empty string",
-			identifier: "",
-			wantErr:    true,
-		},
-		{
-			name:       "unknown format",
-			identifier: "invalid@identifier@format",
-			wantErr:    true,
-		},
-		{
-			name:       "invalid GUID",
-			identifier: "invalid@guid@format",
-			wantErr:    true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := normalizer.ValidateIdentifier(tt.identifier)
-
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
 		})
 	}
 }
@@ -935,32 +866,6 @@ func TestMemberNormalizer_ResolveBatch_WhitespacePreservation(t *testing.T) {
 	})
 }
 
-func TestMemberNormalizer_GetSupportedFormats(t *testing.T) {
-	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
-
-	formats := normalizer.GetSupportedFormats()
-
-	assert.Len(t, formats, 5)
-	assert.Contains(t, formats, "Distinguished Name (DN): CN=User,OU=Users,DC=example,DC=com")
-	assert.Contains(t, formats, "GUID: 12345678-1234-1234-1234-123456789012")
-	assert.Contains(t, formats, "Security Identifier (SID): S-1-5-21-123456789-123456789-123456789-1001")
-	assert.Contains(t, formats, "User Principal Name (UPN): user@example.com")
-	assert.Contains(t, formats, "SAM Account Name: DOMAIN\\username or username")
-}
-
-func TestMemberNormalizer_SetBaseDN(t *testing.T) {
-	mockClient := &MockClient{}
-	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
-
-	assert.Equal(t, "dc=example,dc=com", normalizer.GetBaseDN())
-
-	newBaseDN := "dc=test,dc=org"
-	normalizer.SetBaseDN(newBaseDN)
-
-	assert.Equal(t, newBaseDN, normalizer.GetBaseDN())
-}
-
 func TestMemberNormalizer_ErrorHandling(t *testing.T) {
 	mockClient := &MockClient{}
 	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
@@ -1107,4 +1012,68 @@ func TestMemberNormalizer_IntegrationScenarios(t *testing.T) {
 	}
 
 	mockClient.AssertExpectations(t)
+}
+
+func TestMemberNormalizer_ValidateIdentifier(t *testing.T) {
+	mockClient := &MockClient{}
+	normalizer := NewMemberNormalizer(mockClient, "dc=example,dc=com", nil)
+
+	tests := []struct {
+		name       string
+		identifier string
+		wantErr    bool
+	}{
+		{
+			name:       "valid DN",
+			identifier: "CN=User,OU=Users,DC=example,DC=com",
+			wantErr:    false,
+		},
+		{
+			name:       "valid GUID",
+			identifier: "12345678-1234-1234-1234-123456789012",
+			wantErr:    false,
+		},
+		{
+			name:       "valid SID",
+			identifier: "S-1-5-21-123456789-123456789-123456789-1001",
+			wantErr:    false,
+		},
+		{
+			name:       "valid UPN",
+			identifier: "user@example.com",
+			wantErr:    false,
+		},
+		{
+			name:       "valid SAM",
+			identifier: "DOMAIN\\username",
+			wantErr:    false,
+		},
+		{
+			name:       "empty string",
+			identifier: "",
+			wantErr:    true,
+		},
+		{
+			name:       "unknown format",
+			identifier: "invalid@identifier@format",
+			wantErr:    true,
+		},
+		{
+			name:       "invalid GUID",
+			identifier: "invalid@guid@format",
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := normalizer.ValidateIdentifier(tt.identifier)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
 }

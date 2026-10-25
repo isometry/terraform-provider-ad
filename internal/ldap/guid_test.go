@@ -332,44 +332,6 @@ func TestGUIDHandler_GUIDToSearchFilter(t *testing.T) {
 	}
 }
 
-func TestGUIDHandler_GUIDToHexSearchFilter(t *testing.T) {
-	handler := NewGUIDHandler()
-
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-		wantErr  bool
-	}{
-		{
-			name:  "valid GUID",
-			input: "12345678-1234-1234-1234-123456789012",
-			// AD bytes: [0x78, 0x56, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12]
-			expected: "(objectGUID=\\78\\56\\34\\12\\34\\12\\34\\12\\12\\34\\12\\34\\56\\78\\90\\12)",
-			wantErr:  false,
-		},
-		{
-			name:    "invalid GUID",
-			input:   "invalid-guid",
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := handler.GUIDToHexSearchFilter(tt.input)
-
-			if tt.wantErr {
-				assert.Error(t, err)
-				return
-			}
-
-			require.NoError(t, err)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestGUIDHandler_ExtractGUID(t *testing.T) {
 	handler := NewGUIDHandler()
 
@@ -513,73 +475,6 @@ func TestGUIDHandler_ExtractGUIDSafe(t *testing.T) {
 	}
 }
 
-func TestGUIDHandler_CompareGUIDs(t *testing.T) {
-	handler := NewGUIDHandler()
-
-	tests := []struct {
-		name     string
-		guid1    string
-		guid2    string
-		expected bool
-		wantErr  bool
-	}{
-		{
-			name:     "identical GUIDs",
-			guid1:    "12345678-1234-1234-1234-123456789012",
-			guid2:    "12345678-1234-1234-1234-123456789012",
-			expected: true,
-			wantErr:  false,
-		},
-		{
-			name:     "different case",
-			guid1:    "12345678-1234-1234-1234-123456789012",
-			guid2:    "12345678-1234-1234-1234-123456789012",
-			expected: true,
-			wantErr:  false,
-		},
-		{
-			name:     "hyphenated vs compact",
-			guid1:    "12345678-1234-1234-1234-123456789012",
-			guid2:    "12345678123412341234123456789012",
-			expected: true,
-			wantErr:  false,
-		},
-		{
-			name:     "different GUIDs",
-			guid1:    "12345678-1234-1234-1234-123456789012",
-			guid2:    "87654321-4321-4321-4321-210987654321",
-			expected: false,
-			wantErr:  false,
-		},
-		{
-			name:    "invalid first GUID",
-			guid1:   "invalid-guid",
-			guid2:   "12345678-1234-1234-1234-123456789012",
-			wantErr: true,
-		},
-		{
-			name:    "invalid second GUID",
-			guid1:   "12345678-1234-1234-1234-123456789012",
-			guid2:   "invalid-guid",
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := handler.CompareGUIDs(tt.guid1, tt.guid2)
-
-			if tt.wantErr {
-				assert.Error(t, err)
-				return
-			}
-
-			require.NoError(t, err)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestGUIDHandler_GenerateGUIDSearchRequest(t *testing.T) {
 	handler := NewGUIDHandler()
 
@@ -620,104 +515,6 @@ func TestGUIDHandler_GenerateGUIDSearchRequest(t *testing.T) {
 			assert.Contains(t, result.Attributes, "objectGUID")
 			assert.Contains(t, result.Attributes, "distinguishedName")
 			assert.Contains(t, result.Attributes, "objectClass")
-		})
-	}
-}
-
-func TestGUIDHandler_ValidateGUIDBytes(t *testing.T) {
-	handler := NewGUIDHandler()
-
-	validBytes := []byte{
-		0x78, 0x56, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12,
-		0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12,
-	}
-
-	tests := []struct {
-		name    string
-		input   []byte
-		wantErr bool
-	}{
-		{
-			name:    "valid bytes",
-			input:   validBytes,
-			wantErr: false,
-		},
-		{
-			name:    "invalid length - too short",
-			input:   []byte{0x12, 0x34},
-			wantErr: true,
-		},
-		{
-			name:    "invalid length - too long",
-			input:   append(validBytes, 0x00),
-			wantErr: true,
-		},
-		{
-			name:    "all zeros",
-			input:   make([]byte, 16),
-			wantErr: true,
-		},
-		{
-			name:    "nil bytes",
-			input:   nil,
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := handler.ValidateGUIDBytes(tt.input)
-
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestGUIDHandler_ParseGUIDFromDN(t *testing.T) {
-	handler := NewGUIDHandler()
-
-	tests := []struct {
-		name     string
-		dn       string
-		expected string
-		found    bool
-	}{
-		{
-			name:     "DN with no GUID",
-			dn:       "cn=user,ou=users,dc=example,dc=com",
-			expected: "",
-			found:    false,
-		},
-		{
-			name:     "GUID as DN component",
-			dn:       "12345678-1234-1234-1234-123456789012",
-			expected: "12345678-1234-1234-1234-123456789012",
-			found:    true,
-		},
-		{
-			name:     "compact GUID as DN component",
-			dn:       "12345678123412341234123456789012",
-			expected: "12345678-1234-1234-1234-123456789012",
-			found:    true,
-		},
-		{
-			name:     "invalid GUID format",
-			dn:       "invalid-guid-format",
-			expected: "",
-			found:    false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, found := handler.ParseGUIDFromDN(tt.dn)
-
-			assert.Equal(t, tt.found, found)
-			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
@@ -897,11 +694,4 @@ func TestActiveDirectoryGUIDEncoding(t *testing.T) {
 	resultString, err := handler.GUIDBytesToString(adBytes)
 	require.NoError(t, err)
 	assert.Equal(t, guidString, resultString)
-
-	// Verify the hex search filter format
-	hexFilter, err := handler.GUIDToHexSearchFilter(guidString)
-	require.NoError(t, err)
-
-	expectedHexFilter := "(objectGUID=\\67\\45\\23\\01\\ab\\89\\ef\\cd\\01\\23\\45\\67\\89\\ab\\cd\\ef)"
-	assert.Equal(t, expectedHexFilter, hexFilter)
 }

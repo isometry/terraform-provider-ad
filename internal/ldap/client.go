@@ -151,20 +151,6 @@ func (c *client) Close() error {
 	return c.pool.Close()
 }
 
-// Bind authenticates with the LDAP server.
-func (c *client) Bind(ctx context.Context, username, password string) error {
-	conn, err := c.pool.Get(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get connection: %w", err)
-	}
-	defer conn.Close()
-
-	// Perform bind operation with retry logic
-	return c.withRetry(ctx, func() error {
-		return conn.Conn().Bind(username, password)
-	})
-}
-
 // BindWithConfig performs authentication using the client's configuration.
 func (c *client) BindWithConfig(ctx context.Context) error {
 	if !c.config.HasAuthentication() {

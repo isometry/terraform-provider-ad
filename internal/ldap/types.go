@@ -99,9 +99,6 @@ type ConnectionPool interface {
 
 	// Stats returns pool statistics
 	Stats() PoolStats
-
-	// HealthCheck performs health checks on all connections
-	HealthCheck(ctx context.Context) error
 }
 
 // PoolStats provides statistics about the connection pool.
@@ -122,7 +119,6 @@ type Client interface {
 	Close() error
 
 	// Authentication
-	Bind(ctx context.Context, username, password string) error
 	BindWithConfig(ctx context.Context) error // Uses authentication from ConnectionConfig
 
 	// Basic operations

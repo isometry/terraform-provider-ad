@@ -129,7 +129,7 @@ func TestPrepareKerberosConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := prepareKerberosConfig(tt.config)
+			err := prepareKerberosConfigWithContext(t.Context(), tt.config)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -236,72 +236,7 @@ func TestBuildServicePrincipal(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := buildServicePrincipal(tt.cfg, tt.serverInfo)
-
-			if tt.expectError {
-				assert.Error(t, err)
-				if tt.errorMsg != "" {
-					assert.Contains(t, err.Error(), tt.errorMsg)
-				}
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tt.expected, result)
-			}
-		})
-	}
-}
-
-func TestExtractHostFromURL(t *testing.T) {
-	tests := []struct {
-		name        string
-		ldapURL     string
-		expected    string
-		expectError bool
-		errorMsg    string
-	}{
-		{
-			name:        "empty URL",
-			ldapURL:     "",
-			expectError: true,
-			errorMsg:    "LDAP URL cannot be empty",
-		},
-		{
-			name:        "invalid URL",
-			ldapURL:     "not-a-url",
-			expectError: true,
-			errorMsg:    "no hostname found in URL",
-		},
-		{
-			name:     "ldap URL",
-			ldapURL:  "ldap://dc1.example.com:389",
-			expected: "dc1.example.com",
-		},
-		{
-			name:     "ldaps URL",
-			ldapURL:  "ldaps://dc1.example.com:636",
-			expected: "dc1.example.com",
-		},
-		{
-			name:     "URL without port",
-			ldapURL:  "ldap://dc1.example.com",
-			expected: "dc1.example.com",
-		},
-		{
-			name:     "URL with IP",
-			ldapURL:  "ldaps://192.168.1.100:636",
-			expected: "192.168.1.100",
-		},
-		{
-			name:        "URL without hostname",
-			ldapURL:     "ldap://:389",
-			expectError: true,
-			errorMsg:    "no hostname found in URL",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := extractHostFromURL(tt.ldapURL)
+			result, err := buildServicePrincipalWithContext(t.Context(), tt.cfg, tt.serverInfo)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -423,7 +358,7 @@ func TestCreateGSSAPIClientConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := prepareKerberosConfig(tt.config)
+			err := prepareKerberosConfigWithContext(t.Context(), tt.config)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -627,7 +562,7 @@ func TestPrepareKerberosConfigEnhanced(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := prepareKerberosConfig(tt.config)
+			err := prepareKerberosConfigWithContext(t.Context(), tt.config)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -700,7 +635,7 @@ func TestCreateGSSAPIClientWithAutoDiscovery(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// This will fail in test environment since we don't have actual Kerberos infrastructure,
 			// but we're testing the decision logic for when to use auto-discovery vs file-based config
-			_, err := createGSSAPIClient(tt.config)
+			_, err := createGSSAPIClientWithContext(t.Context(), tt.config)
 
 			if tt.expectError {
 				assert.Error(t, err)

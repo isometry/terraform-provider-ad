@@ -40,7 +40,7 @@ func TestCreateGSSAPIClientMissingKrb5Conf(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := createGSSAPIClient(tt.config)
+			_, err := createGSSAPIClientWithContext(t.Context(), tt.config)
 
 			if tt.expectError {
 				assert.Error(t, err)

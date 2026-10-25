@@ -60,11 +60,6 @@ func (m *MockOUClient) Close() error {
 	return args.Error(0)
 }
 
-func (m *MockOUClient) Bind(ctx context.Context, username, password string) error {
-	args := m.Called(ctx, username, password)
-	return args.Error(0)
-}
-
 func (m *MockOUClient) BindWithConfig(ctx context.Context) error {
 	args := m.Called(ctx)
 	return args.Error(0)
@@ -188,60 +183,6 @@ func TestOUManager_BuildOUDN(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := manager.BuildOUDN(tt.ouName, tt.parentDN)
 			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestOUManager_ValidateOUHierarchy(t *testing.T) {
-	client := &MockOUClient{}
-	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
-
-	tests := []struct {
-		name     string
-		ouDN     string
-		parentDN string
-		wantErr  bool
-	}{
-		{
-			name:     "Valid hierarchy",
-			ouDN:     "OU=TestOU,dc=example,dc=com",
-			parentDN: "dc=example,dc=com",
-			wantErr:  false,
-		},
-		{
-			name:     "Valid nested hierarchy",
-			ouDN:     "OU=SubOU,OU=ParentOU,dc=example,dc=com",
-			parentDN: "OU=ParentOU,dc=example,dc=com",
-			wantErr:  false,
-		},
-		{
-			name:     "Invalid - same DN",
-			ouDN:     "dc=example,dc=com",
-			parentDN: "dc=example,dc=com",
-			wantErr:  true,
-		},
-		{
-			name:     "Invalid - wrong parent",
-			ouDN:     "OU=TestOU,OU=WrongParent,dc=example,dc=com",
-			parentDN: "OU=RightParent,dc=example,dc=com",
-			wantErr:  true,
-		},
-		{
-			name:     "Empty DNs",
-			ouDN:     "",
-			parentDN: "",
-			wantErr:  true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := manager.ValidateOUHierarchy(tt.ouDN, tt.parentDN)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
 		})
 	}
 }
@@ -539,7 +480,7 @@ func TestOUManager_UpdateOU(t *testing.T) {
 
 	// 2. Mock ModifyDN operation (rename)
 	client.On("ModifyDN", mock.Anything, mock.MatchedBy(func(req *ModifyDNRequest) bool {
-		return req.DN == "OU=TestOU,dc=example,dc=com" && RDNEqual(req.NewRDN, "OU=UpdatedOU")
+		return req.DN == "OU=TestOU,dc=example,dc=com" && strings.EqualFold(req.NewRDN, "OU=UpdatedOU")
 	})).Return(nil).Once()
 
 	// 3. Mock re-fetch after ModifyDN (inside renameAndMoveOU — result reused by UpdateOU)
@@ -829,59 +770,6 @@ func TestOUManager_GetOUChildren(t *testing.T) {
 	assert.Equal(t, "ChildOU", children[0].Name)
 	assert.Equal(t, "OU=ChildOU,OU=ParentOU,dc=example,dc=com", children[0].DistinguishedName)
 	assert.True(t, DNEqual("OU=ParentOU,DC=example,DC=com", children[0].Parent), "expected parent DN to match semantically, got %q", children[0].Parent)
-
-	client.AssertExpectations(t)
-}
-
-func TestOUManager_GetOUStats(t *testing.T) {
-	client := &MockOUClient{}
-	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
-
-	testGUIDBytes1 := []byte{0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12}
-	testGUIDBytes2 := []byte{0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0x90, 0x13}
-
-	// Create mock LDAP entries - one protected, one unprotected
-	entry1 := &ldap.Entry{
-		DN: "OU=ProtectedOU,dc=example,dc=com",
-		Attributes: []*ldap.EntryAttribute{
-			{Name: "objectGUID", Values: []string{string(testGUIDBytes1)}, ByteValues: [][]byte{testGUIDBytes1}},
-			{Name: "distinguishedName", Values: []string{"OU=ProtectedOU,dc=example,dc=com"}},
-			{Name: "ou", Values: []string{"ProtectedOU"}},
-			{Name: "nTSecurityDescriptor",
-				Values:     []string{string(buildTestSecurityDescriptor(t))},
-				ByteValues: [][]byte{buildTestSecurityDescriptor(t)}}, // Deny-delete ACE = protected
-		},
-	}
-
-	entry2 := &ldap.Entry{
-		DN: "OU=UnprotectedOU,dc=example,dc=com",
-		Attributes: []*ldap.EntryAttribute{
-			{Name: "objectGUID", Values: []string{string(testGUIDBytes2)}, ByteValues: [][]byte{testGUIDBytes2}},
-			{Name: "distinguishedName", Values: []string{"OU=UnprotectedOU,dc=example,dc=com"}},
-			{Name: "ou", Values: []string{"UnprotectedOU"}},
-		},
-	}
-
-	searchResult := &SearchResult{
-		Entries: []*ldap.Entry{entry1, entry2},
-		Total:   2,
-		HasMore: false,
-	}
-
-	// Mock search operation
-	client.On("SearchWithPaging", mock.Anything, mock.MatchedBy(func(req *SearchRequest) bool {
-		return req.Filter == "(objectClass=organizationalUnit)"
-	})).Return(searchResult, nil)
-
-	// Execute test
-	stats, err := manager.GetOUStats(t.Context())
-
-	// Assertions
-	require.NoError(t, err)
-	require.NotNil(t, stats)
-	assert.Equal(t, 2, stats["total"])
-	assert.Equal(t, 1, stats["protected"])
-	assert.Equal(t, 1, stats["unprotected"])
 
 	client.AssertExpectations(t)
 }

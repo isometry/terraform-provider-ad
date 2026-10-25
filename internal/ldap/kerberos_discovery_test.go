@@ -81,47 +81,6 @@ func TestGenerateRuntimeKrb5Conf(t *testing.T) {
 	})
 }
 
-func TestExtractRealmFromDomain(t *testing.T) {
-	tests := []struct {
-		name     string
-		domain   string
-		expected string
-	}{
-		{
-			name:     "simple domain",
-			domain:   "example.com",
-			expected: "EXAMPLE.COM",
-		},
-		{
-			name:     "subdomain",
-			domain:   "sub.example.com",
-			expected: "SUB.EXAMPLE.COM",
-		},
-		{
-			name:     "already uppercase",
-			domain:   "EXAMPLE.COM",
-			expected: "EXAMPLE.COM",
-		},
-		{
-			name:     "mixed case",
-			domain:   "Example.Com",
-			expected: "EXAMPLE.COM",
-		},
-		{
-			name:     "empty domain",
-			domain:   "",
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := extractRealmFromDomain(tt.domain)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestValidateKerberosAutoDiscoveryConfig(t *testing.T) {
 	ctx := t.Context()
 
@@ -135,18 +94,6 @@ func TestValidateKerberosAutoDiscoveryConfig(t *testing.T) {
 		err := validateKerberosAutoDiscoveryConfig(ctx, cfg)
 		assert.NoError(t, err)
 		assert.Equal(t, "EXAMPLE.COM", cfg.KerberosRealm)
-	})
-
-	t.Run("valid config with domain-derived realm", func(t *testing.T) {
-		cfg := &ConnectionConfig{
-			Domain:   "example.com",
-			Password: "testpass",
-			Username: "testuser",
-		}
-
-		err := validateKerberosAutoDiscoveryConfig(ctx, cfg)
-		assert.NoError(t, err)
-		assert.Equal(t, "EXAMPLE.COM", cfg.KerberosRealm) // Should be derived
 	})
 
 	t.Run("nil config", func(t *testing.T) {

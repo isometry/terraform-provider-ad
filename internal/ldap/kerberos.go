@@ -3,7 +3,6 @@ package ldap
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -95,12 +94,6 @@ func performKerberosAuthWithContext(ctx context.Context, conn *ldap.Conn, cfg *C
 	return nil
 }
 
-// createGSSAPIClient creates a GSSAPI client based on the configuration.
-// Priority order: credential cache → keytab → password.
-func createGSSAPIClient(cfg *ConnectionConfig) (ldap.GSSAPIClient, error) {
-	return createGSSAPIClientWithContext(context.Background(), cfg)
-}
-
 // createGSSAPIClientWithContext creates a GSSAPI client with logging context.
 func createGSSAPIClientWithContext(ctx context.Context, cfg *ConnectionConfig) (ldap.GSSAPIClient, error) {
 	var krb5confPath string
@@ -173,7 +166,7 @@ func createGSSAPIClientWithContext(ctx context.Context, cfg *ConnectionConfig) (
 		})
 
 		// Create GSSAPI client using the file-based configuration
-		return createGSSAPIClientWithFile(ctx, cfg, krb5confPath)
+		return createGSSAPIClientWithConfigPath(ctx, cfg, krb5confPath)
 	}
 }
 
@@ -190,11 +183,6 @@ func createGSSAPIClientWithRuntimeConfig(ctx context.Context, cfg *ConnectionCon
 	defer removeTempFile(tempFile)
 
 	return createGSSAPIClientWithConfigPath(ctx, cfg, tempFile)
-}
-
-// createGSSAPIClientWithFile creates a GSSAPI client using a krb5.conf file.
-func createGSSAPIClientWithFile(ctx context.Context, cfg *ConnectionConfig, krb5confPath string) (ldap.GSSAPIClient, error) {
-	return createGSSAPIClientWithConfigPath(ctx, cfg, krb5confPath)
 }
 
 // createGSSAPIClientWithConfigPath creates a GSSAPI client using a krb5 configuration file path.
@@ -242,12 +230,6 @@ func createGSSAPIClientWithConfigPath(ctx context.Context, cfg *ConnectionConfig
 	return nil, fmt.Errorf("no suitable credentials found for Kerberos authentication")
 }
 
-// buildServicePrincipal constructs the LDAP service principal name from server info.
-// If cfg.KerberosSPN is set, it overrides the automatic SPN construction.
-func buildServicePrincipal(cfg *ConnectionConfig, serverInfo *ServerInfo) (string, error) {
-	return buildServicePrincipalWithContext(context.Background(), cfg, serverInfo)
-}
-
 // buildServicePrincipalWithContext constructs the LDAP service principal name with logging context.
 func buildServicePrincipalWithContext(ctx context.Context, cfg *ConnectionConfig, serverInfo *ServerInfo) (string, error) {
 	if cfg == nil {
@@ -291,30 +273,6 @@ func buildServicePrincipalWithContext(ctx context.Context, cfg *ConnectionConfig
 	})
 
 	return spn, nil
-}
-
-// extractHostFromURL extracts hostname from LDAP URL for backward compatibility.
-func extractHostFromURL(ldapURL string) (string, error) {
-	if ldapURL == "" {
-		return "", fmt.Errorf("LDAP URL cannot be empty")
-	}
-
-	parsedURL, err := url.Parse(ldapURL)
-	if err != nil {
-		return "", fmt.Errorf("invalid LDAP URL: %w", err)
-	}
-
-	hostname := parsedURL.Hostname()
-	if hostname == "" {
-		return "", fmt.Errorf("no hostname found in URL: %s", ldapURL)
-	}
-
-	return hostname, nil
-}
-
-// prepareKerberosConfig validates and prepares Kerberos configuration.
-func prepareKerberosConfig(cfg *ConnectionConfig) error {
-	return prepareKerberosConfigWithContext(context.Background(), cfg)
 }
 
 // prepareKerberosConfigWithContext validates and prepares Kerberos configuration with logging context.
@@ -435,7 +393,7 @@ func generateExampleKrb5Conf(cfg *ConnectionConfig) string {
 	realm := cfg.KerberosRealm
 	// Try to extract hostname from LDAP URLs if available
 	// Look for domain in the config to build a reasonable example
-	kdcHost := fmt.Sprintf("dc.%s", strings.ToLower(strings.ReplaceAll(realm, ".", ".")))
+	kdcHost := fmt.Sprintf("dc.%s", strings.ToLower(realm))
 
 	// If we have LDAP URLs in the parent config, we could potentially extract from there
 	// but for now, we'll generate a reasonable example
@@ -457,8 +415,8 @@ func generateExampleKrb5Conf(cfg *ConnectionConfig) string {
 		realm,
 		realm,
 		kdcHost, kdcHost,
-		strings.ToLower(strings.ReplaceAll(realm, ".", ".")), realm,
-		strings.ToLower(strings.ReplaceAll(realm, ".", ".")), realm)
+		strings.ToLower(realm), realm,
+		strings.ToLower(realm), realm)
 }
 
 type kerberosCredential string
