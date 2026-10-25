@@ -146,6 +146,6 @@ output "created_structure" {
 - `description` (String) The description of the organizational unit.
 - `managed_by` (String) Distinguished Name (DN) of the user or computer that manages this organizational unit.
 - `parent` (String) The parent container DN of the OU.
-- `protected` (Boolean) Whether the OU is protected from accidental deletion.
+- `protected` (Boolean) Whether the OU is protected from accidental deletion, i.e. it has a non-inheritable Everyone deny-delete entry of its own. Inherited or inheritable (legacy) entries do not count.
 - `when_changed` (String) The timestamp when the OU was last modified (RFC3339 format).
 - `when_created` (String) The timestamp when the OU was created (RFC3339 format).

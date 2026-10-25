@@ -95,10 +95,12 @@ func (r *OUResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				},
 			},
 			"protected": schema.BoolAttribute{
-				MarkdownDescription: "Whether the OU is protected from accidental deletion. When true, the OU cannot be deleted until protection is disabled. Defaults to `false`.",
-				Optional:            true,
-				Computed:            true,
-				Default:             booldefault.StaticBool(false),
+				MarkdownDescription: "Whether the OU is protected from accidental deletion. When true, an Everyone deny-delete / delete-subtree entry is written on this OU itself; it is not inherited, so child objects are not protected. " +
+					"Only a non-inheritable explicit entry counts as protected: an OU protected by an earlier provider version with an inheritable entry is reported as unprotected and is rewritten as a non-inheritable entry on the next apply with `protected = true` (a one-time in-place update). " +
+					"The OU is unprotected before it is moved and protected again afterwards. Defaults to `false`.",
+				Optional: true,
+				Computed: true,
+				Default:  booldefault.StaticBool(false),
 			},
 			"managed_by": schema.StringAttribute{
 				MarkdownDescription: "Distinguished Name (DN) of the user or computer that manages this organizational unit. " +

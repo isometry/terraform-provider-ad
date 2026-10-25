@@ -330,7 +330,7 @@ func TestOUManager_CreateOU(t *testing.T) {
 	assert.Equal(t, "TestOU", result.Name)
 	assert.Equal(t, "Test OU Description", result.Description)
 	assert.Equal(t, "OU=TestOU,dc=example,dc=com", result.DistinguishedName)
-	assert.Equal(t, "dc=example,dc=com", result.Parent)
+	assert.True(t, DNEqual("dc=example,dc=com", result.Parent), "got %q", result.Parent)
 	assert.False(t, result.Protected)
 
 	client.AssertExpectations(t)
@@ -676,6 +676,244 @@ func TestOUManager_DeleteOU_Protected(t *testing.T) {
 	assert.Contains(t, err.Error(), "protected")
 
 	client.AssertExpectations(t)
+}
+
+var protTestGUIDBytes = []byte{0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12}
+
+const protTestGUID = "12345678-1234-1234-1234-123456789012"
+
+// protTestSD marshals an SD with one allow ACE plus the given deny-delete ACEs.
+func protTestSD(t *testing.T, deny ...ACE) []byte {
+	t.Helper()
+	sd := buildSD(false)
+	sd.DACL.ACEs = append(deny, sd.DACL.ACEs...)
+	raw, err := sd.Marshal()
+	require.NoError(t, err)
+	return raw
+}
+
+func protTestPlainACE() ACE {
+	sd := &SecurityDescriptor{}
+	sd.AddDenyDeleteEveryoneACE()
+	return sd.DACL.ACEs[0]
+}
+
+func protTestEntry(dn string, sd []byte) *ldap.Entry {
+	attrs := []*ldap.EntryAttribute{
+		{Name: "objectGUID", Values: []string{string(protTestGUIDBytes)}, ByteValues: [][]byte{protTestGUIDBytes}},
+		{Name: "distinguishedName", Values: []string{dn}},
+		{Name: "ou", Values: []string{"TestOU"}},
+	}
+	if sd != nil {
+		attrs = append(attrs, &ldap.EntryAttribute{Name: "nTSecurityDescriptor", Values: []string{string(sd)}, ByteValues: [][]byte{sd}})
+	}
+	return &ldap.Entry{DN: dn, Attributes: attrs}
+}
+
+func protTestResult(e *ldap.Entry) *SearchResult {
+	return &SearchResult{Entries: []*ldap.Entry{e}, Total: 1}
+}
+
+func TestOUManager_GetOU_LegacyInheritableNotProtected(t *testing.T) {
+	client := &MockOUClient{}
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
+	entry := protTestEntry("OU=TestOU,dc=example,dc=com", protTestSD(t, legacyInheritableACE()))
+	client.On("Search", mock.Anything, mock.Anything).Return(protTestResult(entry), nil)
+
+	ou, err := manager.GetOU(protTestGUID)
+	require.NoError(t, err)
+	assert.False(t, ou.Protected)
+	assert.True(t, ou.hasDenyDelete)
+}
+
+func TestOUManager_DeleteOU_LegacyInheritableRefused(t *testing.T) {
+	client := &MockOUClient{}
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
+	entry := protTestEntry("OU=TestOU,dc=example,dc=com", protTestSD(t, legacyInheritableACE()))
+	client.On("Search", mock.Anything, mock.Anything).Return(protTestResult(entry), nil)
+
+	err := manager.DeleteOU(protTestGUID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "protected")
+	client.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything)
+}
+
+func TestOUManager_DeleteOU_NotFoundDifferentMessage(t *testing.T) {
+	client := &MockOUClient{}
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
+	client.On("Search", mock.Anything, mock.Anything).Return(nil, ldap.NewError(ldap.LDAPResultNoSuchObject, assert.AnError))
+
+	require.NoError(t, manager.DeleteOU(protTestGUID))
+	client.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything)
+}
+
+// setProtectionWrite runs SetOUProtection against an OU holding sd and returns
+// the DACL written back (nil if no write happened).
+func setProtectionWrite(t *testing.T, sd []byte, protected bool) *SecurityDescriptor {
+	t.Helper()
+	client := &MockOUClient{}
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
+	client.On("Search", mock.Anything, mock.Anything).Return(protTestResult(protTestEntry("OU=TestOU,dc=example,dc=com", sd)), nil)
+	var written []byte
+	client.On("Modify", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		mr, ok := args.Get(1).(*ModifyRequest)
+		require.True(t, ok)
+		written = []byte(mr.ReplaceAttributes["nTSecurityDescriptor"][0])
+	}).Return(nil).Maybe()
+
+	require.NoError(t, manager.SetOUProtection("OU=TestOU,dc=example,dc=com", protected))
+	if written == nil {
+		return nil
+	}
+	out, err := UnmarshalSecurityDescriptor(written)
+	require.NoError(t, err)
+	return out
+}
+
+func countDeny(sd *SecurityDescriptor) (plain, legacy int) {
+	for _, a := range sd.DACL.ACEs {
+		switch {
+		case isLegacyInheritableACE(a):
+			legacy++
+		case isProtectionACE(a):
+			plain++
+		}
+	}
+	return
+}
+
+func TestSetOUProtection_MigratesLegacyInOneWrite(t *testing.T) {
+	sd := setProtectionWrite(t, protTestSD(t, legacyInheritableACE()), true)
+	require.NotNil(t, sd)
+	plain, legacy := countDeny(sd)
+	assert.Equal(t, 1, plain)
+	assert.Equal(t, 0, legacy)
+}
+
+func TestSetOUProtection_LegacyAndPlainYieldsOnePlain(t *testing.T) {
+	sd := setProtectionWrite(t, protTestSD(t, legacyInheritableACE(), protTestPlainACE()), true)
+	require.NotNil(t, sd)
+	plain, legacy := countDeny(sd)
+	assert.Equal(t, 1, plain)
+	assert.Equal(t, 0, legacy)
+}
+
+func TestSetOUProtection_IdempotentNoWrite(t *testing.T) {
+	assert.Nil(t, setProtectionWrite(t, protTestSD(t, protTestPlainACE()), true))
+}
+
+func TestSetOUProtection_UnprotectRemovesBothKinds(t *testing.T) {
+	sd := setProtectionWrite(t, protTestSD(t, legacyInheritableACE(), protTestPlainACE()), false)
+	require.NotNil(t, sd)
+	plain, legacy := countDeny(sd)
+	assert.Equal(t, 0, plain)
+	assert.Equal(t, 0, legacy)
+}
+
+// updateMoveOrder runs UpdateOU moving an OU (with the given SD) to a new
+// parent with the requested protection, and returns the Modify/ModifyDN order.
+func updateMoveOrder(t *testing.T, sd []byte, protected bool) []string {
+	t.Helper()
+	client := &MockOUClient{}
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
+	oldDN, newDN := "OU=TestOU,OU=Old,dc=example,dc=com", "OU=TestOU,OU=New,dc=example,dc=com"
+
+	var order []string
+	client.On("Search", mock.Anything, mock.Anything).Return(protTestResult(protTestEntry(oldDN, sd)), nil).Once() // GetOU
+	if protected {
+		client.On("Search", mock.Anything, mock.Anything).Return(protTestResult(protTestEntry(newDN, sd)), nil).Once() // post-move GetOU
+		client.On("Search", mock.Anything, mock.Anything).Return(protTestResult(protTestEntry(newDN, sd)), nil).Once() // SetOUProtection
+	} else {
+		client.On("Search", mock.Anything, mock.Anything).Return(protTestResult(protTestEntry(oldDN, sd)), nil).Once()  // SetOUProtection
+		client.On("Search", mock.Anything, mock.Anything).Return(protTestResult(protTestEntry(newDN, nil)), nil).Once() // post-move GetOU
+	}
+	client.On("Search", mock.Anything, mock.Anything).Return(protTestResult(protTestEntry(newDN, nil)), nil) // final GetOU
+	client.On("Modify", mock.Anything, mock.Anything).Run(func(mock.Arguments) { order = append(order, "Modify") }).Return(nil)
+	client.On("ModifyDN", mock.Anything, mock.Anything).Run(func(mock.Arguments) { order = append(order, "ModifyDN") }).Return(nil)
+
+	newPath := "OU=New,dc=example,dc=com"
+	_, err := manager.UpdateOU(protTestGUID, &UpdateOURequest{Path: &newPath, Protected: &protected})
+	require.NoError(t, err)
+	return order
+}
+
+// TestOUManager_UpdateOU_ProtectedMoveReprotects: an OU that already has a
+// deny-delete ACE (legacy or plain) must be unprotected before the move and
+// re-protected after it, ending with exactly one non-inheritable ACE.
+func TestOUManager_UpdateOU_ProtectedMoveReprotects(t *testing.T) {
+	for name, sd := range map[string][]byte{
+		"legacy": protTestSD(t, legacyInheritableACE()),
+		"plain":  protTestSD(t, protTestPlainACE()),
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := &MockOUClient{}
+			manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
+			oldDN, newDN := "OU=TestOU,OU=Old,dc=example,dc=com", "OU=TestOU,OU=New,dc=example,dc=com"
+			bare := protTestSD(t)
+
+			client.On("Search", mock.Anything, mock.Anything).Return(protTestResult(protTestEntry(oldDN, sd)), nil).Once()   // GetOU
+			client.On("Search", mock.Anything, mock.Anything).Return(protTestResult(protTestEntry(oldDN, sd)), nil).Once()   // unprotect read
+			client.On("Search", mock.Anything, mock.Anything).Return(protTestResult(protTestEntry(newDN, bare)), nil).Once() // post-move GetOU
+			client.On("Search", mock.Anything, mock.Anything).Return(protTestResult(protTestEntry(newDN, bare)), nil).Once() // protect read
+			client.On("Search", mock.Anything, mock.Anything).Return(protTestResult(protTestEntry(newDN, bare)), nil)        // final GetOU
+
+			var order []string
+			var writes [][]byte
+			client.On("Modify", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+				mr, ok := args.Get(1).(*ModifyRequest)
+				require.True(t, ok)
+				order = append(order, "Modify")
+				writes = append(writes, []byte(mr.ReplaceAttributes["nTSecurityDescriptor"][0]))
+			}).Return(nil)
+			client.On("ModifyDN", mock.Anything, mock.Anything).Run(func(mock.Arguments) { order = append(order, "ModifyDN") }).Return(nil)
+
+			newPath, protected := "OU=New,dc=example,dc=com", true
+			_, err := manager.UpdateOU(protTestGUID, &UpdateOURequest{Path: &newPath, Protected: &protected})
+			require.NoError(t, err)
+			assert.Equal(t, []string{"Modify", "ModifyDN", "Modify"}, order)
+
+			require.Len(t, writes, 2)
+			first, err := UnmarshalSecurityDescriptor(writes[0])
+			require.NoError(t, err)
+			assert.False(t, first.HasAnyDenyDeleteEveryoneACE())
+			last, err := UnmarshalSecurityDescriptor(writes[1])
+			require.NoError(t, err)
+			plain, legacy := countDeny(last)
+			assert.Equal(t, 1, plain)
+			assert.Equal(t, 0, legacy)
+		})
+	}
+}
+
+func TestOUManager_UpdateOU_UnprotectBeforeMove(t *testing.T) {
+	assert.Equal(t, []string{"Modify", "ModifyDN"}, updateMoveOrder(t, protTestSD(t, protTestPlainACE()), false))
+	assert.Equal(t, []string{"Modify", "ModifyDN"}, updateMoveOrder(t, protTestSD(t, legacyInheritableACE()), false))
+}
+
+func TestOUManager_UpdateOU_ProtectAfterMove(t *testing.T) {
+	assert.Equal(t, []string{"ModifyDN", "Modify"}, updateMoveOrder(t, protTestSD(t), true))
+}
+
+func TestOUManager_UpdateOU_ClearDescriptionUsesReplace(t *testing.T) {
+	client := &MockOUClient{}
+	manager := NewOUManager(t.Context(), client, "dc=example,dc=com")
+	dn := "OU=TestOU,dc=example,dc=com"
+	client.On("Search", mock.Anything, mock.Anything).Return(protTestResult(protTestEntry(dn, nil)), nil)
+	var got *ModifyRequest
+	client.On("Modify", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		var ok bool
+		got, ok = args.Get(1).(*ModifyRequest)
+		require.True(t, ok)
+	}).Return(nil)
+
+	empty := ""
+	_, err := manager.UpdateOU(protTestGUID, &UpdateOURequest{Description: &empty})
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Empty(t, got.DeleteAttributes)
+	v, ok := got.ReplaceAttributes["description"]
+	assert.True(t, ok)
+	assert.Empty(t, v)
 }
 
 func TestOUManager_SearchOUs(t *testing.T) {

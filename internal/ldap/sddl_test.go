@@ -253,7 +253,8 @@ func TestRoundTrip_DACLOnly(t *testing.T) {
 	assert.Nil(t, parsed.Owner)
 	assert.Nil(t, parsed.Group)
 	assert.Nil(t, parsed.SACL)
-	assert.True(t, parsed.HasDenyDeleteEveryoneACE())
+	assert.True(t, parsed.HasLegacyInheritableDenyDeleteACE())
+	assert.False(t, parsed.HasDenyDeleteEveryoneACE())
 }
 
 // TestSecurityDescriptor_ObjectACE_RoundTrip verifies that a DACL containing
@@ -484,6 +485,49 @@ func TestDenyDeleteEveryoneACE_Flags(t *testing.T) {
 	require.Len(t, sd.DACL.ACEs, 1)
 	assert.Equal(t, uint8(0), sd.DACL.ACEs[0].AceFlags)
 	assert.True(t, sd.HasDenyDeleteEveryoneACE())
+}
+
+func legacyInheritableACE() ACE {
+	return ACE{
+		AceType:    AccessDeniedACEType,
+		AceFlags:   ContainerInheritACE,
+		AccessMask: AccessMaskDelete | AccessMaskDeleteTree,
+		SID:        everyoneSIDValue,
+	}
+}
+
+func TestDenyDeleteEveryoneACE_LegacyInheritableNotProtected(t *testing.T) {
+	sd := &SecurityDescriptor{DACL: &ACL{AclRevision: 2, ACEs: []ACE{legacyInheritableACE()}}}
+	assert.False(t, sd.HasDenyDeleteEveryoneACE(), "inheritable ACE must not count as protection")
+	assert.True(t, sd.HasLegacyInheritableDenyDeleteACE())
+	assert.True(t, sd.HasAnyDenyDeleteEveryoneACE())
+}
+
+func TestDenyDeleteEveryoneACE_InheritedCopyNotCounted(t *testing.T) {
+	inherited := legacyInheritableACE()
+	inherited.AceFlags |= InheritedACE
+	sd := &SecurityDescriptor{DACL: &ACL{AclRevision: 2, ACEs: []ACE{inherited}}}
+	assert.False(t, sd.HasLegacyInheritableDenyDeleteACE())
+	assert.False(t, sd.HasAnyDenyDeleteEveryoneACE())
+	assert.False(t, sd.RemoveLegacyInheritableDenyDeleteACE())
+	assert.Len(t, sd.DACL.ACEs, 1)
+}
+
+func TestSecurityDescriptor_RemoveLegacyKeepsProtectionACE(t *testing.T) {
+	sd := &SecurityDescriptor{DACL: &ACL{AclRevision: 2, ACEs: []ACE{legacyInheritableACE()}}}
+	sd.AddDenyDeleteEveryoneACE()
+	require.True(t, sd.RemoveLegacyInheritableDenyDeleteACE())
+	require.Len(t, sd.DACL.ACEs, 1)
+	assert.Equal(t, uint8(0), sd.DACL.ACEs[0].AceFlags)
+	assert.True(t, sd.HasDenyDeleteEveryoneACE())
+}
+
+func TestSecurityDescriptor_RemoveDenyDeleteRemovesBothKinds(t *testing.T) {
+	sd := &SecurityDescriptor{DACL: &ACL{AclRevision: 2, ACEs: []ACE{legacyInheritableACE()}}}
+	sd.AddDenyDeleteEveryoneACE()
+	require.True(t, sd.RemoveDenyDeleteEveryoneACE())
+	assert.Empty(t, sd.DACL.ACEs)
+	assert.False(t, sd.HasAnyDenyDeleteEveryoneACE())
 }
 
 func TestDenyDeleteEveryoneACE_InheritedNotProtected(t *testing.T) {
