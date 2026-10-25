@@ -626,6 +626,11 @@ func TestClient_IsRetryableError(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "unwillingToPerform is not retryable",
+			err:  ldap.NewError(ldap.LDAPResultUnwillingToPerform, errors.New("x")),
+			want: false,
+		},
+		{
 			name: "invalid credentials LDAP error",
 			err:  ldap.NewError(ldap.LDAPResultInvalidCredentials, errors.New("bad password")),
 			want: false,

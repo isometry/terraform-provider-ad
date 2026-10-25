@@ -1,6 +1,7 @@
 package ldap
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -375,6 +376,13 @@ func WrapError(operation string, err error) error {
 	return NewLDAPError(operation, err)
 }
 
+// IsUnsupportedControlError reports whether err (possibly wrapped) is the
+// server rejecting a critical control it does not implement
+// (unavailableCriticalExtension), e.g. LDAP_SERVER_EXTENDED_DN_OID.
+func IsUnsupportedControlError(err error) bool {
+	return ldap.IsErrorWithCode(err, ldap.LDAPResultUnavailableCriticalExtension)
+}
+
 // IsRetryableError checks if an error is retryable.
 func IsRetryableError(err error) bool {
 	if err == nil {
@@ -399,12 +407,14 @@ func GetErrorCategory(err error) ErrorCategory {
 		return ErrorCategoryUnknown
 	}
 
-	if ldapErr, ok := err.(*LDAPError); ok {
+	var ldapErr *LDAPError
+	if errors.As(err, &ldapErr) {
 		return ldapErr.GetCategory()
 	}
 
 	// Check for raw go-ldap library errors
-	if ldapResultErr, ok := err.(*ldap.Error); ok {
+	var ldapResultErr *ldap.Error
+	if errors.As(err, &ldapResultErr) {
 		return categorizeError(ldapResultErr.ResultCode)
 	}
 

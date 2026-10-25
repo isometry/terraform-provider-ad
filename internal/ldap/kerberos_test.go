@@ -713,3 +713,47 @@ func TestCreateGSSAPIClientWithAutoDiscovery(t *testing.T) {
 		})
 	}
 }
+
+func TestSelectKerberosCredential_Order(t *testing.T) {
+	dir := t.TempDir()
+	touch := func(name string) string {
+		p := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(p, []byte("x"), 0o600))
+		return p
+	}
+	defCache := touch("default_ccache")
+	defKeytab := touch("default_keytab")
+	expCache := touch("explicit_ccache")
+	expKeytab := touch("explicit_keytab")
+
+	tests := []struct {
+		name       string
+		cfg        ConnectionConfig
+		wantMethod kerberosCredential
+		wantPath   string
+	}{
+		{"explicit keytab beats default cache", ConnectionConfig{Username: "svc", KerberosKeytab: expKeytab}, kerberosExplicitKeytab, expKeytab},
+		{"password beats default cache", ConnectionConfig{Username: "svc", Password: "pw"}, kerberosPassword, ""},
+		{"explicit ccache beats keytab", ConnectionConfig{Username: "svc", KerberosCCache: expCache, KerberosKeytab: expKeytab}, kerberosExplicitCCache, expCache},
+		{"explicit keytab beats password", ConnectionConfig{Username: "svc", KerberosKeytab: expKeytab, Password: "pw"}, kerberosExplicitKeytab, expKeytab},
+		{"nothing configured uses default cache", ConnectionConfig{}, kerberosDefaultCCache, defCache},
+		{"missing explicit keytab falls through to default cache", ConnectionConfig{Username: "svc", KerberosKeytab: filepath.Join(dir, "nope")}, kerberosDefaultCCache, defCache},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("KRB5CCNAME", defCache)
+			t.Setenv("KRB5_KTNAME", defKeytab)
+			m, p := selectKerberosCredential(&tt.cfg)
+			assert.Equal(t, tt.wantMethod, m)
+			assert.Equal(t, tt.wantPath, p)
+		})
+	}
+
+	t.Run("no default cache falls back to default keytab", func(t *testing.T) {
+		t.Setenv("KRB5CCNAME", filepath.Join(dir, "absent"))
+		t.Setenv("KRB5_KTNAME", defKeytab)
+		m, p := selectKerberosCredential(&ConnectionConfig{Username: "svc"})
+		assert.Equal(t, kerberosDefaultKeytab, m)
+		assert.Equal(t, defKeytab, p)
+	})
+}

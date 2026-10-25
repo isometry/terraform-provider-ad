@@ -1066,6 +1066,7 @@ func (r *UserResource) ImportState(ctx context.Context, req resource.ImportState
 	// Create model from the imported user
 	var data UserResourceModel
 	r.userToModel(ctx, user, &data, &resp.Diagnostics)
+	applyImportDefaults(&data)
 
 	tflog.Info(ctx, "Successfully imported AD user", map[string]any{
 		"import_id": importID,
@@ -1074,6 +1075,13 @@ func (r *UserResource) ImportState(ctx context.Context, req resource.ImportState
 	})
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// applyImportDefaults sets attributes that cannot be read from AD to their
+// schema defaults. A null password_version in state would make the next plan
+// (default 0) look like a rotation and fail with "Password Required For Rotation".
+func applyImportDefaults(data *UserResourceModel) {
+	data.PasswordVersion = types.Int64Value(0)
 }
 
 // getUserManager creates a UserManager instance using the cached base DN.

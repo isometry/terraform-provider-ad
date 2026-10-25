@@ -73,6 +73,20 @@ func (m useNameForSAMAccountName) PlanModifyString(ctx context.Context, req plan
 		return
 	}
 
+	// Existing object with an unchanged name: keep the SAM name already in
+	// state (e.g. imported CN "Admins" with sAMAccountName "ADM-01").
+	if !req.State.Raw.IsNull() && !req.StateValue.IsNull() && !req.StateValue.IsUnknown() {
+		var stateName types.String
+		resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("name"), &stateName)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if stateName.Equal(name) {
+			resp.PlanValue = req.StateValue
+			return
+		}
+	}
+
 	nameStr := name.ValueString()
 
 	// Determine character limit based on object type

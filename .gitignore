@@ -36,3 +36,9 @@ website/vendor
 
 # Binary
 terraform-provider-ad
+terraform-provider-ad-*
+
+# Local credentials and test output
+.env
+.envrc
+coverage.out
