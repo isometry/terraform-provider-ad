@@ -151,9 +151,6 @@ func TestCacheManager_Get_ByEveryIndex(t *testing.T) {
 		{"by UPN", "alice@example.com"},
 		{"by UPN with prefix", "upn:alice@example.com"},
 		{"by SAM with prefix", "sam:alice"},
-		// DOMAIN\user NT4-style input strips the "DOMAIN\" prefix before
-		// building the SAM key, so this resolves to "sam:alice" and hits.
-		{"by SAM with DOMAIN\\ format", "EXAMPLE\\alice"},
 	}
 
 	for _, tt := range tests {
@@ -166,6 +163,22 @@ func TestCacheManager_Get_ByEveryIndex(t *testing.T) {
 			assert.Equal(t, entry.ObjectSID, got.ObjectSID)
 		})
 	}
+}
+
+// DOMAIN\user must never hit the cache: the SAM index is keyed by bare name, so
+// only the normal path can validate the domain prefix.
+func TestCacheManager_Get_DomainPrefixIsMiss(t *testing.T) {
+	cm := NewCacheManager()
+	require.NoError(t, cm.Put(newTestCacheEntry(
+		"CN=Alice,OU=Users,DC=example,DC=com",
+		"11111111-2222-3333-4444-555555555555",
+		"S-1-5-21-1-2-3-1001",
+		"alice@example.com",
+		"alice",
+	)))
+
+	_, ok := cm.Get("EXAMPLE\\alice")
+	assert.False(t, ok)
 }
 
 // ---------------------------------------------------------------------------

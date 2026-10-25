@@ -221,11 +221,10 @@ func (cm *CacheManager) lookupInternalID(identifier string) (string, bool) {
 	var samToCheck string
 	if strings.HasPrefix(lowerID, "sam:") {
 		samToCheck = lowerID
-	} else if _, after, ok := strings.Cut(identifier, "\\"); ok {
-		// DOMAIN\user form: the SAM index stores only the bare sAMAccountName,
-		// so strip the "DOMAIN\" prefix before building the lookup key.
-		samValue := strings.ToLower(after)
-		samToCheck = fmt.Sprintf("sam:%s", samValue)
+	} else if !strings.ContainsAny(identifier, "\\@=") {
+		// Bare name. DOMAIN\user is deliberately a miss: the SAM index is keyed
+		// by bare name, so only the normal path can validate the domain prefix.
+		samToCheck = fmt.Sprintf("sam:%s", lowerID)
 	}
 	if samToCheck != "" {
 		if internalID, exists := cm.samIndex.Load(samToCheck); exists {

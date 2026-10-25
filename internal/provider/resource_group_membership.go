@@ -290,6 +290,7 @@ func (r *GroupMembershipResource) ModifyPlan(ctx context.Context, req resource.M
 
 	// Create normalizer
 	normalizer := ldapclient.NewMemberNormalizer(r.client, baseDN, r.cacheManager)
+	normalizer.SetContext(ctx)
 
 	// Resolve effective ignore_missing_members value
 	// Priority: resource explicit > provider setting
@@ -696,6 +697,7 @@ func (r *GroupMembershipResource) resolveMembersForWriteFallback(
 	}
 
 	normalizer := ldapclient.NewMemberNormalizer(r.client, baseDN, r.cacheManager)
+	normalizer.SetContext(ctx)
 	effectiveIgnoreMissing := r.effectiveIgnoreMissingMembers(ctx, data.IgnoreMissingMembers)
 
 	current := r.readCurrentMembersBestEffort(ctx, baseDN, data.GroupID.ValueString(), len(members))
@@ -1164,6 +1166,7 @@ func (r *GroupMembershipResource) ImportState(ctx context.Context, req resource.
 
 	// Normalize the import ID to a DN (supports DN, GUID, SID, UPN, SAM formats)
 	normalizer := ldapclient.NewMemberNormalizer(r.client, baseDN, r.cacheManager)
+	normalizer.SetContext(ctx)
 	resolved, err := normalizer.Resolve(importID)
 	if err != nil {
 		resp.Diagnostics.AddError(
@@ -1297,6 +1300,7 @@ func (r *GroupMembershipResource) resolveCurrentMemberDetails(ctx context.Contex
 	}
 
 	normalizer := ldapclient.NewMemberNormalizer(r.client, baseDN, r.cacheManager)
+	normalizer.SetContext(ctx)
 	resolvedMap, failures := normalizer.ResolveBatch(memberDNs)
 	for dn, resolveErr := range failures {
 		tflog.Warn(ctx, "Could not resolve current member's GUID; member_details.id will be empty for this member", map[string]any{
