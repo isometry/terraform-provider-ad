@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -176,65 +177,40 @@ func ServerInfoToURL(server *ServerInfo) string {
 		scheme = "ldaps"
 	}
 
-	return fmt.Sprintf("%s://%s:%d", scheme, server.Host, server.Port)
+	return scheme + "://" + net.JoinHostPort(server.Host, strconv.Itoa(server.Port))
 }
 
 // ParseLDAPURL parses an LDAP URL into ServerInfo.
-func ParseLDAPURL(url string) (*ServerInfo, error) {
-	if url == "" {
+func ParseLDAPURL(rawURL string) (*ServerInfo, error) {
+	if rawURL == "" {
 		return nil, fmt.Errorf("URL cannot be empty")
 	}
 
-	// Basic URL parsing for LDAP URLs
-	var host string
-	var port int
-	var useTLS bool
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid URL format: %w", err)
+	}
 
-	if strings.HasPrefix(url, "ldaps://") {
+	var useTLS bool
+	port := 389
+	switch u.Scheme { // url.Parse lowercases the scheme
+	case "ldaps":
 		useTLS = true
-		url = strings.TrimPrefix(url, "ldaps://")
-	} else if strings.HasPrefix(url, "ldap://") {
-		useTLS = false
-		url = strings.TrimPrefix(url, "ldap://")
-	} else {
+		port = 636
+	case "ldap":
+	default:
 		return nil, fmt.Errorf("unsupported scheme, must be ldap:// or ldaps://")
 	}
 
-	// Extract host and port
-	if strings.Contains(url, ":") {
-		parts := strings.Split(url, ":")
-		if len(parts) < 2 {
-			return nil, fmt.Errorf("invalid URL format")
-		}
-		host = parts[0]
-
-		// Parse port, handling potential path after port
-		portStr := parts[1]
-		if strings.Contains(portStr, "/") {
-			portStr = strings.Split(portStr, "/")[0]
-		}
-
-		var err error
-		port, err = strconv.Atoi(portStr)
+	if p := u.Port(); p != "" {
+		port, err = strconv.Atoi(p)
 		if err != nil {
-			return nil, fmt.Errorf("invalid port number: %s", portStr)
-		}
-	} else {
-		// Default ports
-		host = url
-		if strings.Contains(host, "/") {
-			host = strings.Split(host, "/")[0]
-		}
-
-		if useTLS {
-			port = 636 // LDAPS default
-		} else {
-			port = 389 // LDAP default
+			return nil, fmt.Errorf("invalid port number: %s", p)
 		}
 	}
 
 	server := &ServerInfo{
-		Host:     host,
+		Host:     u.Hostname(),
 		Port:     port,
 		UseTLS:   useTLS,
 		Priority: 0, // Explicitly configured URLs get highest priority

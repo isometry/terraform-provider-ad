@@ -1,7 +1,12 @@
 package ldap
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
 	"net"
+	"syscall"
 	"testing"
 	"time"
 
@@ -106,6 +111,34 @@ func TestIsNetworkError(t *testing.T) {
 	assert.True(t, isNetworkError(&net.OpError{Op: "write", Err: errBrokenPipe{}}))
 	assert.False(t, isNetworkError(ldap.NewError(ldap.LDAPResultEntryAlreadyExists, assert.AnError)))
 	assert.False(t, isNetworkError(nil))
+}
+
+func TestIsNetworkError_TypedOnly(t *testing.T) {
+	c := newTestClient(&mockPool{}, nil)
+	for _, tc := range []struct {
+		name      string
+		err       error
+		network   bool
+		retryable bool
+	}{
+		{"io.EOF", io.EOF, true, true},
+		{"wrapped unexpected EOF", fmt.Errorf("read: %w", io.ErrUnexpectedEOF), true, true},
+		{"wrapped EPIPE", fmt.Errorf("write: %w", syscall.EPIPE), true, true},
+		{"wrapped ECONNRESET", fmt.Errorf("read: %w", syscall.ECONNRESET), true, true},
+		{"net.ErrClosed", fmt.Errorf("x: %w", net.ErrClosed), true, true},
+		{"net.OpError", &net.OpError{Op: "dial", Err: errors.New("refused")}, true, true},
+		{"ldap connection closed", ldap.NewError(ldap.ErrorNetwork, errors.New("ldap: connection closed")), true, true},
+		{"context deadline", context.DeadlineExceeded, false, false},
+		{"noSuchObject with eof in DN", ldap.NewError(ldap.LDAPResultNoSuchObject, errors.New("best match of: 'OU=Geoffrey Smith,DC=example,DC=com'")), false, false},
+		{"noSuchObject with network in DN", ldap.NewError(ldap.LDAPResultNoSuchObject, errors.New("best match of: 'OU=Network Team,DC=example,DC=com'")), false, false},
+		{"AD bind required", ldap.NewError(ldap.LDAPResultOperationsError, errors.New("In order to perform this operation a successful bind must be completed")), false, true},
+		{"plain bind required", errors.New("a successful bind must be completed"), false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.network, isNetworkError(tc.err))
+			assert.Equal(t, tc.retryable, c.isRetryableError(tc.err))
+		})
+	}
 }
 
 type errBrokenPipe struct{}

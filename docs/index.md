@@ -306,7 +306,7 @@ provider "ad" {
 - `kerberos_spn` (String) Override Service Principal Name (SPN) for Kerberos authentication. Use when connecting to a domain controller by IP address where the SPN doesn't match the IP. Format: `ldap/<hostname>` (e.g., `ldap/dc1.example.com`). Can be set via the `AD_KERBEROS_SPN` environment variable.
 - `ldap_url` (String) Direct LDAP/LDAPS URL (e.g., `ldaps://dc1.example.com:636`). Mutually exclusive with `domain`. Can be set via the `AD_LDAP_URL` environment variable.
 - `max_backoff` (Number) Maximum backoff delay in seconds for retry attempts. Defaults to `30`. Valid range: 1–2147483647 seconds. Can be set via the `AD_MAX_BACKOFF` environment variable.
-- `max_connections` (Number) Maximum number of connections in the connection pool. Defaults to `10`. Valid range: 1–100. Can be set via the `AD_MAX_CONNECTIONS` environment variable.
+- `max_connections` (Number) Maximum number of connections in the connection pool, including those in use. Defaults to `10`. When all are in use, an operation waits for one to be returned for up to `connect_timeout`, then fails with a timeout error. Valid range: 1–100. Can be set via the `AD_MAX_CONNECTIONS` environment variable.
 - `max_idle_time` (Number) Maximum idle time for connections in seconds. Defaults to `300` (5 minutes). Valid range: 1–2147483647 seconds. Can be set via the `AD_MAX_IDLE_TIME` environment variable.
 - `max_retries` (Number) Maximum number of retry attempts for failed operations. Defaults to `3`. Valid range: 0–2147483647. Can be set via the `AD_MAX_RETRIES` environment variable.
 - `password` (String, Sensitive) Password for LDAP authentication. Can be set via the `AD_PASSWORD` environment variable.

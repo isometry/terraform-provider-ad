@@ -40,6 +40,8 @@ type connectionPool struct {
 	config      *ConnectionConfig
 	servers     []*ServerInfo
 	connections chan *PooledConnection
+	sem         chan struct{} // one token per checked-out connection; caps total in use at MaxConnections
+	done        chan struct{} // closed by Close to wake waiters
 	mu          sync.RWMutex
 	closed      bool
 	discovery   *SRVDiscovery
@@ -140,6 +142,8 @@ func NewConnectionPool(ctx context.Context, config *ConnectionConfig) (Connectio
 		ctx:         ctx, // Store context for logging
 		config:      config,
 		connections: make(chan *PooledConnection, config.MaxConnections),
+		sem:         make(chan struct{}, config.MaxConnections),
+		done:        make(chan struct{}),
 		discovery:   NewSRVDiscovery(ctx),
 		startTime:   time.Now(),
 		healthStop:  make(chan struct{}),
@@ -228,15 +232,64 @@ func (p *connectionPool) discoverServers() error {
 	return nil
 }
 
-// Get retrieves a connection from the pool.
-func (p *connectionPool) Get(ctx context.Context) (*PooledConnection, error) {
-	p.mu.RLock()
-	if p.closed {
-		p.mu.RUnlock()
-		return nil, errors.New("connection pool is closed")
-	}
-	p.mu.RUnlock()
+// errPoolClosed is returned by Get once the pool has been closed.
+var errPoolClosed = errors.New("connection pool is closed")
 
+// acquire takes one of MaxConnections slots, waiting for a Close/return,
+// ctx cancellation or the configured Timeout.
+func (p *connectionPool) acquire(ctx context.Context) error {
+	p.mu.RLock()
+	closed := p.closed
+	p.mu.RUnlock()
+	if closed {
+		return errPoolClosed
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, p.config.Timeout)
+	defer cancel()
+	select {
+	case p.sem <- struct{}{}:
+	case <-p.done:
+		return errPoolClosed
+	case <-waitCtx.Done():
+		if ctx.Err() == nil {
+			return fmt.Errorf("timed out after %s waiting for a free connection (max_connections=%d)", p.config.Timeout, cap(p.sem))
+		}
+		return ctx.Err()
+	}
+	select { // both cases may have been ready; prefer closed
+	case <-p.done:
+		<-p.sem
+		return errPoolClosed
+	default:
+	}
+	atomic.AddInt64(&p.activeConns, 1)
+	return nil
+}
+
+// release gives back a slot taken by acquire; call exactly once per checkout.
+func (p *connectionPool) release() {
+	atomic.AddInt64(&p.activeConns, -1)
+	<-p.sem
+}
+
+// Get retrieves a connection from the pool, blocking while MaxConnections
+// connections are checked out.
+func (p *connectionPool) Get(ctx context.Context) (*PooledConnection, error) {
+	if err := p.acquire(ctx); err != nil {
+		return nil, err
+	}
+	conn, err := p.getConnection(ctx)
+	if err != nil {
+		p.release()
+		return nil, err
+	}
+	conn.returnToPool = p.returnConnection // re-armed: Close clears it to make a double Close a no-op
+	return conn, nil
+}
+
+// getConnection returns an idle connection or dials a new one; the caller holds a slot.
+func (p *connectionPool) getConnection(ctx context.Context) (*PooledConnection, error) {
 	// Try to get an existing connection from the pool
 	select {
 	case conn := <-p.connections:
@@ -250,7 +303,6 @@ func (p *connectionPool) Get(ctx context.Context) (*PooledConnection, error) {
 				}
 			}
 			conn.lastUsed = time.Now()
-			atomic.AddInt64(&p.activeConns, 1)
 			return conn, nil
 		}
 		// Connection is unhealthy, close it and create a new one
@@ -278,7 +330,6 @@ func (p *connectionPool) createConnection(ctx context.Context) (*PooledConnectio
 			}
 
 			atomic.AddInt64(&p.totalCreated, 1)
-			atomic.AddInt64(&p.activeConns, 1)
 			return conn, nil
 		}
 
@@ -417,14 +468,19 @@ func (p *connectionPool) needsReAuthentication(conn *PooledConnection) bool {
 	return authAge > maxAuthAge
 }
 
-// returnConnection returns a connection to the pool.
+// returnConnection returns a checked-out connection to the pool and frees its slot.
 func (p *connectionPool) returnConnection(conn *PooledConnection) {
 	if conn == nil {
 		return
 	}
+	p.putIdle(conn)
+	p.release()
+}
 
-	atomic.AddInt64(&p.activeConns, -1)
-
+// putIdle parks a healthy connection in the idle channel, closing it if the
+// pool is closed, the connection is unhealthy/stale, or the idle buffer is full.
+// It does not touch the slot accounting.
+func (p *connectionPool) putIdle(conn *PooledConnection) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
@@ -433,17 +489,13 @@ func (p *connectionPool) returnConnection(conn *PooledConnection) {
 		return
 	}
 
-	// Check if connection is still healthy and not too old
 	if p.isConnectionHealthy(conn) && time.Since(conn.lastUsed) < p.config.MaxIdleTime {
 		select {
 		case p.connections <- conn:
-			// Successfully returned to pool
 		default:
-			// Pool is full, close the connection
 			p.closeConnection(conn)
 		}
 	} else {
-		// Connection is unhealthy or too old, close it
 		p.closeConnection(conn)
 	}
 }
@@ -485,22 +537,24 @@ func (p *connectionPool) closeConnection(conn *PooledConnection) {
 // Close closes all connections and shuts down the pool.
 func (p *connectionPool) Close() error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	if p.closed {
+		p.mu.Unlock()
 		return nil
 	}
-
 	p.closed = true
+	close(p.done)
+	p.mu.Unlock()
 
-	// Stop health checker
+	// Stop the health checker without holding p.mu: an in-flight check needs
+	// the read lock to hand connections back.
 	if p.healthTicker != nil {
 		close(p.healthStop)
 		p.healthWg.Wait()
 		p.healthTicker.Stop()
 	}
 
-	// Close all connections in the pool
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	close(p.connections)
 	for conn := range p.connections {
 		p.closeConnection(conn)
@@ -564,7 +618,7 @@ healthCheckLoop:
 	// Test each connection and return healthy ones to pool
 	for _, conn := range toCheck {
 		if p.testConnection(ctx, conn) {
-			p.returnConnection(conn)
+			p.putIdle(conn)
 		} else {
 			p.closeConnection(conn)
 		}
@@ -637,9 +691,12 @@ func validateConfig(config *ConnectionConfig) error {
 }
 
 // Methods for PooledConnection.
+// Close returns the connection to its pool. Only the first call per checkout
+// has any effect, so a stray second Close cannot free a slot twice.
 func (pc *PooledConnection) Close() {
-	if pc.returnToPool != nil {
-		pc.returnToPool(pc)
+	if ret := pc.returnToPool; ret != nil {
+		pc.returnToPool = nil
+		ret(pc)
 	}
 }
 

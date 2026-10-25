@@ -215,7 +215,8 @@ func (p *ActiveDirectoryProvider) Schema(ctx context.Context, req provider.Schem
 
 			// Connection pool settings
 			"max_connections": schema.Int64Attribute{
-				MarkdownDescription: "Maximum number of connections in the connection pool. Defaults to `10`. " +
+				MarkdownDescription: "Maximum number of connections in the connection pool, including those in use. Defaults to `10`. " +
+					"When all are in use, an operation waits for one to be returned for up to `connect_timeout`, then fails with a timeout error. " +
 					"Valid range: 1–100. " +
 					"Can be set via the `AD_MAX_CONNECTIONS` environment variable.",
 				Optional: true,

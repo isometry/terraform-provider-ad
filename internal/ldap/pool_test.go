@@ -598,70 +598,7 @@ func TestConnectionPool_ReuseAfterReturn(t *testing.T) {
 	second.Close()
 }
 
-// TestConnectionPool_MaxConnections_IdleCapOnly documents the pool's
-// actual behaviour when MaxConnections worth of connections have been
-// handed out: the pool does NOT block or return ErrPoolExhausted. Instead,
-// MaxConnections is the cap on the IDLE buffer size — Get() will always
-// attempt to create a new connection when the idle channel is empty.
-//
-// This test captures that contract: if the production behaviour ever
-// changes to (e.g.) bounded concurrency with blocking, this test should
-// be updated to match the new documented semantics.
-func TestConnectionPool_MaxConnections_IdleCapOnly(t *testing.T) {
-	maxConns := 2
-	pool := newTestPool(t, maxConns)
-
-	// Fill the idle channel to capacity with pre-built connections and
-	// hand them all out via Get(). The pool should serve all of them
-	// without attempting to dial a real server.
-	for range maxConns {
-		pool.connections <- newHealthyPooled(t, pool)
-	}
-
-	acquired := make([]*PooledConnection, 0, maxConns)
-	for i := range maxConns {
-		conn, err := pool.Get(t.Context())
-		if err != nil {
-			t.Fatalf("Get #%d failed: %v", i, err)
-		}
-		acquired = append(acquired, conn)
-	}
-
-	// Sanity check: all distinct connections, none nil.
-	seen := make(map[*PooledConnection]struct{}, len(acquired))
-	for i, c := range acquired {
-		if c == nil {
-			t.Fatalf("connection #%d is nil", i)
-		}
-		if _, dup := seen[c]; dup {
-			t.Fatalf("connection #%d (%p) was handed out twice", i, c)
-		}
-		seen[c] = struct{}{}
-	}
-
-	// With the idle channel drained and all MaxConnections worth of
-	// connections outstanding, the next Get() falls into createConnection,
-	// which tries to dial the bogus LDAPURL configured in newTestPool.
-	// That dial MUST fail; the pool MUST NOT block indefinitely.
-	//
-	// We bound the wait with a short context to fail the test rather than
-	// hang if the pool were ever changed to block on max-connections.
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	_, err := pool.Get(ctx)
-	if err == nil {
-		t.Fatal("Get() past MaxConnections should not succeed against bogus LDAP URL, but returned no error")
-	}
-	// Error should be about connection creation, not about pool state.
-	if strings.Contains(err.Error(), "pool is closed") {
-		t.Fatalf("unexpected pool-state error: %v", err)
-	}
-
-	// Return everything we acquired so cleanup can close the backing sockets.
-	for _, c := range acquired {
-		c.Close()
-	}
-}
+// The MaxConnections hard-cap tests live in pool_cap_test.go (in-memory pipes).
 
 // TestConnectionPool_UnhealthyDiscardedOnGet verifies that a connection
 // marked unhealthy before return is NOT served back to the next caller.
