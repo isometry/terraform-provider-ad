@@ -100,7 +100,7 @@ func (d *OUDataSource) Schema(ctx context.Context, req datasource.SchemaRequest,
 				Computed:            true,
 			},
 			"protected": schema.BoolAttribute{
-				MarkdownDescription: "Whether the OU is protected from accidental deletion.",
+				MarkdownDescription: "Whether the OU is protected from accidental deletion, i.e. it has a non-inheritable Everyone deny-delete entry of its own. Inherited or inheritable (legacy) entries do not count.",
 				Computed:            true,
 			},
 			"managed_by": schema.StringAttribute{

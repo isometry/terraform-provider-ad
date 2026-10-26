@@ -77,7 +77,7 @@ resource "ad_group" "it_admins" {
 
 - `description` (String) A description for the organizational unit. This is optional and can be used to provide additional context about the OU's purpose.
 - `managed_by` (String) Distinguished Name (DN) of the user or computer that manages this organizational unit. Must be a valid DN format (e.g., `CN=User,OU=Users,DC=example,DC=com`). Omit (or set to `null`) to clear; AD treats an absent attribute as unset.
-- `protected` (Boolean) Whether the OU is protected from accidental deletion. When true, the OU cannot be deleted until protection is disabled. Defaults to `false`.
+- `protected` (Boolean) Whether the OU is protected from accidental deletion. When true, an Everyone deny-delete / delete-subtree entry is written on this OU itself; it is not inherited, so child objects are not protected. Only a non-inheritable explicit entry counts as protected: an OU protected by an earlier provider version with an inheritable entry is reported as unprotected and is rewritten as a non-inheritable entry on the next apply with `protected = true` (a one-time in-place update). The OU is unprotected before it is moved and protected again afterwards. Defaults to `false`.
 
 ### Read-Only
 

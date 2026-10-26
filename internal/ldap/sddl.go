@@ -424,14 +424,51 @@ func isDenyDeleteEveryoneACE(ace ACE) bool {
 		isEveryoneSID(ace.SID)
 }
 
-// HasDenyDeleteEveryoneACE reports whether the DACL contains the specific deny
-// ACE used by Windows "protect from accidental deletion". The match requires
-// both DELETE and DELETE_TREE in the access mask and SID == S-1-1-0.
+// isLegacyInheritableACE reports whether ace is a deny-delete-everyone ACE that
+// also propagates to children (written by provider versions up to v0.5.0).
+func isLegacyInheritableACE(ace ACE) bool {
+	return isDenyDeleteEveryoneACE(ace) && ace.AceFlags&(ContainerInheritACE|ObjectInheritACE) != 0
+}
+
+// isProtectionACE is the current, non-inheritable form of the protection ACE.
+func isProtectionACE(ace ACE) bool {
+	return isDenyDeleteEveryoneACE(ace) && !isLegacyInheritableACE(ace)
+}
+
+// HasDenyDeleteEveryoneACE reports whether the DACL contains the specific
+// non-inheritable deny ACE used by Windows "protect from accidental deletion".
+// The match requires both DELETE and DELETE_TREE in the access mask and
+// SID == S-1-1-0. A legacy inheritable ACE does not count (see
+// HasLegacyInheritableDenyDeleteACE and HasAnyDenyDeleteEveryoneACE).
 func (sd *SecurityDescriptor) HasDenyDeleteEveryoneACE() bool {
 	if sd == nil || sd.DACL == nil {
 		return false
 	}
+	return slices.ContainsFunc(sd.DACL.ACEs, isProtectionACE)
+}
+
+// HasLegacyInheritableDenyDeleteACE reports whether an explicit deny-delete
+// ACE that is inheritable by children is present.
+func (sd *SecurityDescriptor) HasLegacyInheritableDenyDeleteACE() bool {
+	if sd == nil || sd.DACL == nil {
+		return false
+	}
+	return slices.ContainsFunc(sd.DACL.ACEs, isLegacyInheritableACE)
+}
+
+// HasAnyDenyDeleteEveryoneACE reports whether any explicit deny-delete ACE for
+// Everyone exists, inheritable or not; either blocks deleting the object.
+func (sd *SecurityDescriptor) HasAnyDenyDeleteEveryoneACE() bool {
+	if sd == nil || sd.DACL == nil {
+		return false
+	}
 	return slices.ContainsFunc(sd.DACL.ACEs, isDenyDeleteEveryoneACE)
+}
+
+// RemoveLegacyInheritableDenyDeleteACE drops only the inheritable deny-delete
+// ACEs. Returns true if any ACE was removed.
+func (sd *SecurityDescriptor) RemoveLegacyInheritableDenyDeleteACE() bool {
+	return sd.removeACEs(isLegacyInheritableACE)
 }
 
 // AddDenyDeleteEveryoneACE inserts the deny-delete ACE at the front of the
@@ -452,16 +489,20 @@ func (sd *SecurityDescriptor) AddDenyDeleteEveryoneACE() {
 	sd.DACL.ACEs = append([]ACE{ace}, sd.DACL.ACEs...)
 }
 
-// RemoveDenyDeleteEveryoneACE drops all deny-delete-everyone ACEs from the
-// DACL. Returns true if any ACE was removed.
+// RemoveDenyDeleteEveryoneACE drops all explicit deny-delete-everyone ACEs
+// (inheritable or not) from the DACL. Returns true if any ACE was removed.
 func (sd *SecurityDescriptor) RemoveDenyDeleteEveryoneACE() bool {
+	return sd.removeACEs(isDenyDeleteEveryoneACE)
+}
+
+func (sd *SecurityDescriptor) removeACEs(match func(ACE) bool) bool {
 	if sd == nil || sd.DACL == nil {
 		return false
 	}
 	filtered := sd.DACL.ACEs[:0]
 	removed := false
 	for _, ace := range sd.DACL.ACEs {
-		if isDenyDeleteEveryoneACE(ace) {
+		if match(ace) {
 			removed = true
 			continue
 		}

@@ -19,7 +19,7 @@ type OU struct {
 	// OU attributes
 	Name        string `json:"name"`                // ou attribute value
 	Description string `json:"description"`         // OU description
-	Protected   bool   `json:"protected"`           // Protection flag (from ntSecurityDescriptor)
+	Protected   bool   `json:"protected"`           // True only for a non-inheritable deny-delete ACE (legacy inheritable ACEs report false)
 	ManagedBy   string `json:"managedBy,omitempty"` // DN of user/computer that manages this OU
 
 	// Container information
@@ -31,6 +31,10 @@ type OU struct {
 	// Timestamps
 	WhenCreated time.Time `json:"whenCreated"`
 	WhenChanged time.Time `json:"whenChanged"`
+
+	// hasDenyDelete is true if any explicit deny-delete ACE exists (including
+	// a legacy inheritable one), i.e. the OU cannot be deleted as-is.
+	hasDenyDelete bool
 }
 
 // CreateOURequest represents a request to create a new OU.
@@ -193,10 +197,7 @@ func (om *OUManager) GetOU(guid string) (*OU, error) {
 	}
 
 	// Expand attributes to include all OU-relevant fields
-	searchReq.Attributes = []string{
-		"objectGUID", "distinguishedName", "ou", "name",
-		"description", "ntSecurityDescriptor", "whenCreated", "whenChanged", "managedBy",
-	}
+	searchReq.Attributes = om.getAllOUAttributes()
 	searchReq.TimeLimit = om.timeout
 
 	// Add the organizationalUnit filter
@@ -231,15 +232,12 @@ func (om *OUManager) GetOUByDN(dn string) (*OU, error) {
 // getOUByDN is the internal implementation for DN-based OU retrieval.
 func (om *OUManager) getOUByDN(dn string) (*OU, error) {
 	searchReq := &SearchRequest{
-		BaseDN: dn,
-		Scope:  ScopeBaseObject,
-		Filter: "(objectClass=organizationalUnit)",
-		Attributes: []string{
-			"objectGUID", "distinguishedName", "ou", "name",
-			"description", "ntSecurityDescriptor", "whenCreated", "whenChanged", "managedBy",
-		},
-		SizeLimit: 1,
-		TimeLimit: om.timeout,
+		BaseDN:     dn,
+		Scope:      ScopeBaseObject,
+		Filter:     "(objectClass=organizationalUnit)",
+		Attributes: om.getAllOUAttributes(),
+		SizeLimit:  1,
+		TimeLimit:  om.timeout,
 	}
 
 	result, err := om.client.Search(om.ctx, searchReq)
@@ -287,6 +285,23 @@ func (om *OUManager) UpdateOU(guid string, req *UpdateOURequest) (*OU, error) {
 	needsMove := req.Path != nil && !DNEqual(*req.Path, currentOU.Parent)
 	needsRename := req.Name != nil && *req.Name != currentOU.Name
 
+	// Unprotect BEFORE moving: a move needs DELETE on the object (denied while
+	// any deny-delete ACE exists) or Delete-child on the old parent. The
+	// requested final state (or the original one, if unspecified) is applied
+	// after the move.
+	wantProtected := currentOU.Protected || currentOU.hasDenyDelete
+	if req.Protected != nil {
+		wantProtected = *req.Protected
+	}
+	unprotectedForUpdate := false
+	if currentOU.hasDenyDelete && (needsMove || needsRename || (req.Protected != nil && !*req.Protected)) {
+		if err := om.SetOUProtection(currentOU.DistinguishedName, false); err != nil {
+			return nil, WrapError("set_ou_protection", err)
+		}
+		unprotectedForUpdate = true
+		hasChanges = true
+	}
+
 	if needsMove || needsRename {
 		newName := currentOU.Name
 		if needsRename {
@@ -308,8 +323,8 @@ func (om *OUManager) UpdateOU(guid string, req *UpdateOURequest) (*OU, error) {
 	// Handle description change
 	if req.Description != nil {
 		if *req.Description == "" {
-			// Delete description if empty string provided
-			modReq.DeleteAttributes = append(modReq.DeleteAttributes, "description")
+			// Replace with no values: idempotent, unlike delete when already absent
+			modReq.ReplaceAttributes["description"] = []string{}
 		} else {
 			modReq.ReplaceAttributes["description"] = []string{*req.Description}
 		}
@@ -327,9 +342,11 @@ func (om *OUManager) UpdateOU(guid string, req *UpdateOURequest) (*OU, error) {
 		hasChanges = true
 	}
 
-	// Handle protection change
-	if req.Protected != nil && *req.Protected != currentOU.Protected {
-		if err := om.SetOUProtection(currentOU.DistinguishedName, *req.Protected); err != nil {
+	// Apply protection ON (OFF was handled before the move). After a temporary
+	// unprotect, currentOU was re-read by the move, or still holds the old
+	// state if no move happened; either way a write is needed.
+	if wantProtected && (unprotectedForUpdate || (req.Protected != nil && !currentOU.Protected)) {
+		if err := om.SetOUProtection(currentOU.DistinguishedName, true); err != nil {
 			return nil, WrapError("set_ou_protection", err)
 		}
 		hasChanges = true
@@ -418,18 +435,14 @@ func (om *OUManager) DeleteOU(guid string) error {
 	// Get OU to determine DN and check protection
 	ou, err := om.GetOU(guid)
 	if err != nil {
-		// Check if it's a "not found" error
-		if ldapErr, ok := err.(*LDAPError); ok {
-			if ldapErr.Message == fmt.Sprintf("OU with GUID %s not found", guid) {
-				// OU already doesn't exist
-				return nil
-			}
+		if IsNotFoundError(err) {
+			return nil // already gone
 		}
 		return WrapError("get_ou_for_deletion", err)
 	}
 
 	// Check if OU is protected
-	if ou.Protected {
+	if ou.Protected || ou.hasDenyDelete {
 		return fmt.Errorf("cannot delete protected OU: %s", ou.DistinguishedName)
 	}
 
@@ -482,13 +495,17 @@ func (om *OUManager) SetOUProtection(ouDN string, protected bool) error {
 		return WrapError("parse_security_descriptor", err)
 	}
 
-	has := sd.HasDenyDeleteEveryoneACE()
-	switch {
-	case protected && !has:
-		sd.AddDenyDeleteEveryoneACE()
-	case !protected && has:
-		sd.RemoveDenyDeleteEveryoneACE()
-	default:
+	if protected {
+		// One write: drop any legacy inheritable ACE, ensure one non-inheritable.
+		has := sd.HasDenyDeleteEveryoneACE()
+		legacy := sd.RemoveLegacyInheritableDenyDeleteACE()
+		if has && !legacy {
+			return nil // already in desired state
+		}
+		if !has {
+			sd.AddDenyDeleteEveryoneACE()
+		}
+	} else if !sd.RemoveDenyDeleteEveryoneACE() {
 		return nil // already in desired state
 	}
 
@@ -635,17 +652,14 @@ func (om *OUManager) entryToOU(entry *ldap.Entry) (*OU, error) {
 	// Extract parent from DN
 	if ou.DistinguishedName != "" {
 		// Parse DN to get parent container
-		if parsedDN, err := ldap.ParseDN(ou.DistinguishedName); err == nil && len(parsedDN.RDNs) > 1 {
-			// Reconstruct parent DN from all RDNs except the first
-			parentRDNs := parsedDN.RDNs[1:]
-			parentDN := &ldap.DN{RDNs: parentRDNs}
-			ou.Parent = parentDN.String()
+		if parent, err := GetDNParent(ou.DistinguishedName); err == nil {
+			ou.Parent = parent
 		}
 	}
 
 	// Check protection status by parsing the DACL of the security descriptor.
 	if raw := readSecurityDescriptorBytes(entry); len(raw) > 0 {
-		ou.Protected = om.isOUProtected(raw)
+		ou.Protected, ou.hasDenyDelete = om.ouProtection(raw)
 	}
 
 	// Parse timestamps
@@ -664,15 +678,16 @@ func (om *OUManager) entryToOU(entry *ldap.Entry) (*OU, error) {
 	return ou, nil
 }
 
-// isOUProtected returns true when the OU's DACL carries the specific deny ACE
-// that Windows installs for "protect from accidental deletion".
-func (om *OUManager) isOUProtected(raw []byte) bool {
+// ouProtection returns (protected, hasDenyDelete): protected is true only for
+// a non-inheritable deny-delete ACE; hasDenyDelete is true for any explicit
+// one, including a legacy inheritable ACE that Protected deliberately ignores.
+func (om *OUManager) ouProtection(raw []byte) (bool, bool) {
 	if len(raw) == 0 {
-		return false
+		return false, false
 	}
 	sd, err := UnmarshalSecurityDescriptor(raw)
 	if err != nil {
-		return false
+		return false, false
 	}
-	return sd.HasDenyDeleteEveryoneACE()
+	return sd.HasDenyDeleteEveryoneACE(), sd.HasAnyDenyDeleteEveryoneACE()
 }
