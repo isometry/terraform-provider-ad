@@ -1,6 +1,7 @@
 package provider_test
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -11,6 +12,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
+
+	ldapclient "github.com/isometry/terraform-provider-ad/internal/ldap"
 )
 
 func TestAccOUResource_basic(t *testing.T) {
@@ -1202,6 +1205,146 @@ resource "ad_ou" "child_default" {
 					resource.TestCheckResourceAttr("ad_ou.child", "protected", "false"),
 				),
 			},
+		},
+	})
+}
+
+// TestAccOUResource_legacyProtectionMigration verifies that an OU protected by
+// provider versions up to v0.5.0 (deny-delete ACE for Everyone WITH
+// ContainerInherit) is migrated once, in place, to the non-inheritable ACE when
+// config says protected = true, and that the migration is not repeated and does
+// not leak an inherited deny ACE to child OUs.
+//
+// Requires WRITE_DAC on OUs for the lab account. Expect 10-20 s.
+func TestAccOUResource_legacyProtectionMigration(t *testing.T) {
+	SkipIfNotAccTest(t)
+	testAccPreCheck(t)
+
+	name := GenerateTestName("tf-test-ou-legacy-")
+	cfg := func(protected bool) string {
+		return fmt.Sprintf(`
+%s
+
+%s
+
+resource "ad_ou" "test" {
+  name      = %q
+  path      = data.ad_rootdse.test.default_naming_context
+  protected = %t
+}
+`, testProviderConfig(), testRootDSEDataSource(), name, protected)
+	}
+
+	ctx := context.Background() // not t.Context(): cancelled before cleanups run
+	tc := GetTestConfig()
+	client, err := ldapclient.NewClient(ctx, newTestLDAPConfig(tc))
+	if err != nil {
+		t.Fatalf("creating LDAP client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	om := ldapclient.NewOUManager(ctx, client, tc.BaseDN)
+
+	var ouDN, ouGUID string
+	capture := resource.ComposeAggregateTestCheckFunc(
+		captureStateAttr("ad_ou.test", "dn", &ouDN),
+		captureStateAttr("ad_ou.test", "id", &ouGUID),
+	)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg(false),
+				Check: func(s *terraform.State) error {
+					if err := capture(s); err != nil {
+						return err
+					}
+					// Best effort, for failure midway: lets the final destroy succeed.
+					dn := ouDN
+					t.Cleanup(func() {
+						if err := om.SetOUProtection(dn, false); err != nil {
+							t.Logf("cleanup: unprotecting %s: %v", dn, err)
+						}
+					})
+					return nil
+				},
+			},
+			{
+				PreConfig: func() {
+					if err := plantLegacyInheritableACE(ctx, client, ouDN); err != nil {
+						t.Fatalf("planting legacy ACE: %v", err)
+					}
+					sd, err := readDACL(ctx, client, ouDN)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if p, l, i := countDenyDeleteACEs(sd); p != 0 || l != 1 || i != 0 {
+						t.Fatalf("after planting: plain=%d legacy=%d inherited=%d, want 0/1/0", p, l, i)
+					}
+					ou, err := om.GetOU(ouGUID)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if ou.Protected {
+						t.Fatal("legacy-only OU must read as protected=false")
+					}
+				},
+				Config: cfg(true),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("ad_ou.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: func(*terraform.State) error {
+					sd, err := readDACL(ctx, client, ouDN)
+					if err != nil {
+						return err
+					}
+					if p, l, i := countDenyDeleteACEs(sd); p != 1 || l != 0 || i != 0 {
+						return fmt.Errorf("after migration: plain=%d legacy=%d inherited=%d, want 1/0/0", p, l, i)
+					}
+					ou, err := om.GetOU(ouGUID)
+					if err != nil {
+						return err
+					}
+					if !ou.Protected {
+						return fmt.Errorf("OU %s should read as protected after migration", ouDN)
+					}
+					return nil
+				},
+			},
+			// Migration happens once.
+			{
+				Config: cfg(true),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+				Check: func(*terraform.State) error {
+					// A child must not inherit a deny-delete copy. Deleted here:
+					// destroy runs before t.Cleanup and AD refuses to delete a non-empty OU.
+					child, err := om.CreateOU(&ldapclient.CreateOURequest{
+						Name:     GenerateTestName("tf-test-ou-legacy-child-"),
+						ParentDN: ouDN,
+					})
+					if err != nil {
+						return fmt.Errorf("creating child OU: %w", err)
+					}
+					sd, rerr := readDACL(ctx, client, child.DistinguishedName)
+					if derr := om.DeleteOU(child.ObjectGUID); derr != nil {
+						return fmt.Errorf("deleting child OU %s: %w", child.DistinguishedName, derr)
+					}
+					if rerr != nil {
+						return rerr
+					}
+					if _, _, i := countDenyDeleteACEs(sd); i != 0 {
+						return fmt.Errorf("child OU inherited %d deny-delete ACE(s)", i)
+					}
+					return nil
+				},
+			},
+			// Unprotect so the automatic destroy works.
+			{Config: cfg(false)},
 		},
 	})
 }

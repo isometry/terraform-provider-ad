@@ -92,3 +92,46 @@ func setupLargeGroupFixture(t *testing.T, ouName string, n int) (string, []strin
 	}
 	return ou.DistinguishedName, dns
 }
+
+// createLargeGroupOutOfBand creates a global security group in ouDN through the
+// LDAP client and adds memberDNs to it (batched by AddGroupMembers). Cleanup
+// deletes the group; being registered after the fixture it runs before the
+// fixture's user and OU cleanups.
+func createLargeGroupOutOfBand(t *testing.T, ouDN string, memberDNs []string) (name, sam, dn, guid string) {
+	t.Helper()
+	ctx := context.Background() // not t.Context(): cancelled before cleanups run
+	cfg := GetTestConfig()
+
+	client, err := ldapclient.NewClient(ctx, newTestLDAPConfig(cfg))
+	if err != nil {
+		t.Fatalf("creating LDAP client: %v", err)
+	}
+	cache := ldapclient.NewCacheManager()
+	gm := ldapclient.NewGroupManager(ctx, client, cfg.BaseDN, cache)
+
+	name = GenerateTestName("tf-lg-grp-")
+	sam = GenerateTestSAMName("tflgg")
+	group, err := gm.CreateGroup(&ldapclient.CreateGroupRequest{
+		Name:           name,
+		SAMAccountName: sam,
+		Container:      ouDN,
+		Scope:          ldapclient.GroupScopeGlobal,
+		Category:       ldapclient.GroupCategorySecurity,
+	})
+	if err != nil {
+		_ = client.Close()
+		t.Fatalf("creating group: %v", err)
+	}
+	t.Cleanup(func() {
+		defer client.Close() //nolint:errcheck
+		if err := gm.DeleteGroup(group.ObjectGUID); err != nil {
+			log.Printf("cleanup: deleting group %s: %v", group.DistinguishedName, err)
+		}
+	})
+
+	gmm := ldapclient.NewGroupMembershipManager(ctx, client, cfg.BaseDN, cache)
+	if err := gmm.AddGroupMembers(group.ObjectGUID, memberDNs, nil); err != nil {
+		t.Fatalf("adding %d members: %v", len(memberDNs), err)
+	}
+	return name, sam, group.DistinguishedName, group.ObjectGUID
+}
