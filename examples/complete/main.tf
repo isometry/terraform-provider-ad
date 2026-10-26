@@ -58,10 +58,10 @@ resource "ad_ou" "it_groups" {
 }
 
 resource "ad_ou" "it_service_accounts" {
-  name                  = "Service Accounts"
-  path                  = ad_ou.it_department.dn
-  description           = "IT service accounts"
-  protect_from_deletion = true
+  name        = "Service Accounts"
+  path        = ad_ou.it_department.dn
+  description = "IT service accounts"
+  protected   = true
 }
 
 # Create IT teams

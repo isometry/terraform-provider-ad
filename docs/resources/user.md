@@ -93,7 +93,7 @@ resource "ad_user" "service_account" {
 
 > **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
 
-- `change_password_at_logon` (Boolean) Whether the user must change their password at next logon. On Create, defaults to `true` when no `password` is set and `false` otherwise. On Update, the prior state value is preserved when this attribute is omitted from configuration.
+- `change_password_at_logon` (Boolean) Whether the user must change their password at next logon. On Create, defaults to `true` when no `password` is set and `false` otherwise. On Update, the prior state value is preserved when this attribute is omitted from configuration. Setting it to `false` is rejected for an account without a password (on create, or on update when changing from `true` without a `password`), because Active Directory would force a change at first logon anyway.
 - `city` (String) The city/locality of the user.
 - `company` (String) The company name of the user.
 - `country` (String) The country of the user.
@@ -104,7 +104,7 @@ resource "ad_user" "service_account" {
 - `email_address` (String) The primary email address of the user (mail attribute).
 - `employee_id` (String) The employee ID of the user.
 - `employee_number` (String) The employee number of the user.
-- `enabled` (Boolean) Whether the user account is enabled. Defaults to `true`.
+- `enabled` (Boolean) Whether the user account is enabled. Defaults to `true`. Active Directory cannot enable an account that has no usable password, so on create the planned value is `false` when no `password` is configured. On update, the prior state value is kept when this attribute is omitted, and an explicit `true` is planned as `false` while the account still has `change_password_at_logon = true` and no `password` is supplied.
 - `fax` (String) The fax number of the user.
 - `given_name` (String) The first name (given name) of the user.
 - `home_directory` (String) The home directory path of the user (e.g., `\\server\share\%username%`).
@@ -118,7 +118,7 @@ resource "ad_user" "service_account" {
 - `office` (String) The physical office location of the user.
 - `office_phone` (String) The office telephone number of the user.
 - `organization` (String) The organization of the user.
-- `password` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) The password for the user. This is **write-only** and never stored in state. When `password_version` is 0 or omitted, the password is only set on create. When `password_version` > 0, the password is set whenever the version changes. Requires LDAPS connection. **Note**: Requires Terraform 1.11+.
+- `password` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) The password for the user. This is **write-only** and never stored in state. When `password_version` is 0 or omitted, the password is only set on create. When `password_version` > 0, the password is set whenever the version changes. The provider refuses to write the password unless the live LDAP connection is encrypted (an `ldaps://` URL, or a successful StartTLS via `use_tls = true`), regardless of the `use_tls` setting itself. **Note**: Requires Terraform 1.11+.
 - `password_never_expires` (Boolean) Whether the user's password never expires. Defaults to `false`.
 - `password_version` (Number) Controls when the password is applied. When set to `0` (default), password is only set on resource creation. When set to a value > 0, changing this value triggers a password reset. Increment this value to force a password change on the next apply.
 - `po_box` (String) The P.O. Box of the user.

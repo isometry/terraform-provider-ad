@@ -84,11 +84,11 @@ resource "ad_group_membership" "admin_members" {
 ### Required
 
 - `group_id` (String) The objectGUID of the group whose membership is being managed. This must be the GUID of an existing Active Directory group.
-- `members` (Set of String) Set of group member identifiers. Members can be specified using any supported identifier format: Distinguished Name (DN), Object GUID, User Principal Name (UPN), SAM Account Name, or Security Identifier (SID). This attribute preserves your original configuration exactly as specified. **Note**: This resource manages the complete membership set - members not listed here will be removed from the group.
+- `members` (Set of String) Set of group member identifiers. Members can be specified using any supported identifier format: Distinguished Name (DN), Object GUID, User Principal Name (UPN), SAM Account Name, or Security Identifier (SID). A `DOMAIN\account` SAM name is validated against the NetBIOS name of the domain the provider is configured for: any other prefix is an error (if the NetBIOS name cannot be read, the prefix is ignored and a warning is logged). This attribute preserves your original configuration exactly as specified. **Note**: This resource manages the complete membership set - members not listed here will be removed from the group.
 
 ### Optional
 
-- `ignore_missing_members` (Boolean) When `true`, member identifiers that cannot be resolved (e.g., deleted AD objects) emit warnings instead of errors during planning, and the unresolvable members are excluded from the group. When `false` (strict mode), unresolvable members cause a planning error.
+- `ignore_missing_members` (Boolean) When `true`, member identifiers that cannot be resolved (e.g., deleted AD objects) emit warnings instead of errors during planning, and the unresolvable members are excluded from the group. When `false` (strict mode), unresolvable members cause a planning error. An identifier that names a different domain than the provider is configured for (a `DOMAIN\` prefix that does not match) is always an error, even when `true`.
 
 If not specified, inherits from the provider-level `ignore_missing_members` setting. The effective default is `false` when neither resource nor provider specifies a value.
 

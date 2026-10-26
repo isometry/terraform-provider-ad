@@ -83,13 +83,13 @@ output "ou_details" {
       name        = data.ad_ou.departments.name
       dn          = data.ad_ou.departments.dn
       description = data.ad_ou.departments.description
-      protected   = data.ad_ou.departments.protect_from_deletion
+      protected   = data.ad_ou.departments.protected
     }
     it_department = {
       name        = data.ad_ou.by_dn.name
       dn          = data.ad_ou.by_dn.dn
       description = data.ad_ou.by_dn.description
-      protected   = data.ad_ou.by_dn.protect_from_deletion
+      protected   = data.ad_ou.by_dn.protected
     }
   }
 }

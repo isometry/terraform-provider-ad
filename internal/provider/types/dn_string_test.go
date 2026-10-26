@@ -223,8 +223,8 @@ func TestDNStringValue_StringSemanticEquals(t *testing.T) {
 			expectedEqual: true,
 		},
 		"unknown_vs_unknown_equal": {
-			old:           DNStringUnknown(),
-			new:           DNStringUnknown(),
+			old:           DNStringValue{StringValue: basetypes.NewStringUnknown()},
+			new:           DNStringValue{StringValue: basetypes.NewStringUnknown()},
 			expectedEqual: true,
 		},
 		"null_vs_known_not_equal": {
@@ -233,13 +233,13 @@ func TestDNStringValue_StringSemanticEquals(t *testing.T) {
 			expectedEqual: false,
 		},
 		"unknown_vs_known_not_equal": {
-			old:           DNStringUnknown(),
+			old:           DNStringValue{StringValue: basetypes.NewStringUnknown()},
 			new:           DNString("CN=test,DC=x"),
 			expectedEqual: false,
 		},
 		"null_vs_unknown_not_equal": {
 			old:           DNStringNull(),
-			new:           DNStringUnknown(),
+			new:           DNStringValue{StringValue: basetypes.NewStringUnknown()},
 			expectedEqual: false,
 		},
 	}
@@ -306,7 +306,7 @@ func TestDNString_Helpers(t *testing.T) {
 	assert.True(t, n.IsNull())
 	assert.False(t, n.IsUnknown())
 
-	u := DNStringUnknown()
+	u := DNStringValue{StringValue: basetypes.NewStringUnknown()}
 	assert.False(t, u.IsNull())
 	assert.True(t, u.IsUnknown())
 }

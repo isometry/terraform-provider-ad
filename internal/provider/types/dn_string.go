@@ -160,10 +160,3 @@ func DNStringNull() DNStringValue {
 		StringValue: basetypes.NewStringNull(),
 	}
 }
-
-// DNStringUnknown is a helper function to create an unknown DNStringValue.
-func DNStringUnknown() DNStringValue {
-	return DNStringValue{
-		StringValue: basetypes.NewStringUnknown(),
-	}
-}

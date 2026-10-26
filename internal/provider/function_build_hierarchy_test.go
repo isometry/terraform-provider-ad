@@ -558,3 +558,50 @@ func TestParseBuildHierarchyConfig_Defaults(t *testing.T) {
 	assert.Equal(t, int64(2), cfg.MaxDepth)
 	assert.Equal(t, "x", cfg.GetDefaultRoot())
 }
+
+func TestBuildHierarchy_DanglingParentError(t *testing.T) {
+	_, err := executeFunction(t, map[string]any{
+		"a": map[string]any{"parent": "typo"},
+	}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `object "a": parent "typo" does not exist`)
+}
+
+func TestBuildHierarchy_DanglingParentAmongValidObjects(t *testing.T) {
+	_, err := executeFunction(t, map[string]any{
+		"root":  map[string]any{"id": "root"},
+		"child": map[string]any{"parent": "root"},
+		"lost":  map[string]any{"parent": "nowhere"},
+	}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `object "lost": parent "nowhere" does not exist`)
+}
+
+func TestBuildHierarchy_DanglingParentDeterministic(t *testing.T) {
+	input := map[string]any{
+		"z": map[string]any{"parent": "missing_z"},
+		"a": map[string]any{"parent": "missing_a"},
+		"m": map[string]any{"parent": "missing_m"},
+	}
+	for range 20 {
+		_, err := executeFunction(t, input, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `object "a": parent "missing_a" does not exist`)
+	}
+}
+
+func TestBuildHierarchy_DefaultRootNamesExistingKey(t *testing.T) {
+	result, err := executeFunction(t, map[string]any{
+		"top":    map[string]any{"id": "top"},
+		"orphan": map[string]any{"id": "orphan"},
+	}, map[string]any{"default_root": "top"})
+	require.NoError(t, err)
+
+	require.Len(t, result, 1)
+	top, ok := result["top"].(map[string]any)
+	require.True(t, ok)
+	children, ok := top["children"].(map[string]any)
+	require.True(t, ok)
+	require.Len(t, children, 1)
+	require.Contains(t, children, "orphan")
+}

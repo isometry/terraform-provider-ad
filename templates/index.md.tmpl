@@ -59,9 +59,19 @@ provider "ad" {
 }
 ```
 
+With `kerberos_keytab`, `username` is optional: when it is omitted the principal is taken from the keytab. An existing credential cache works the same way, with the principal taken from the cache:
+
+```terraform
+provider "ad" {
+  domain         = "example.com"
+  kerberos_realm  = "EXAMPLE.COM"
+  kerberos_ccache = "/tmp/krb5cc_1000"
+}
+```
+
 ### Certificate-Based Authentication
 
-For mutual TLS authentication:
+For mutual TLS authentication. The client certificate is presented to the server and the bind uses SASL EXTERNAL, so the connection must be encrypted (an `ldaps://` URL or `use_tls = true`). Certificate authentication is used only when no Kerberos credentials and no `username`/`password` are configured:
 
 ```terraform
 provider "ad" {

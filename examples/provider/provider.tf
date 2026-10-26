@@ -20,7 +20,7 @@ provider "ad" {
   tls_ca_cert_file = "/etc/ssl/certs/corporate-ca.pem"
 }
 
-# Example 3: Kerberos authentication
+# Example 3: Kerberos authentication (username is optional with a keytab: the principal is taken from it)
 provider "ad" {
   domain          = "example.com"
   kerberos_realm  = "EXAMPLE.COM"
@@ -28,7 +28,8 @@ provider "ad" {
   kerberos_config = "/etc/krb5.conf"
 }
 
-# Example 4: Certificate-based authentication
+# Example 4: Certificate-based authentication (SASL EXTERNAL: needs ldaps:// or use_tls = true,
+# and is used only when no Kerberos and no username/password is configured)
 provider "ad" {
   ldap_url             = "ldaps://dc1.example.com:636"
   base_dn              = "dc=example,dc=com"

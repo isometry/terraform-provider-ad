@@ -74,83 +74,63 @@ locals {
   })
 }
 
-# Expected result structure for org_hierarchy:
+# Expected result structure for org_hierarchy (only roots at the top level;
+# children are maps keyed by the original object keys):
 # {
 #   "it" = {
 #     name = "IT Department"
-#     children = [
-#       {
-#         name = "Development Team"
-#         parent = "it"
-#       },
-#       {
-#         name = "Operations Team"
+#     children = {
+#       "dev-team" = {
+#         name   = "Development Team"
 #         parent = "it"
 #       }
-#     ]
+#       "ops-team" = {
+#         name   = "Operations Team"
+#         parent = "it"
+#       }
+#     }
 #   }
 #   "hr" = {
 #     name = "HR Department"
-#     children = [
-#       {
-#         name = "Recruiting"
+#     children = {
+#       "recruiting" = {
+#         name   = "Recruiting"
 #         parent = "hr"
 #       }
-#     ]
-#   }
-#   "dev-team" = {
-#     name = "Development Team"
-#     parent = "it"
-#   }
-#   "ops-team" = {
-#     name = "Operations Team"
-#     parent = "it"
-#   }
-#   "recruiting" = {
-#     name = "Recruiting"
-#     parent = "hr"
+#     }
 #   }
 # }
 
-# Expected result structure for project_hierarchy:
+# Expected result structure for project_hierarchy (children_field = "tasks"):
 # {
 #   "project-a" = {
-#     title = "Project Alpha"
+#     title   = "Project Alpha"
 #     manager = "john.doe"
-#     tasks = [
-#       {
-#         title = "Database Design"
-#         reports_to = "project-a"
-#       },
-#       {
-#         title = "API Development"
+#     tasks = {
+#       "task-1" = {
+#         title      = "Database Design"
 #         reports_to = "project-a"
 #       }
-#     ]
+#       "task-2" = {
+#         title      = "API Development"
+#         reports_to = "project-a"
+#       }
+#     }
 #   }
 #   "project-b" = {
-#     title = "Project Beta"
+#     title   = "Project Beta"
 #     manager = "jane.smith"
-#     tasks = [
-#       {
-#         title = "Testing"
+#     tasks = {
+#       "task-3" = {
+#         title      = "Testing"
 #         reports_to = "project-b"
 #       }
-#     ]
-#   }
-#   "task-1" = {
-#     title = "Database Design"
-#     reports_to = "project-a"
-#   }
-#   "task-2" = {
-#     title = "API Development"
-#     reports_to = "project-a"
-#   }
-#   "task-3" = {
-#     title = "Testing"
-#     reports_to = "project-b"
+#     }
 #   }
 # }
+
+# A parent that does not name an existing key is an error, e.g.
+# { a = { parent = "typo" } } fails with: object "a": parent "typo" does not exist
 
 # Output the hierarchical structures
 output "organization" {
