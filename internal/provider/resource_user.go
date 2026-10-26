@@ -35,7 +35,6 @@ import (
 var _ resource.Resource = &UserResource{}
 var _ resource.ResourceWithImportState = &UserResource{}
 var _ resource.ResourceWithValidateConfig = &UserResource{}
-var _ resource.ResourceWithConfigValidators = &UserResource{}
 var _ resource.ResourceWithModifyPlan = &UserResource{}
 
 // Schema-level regex validators compiled once at package load.
@@ -165,7 +164,7 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 					"**Changing this value will destroy and recreate the user.**",
 				Required: true,
 				Validators: []validator.String{
-					stringvalidator.LengthBetween(1, 64),
+					stringvalidator.UTF8LengthBetween(1, 64),
 					stringvalidator.RegexMatches(
 						userNameRegex,
 						"User name cannot contain double quotes",
@@ -180,7 +179,7 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 					"This is the primary login name for the user.",
 				Required: true,
 				Validators: []validator.String{
-					stringvalidator.LengthBetween(1, 256),
+					stringvalidator.UTF8LengthBetween(1, 256),
 					stringvalidator.RegexMatches(
 						userPrincipalNameRegex,
 						"UPN must be in the format user@domain",
@@ -193,7 +192,7 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Optional: true,
 				Computed: true,
 				Validators: []validator.String{
-					stringvalidator.LengthBetween(1, 20),
+					stringvalidator.UTF8LengthBetween(1, 20),
 					stringvalidator.RegexMatches(
 						userSAMAccountRegex,
 						"SAM account name can only contain letters, numbers, dots, underscores, and hyphens",
@@ -297,35 +296,36 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "The display name of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(256),
+					stringvalidator.UTF8LengthAtMost(256),
 				},
 			},
 			"description": schema.StringAttribute{
 				MarkdownDescription: "A description for the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(1024),
+					stringvalidator.UTF8LengthAtLeast(1),
+					stringvalidator.UTF8LengthAtMost(1024),
 				},
 			},
 			"given_name": schema.StringAttribute{
 				MarkdownDescription: "The first name (given name) of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(64),
+					stringvalidator.UTF8LengthAtMost(64),
 				},
 			},
 			"surname": schema.StringAttribute{
 				MarkdownDescription: "The last name (surname) of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(64),
+					stringvalidator.UTF8LengthAtMost(64),
 				},
 			},
 			"initials": schema.StringAttribute{
 				MarkdownDescription: "The middle initials of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(6),
+					stringvalidator.UTF8LengthAtMost(6),
 				},
 			},
 
@@ -334,42 +334,42 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "The primary email address of the user (mail attribute).",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(256),
+					stringvalidator.UTF8LengthAtMost(256),
 				},
 			},
 			"home_phone": schema.StringAttribute{
 				MarkdownDescription: "The home telephone number of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(64),
+					stringvalidator.UTF8LengthAtMost(64),
 				},
 			},
 			"mobile_phone": schema.StringAttribute{
 				MarkdownDescription: "The mobile telephone number of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(64),
+					stringvalidator.UTF8LengthAtMost(64),
 				},
 			},
 			"office_phone": schema.StringAttribute{
 				MarkdownDescription: "The office telephone number of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(64),
+					stringvalidator.UTF8LengthAtMost(64),
 				},
 			},
 			"fax": schema.StringAttribute{
 				MarkdownDescription: "The fax number of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(64),
+					stringvalidator.UTF8LengthAtMost(64),
 				},
 			},
 			"home_page": schema.StringAttribute{
 				MarkdownDescription: "The web page URL of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(2048),
+					stringvalidator.UTF8LengthAtMost(2048),
 				},
 			},
 
@@ -378,42 +378,42 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "The street address of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(1024),
+					stringvalidator.UTF8LengthAtMost(1024),
 				},
 			},
 			"city": schema.StringAttribute{
 				MarkdownDescription: "The city/locality of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(128),
+					stringvalidator.UTF8LengthAtMost(128),
 				},
 			},
 			"state": schema.StringAttribute{
 				MarkdownDescription: "The state/province of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(128),
+					stringvalidator.UTF8LengthAtMost(128),
 				},
 			},
 			"postal_code": schema.StringAttribute{
 				MarkdownDescription: "The ZIP/postal code of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(40),
+					stringvalidator.UTF8LengthAtMost(40),
 				},
 			},
 			"country": schema.StringAttribute{
 				MarkdownDescription: "The country of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(128),
+					stringvalidator.UTF8LengthAtMost(128),
 				},
 			},
 			"po_box": schema.StringAttribute{
 				MarkdownDescription: "The P.O. Box of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(40),
+					stringvalidator.UTF8LengthAtMost(40),
 				},
 			},
 
@@ -422,21 +422,21 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "The job title of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(128),
+					stringvalidator.UTF8LengthAtMost(128),
 				},
 			},
 			"department": schema.StringAttribute{
 				MarkdownDescription: "The department of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(64),
+					stringvalidator.UTF8LengthAtMost(64),
 				},
 			},
 			"company": schema.StringAttribute{
 				MarkdownDescription: "The company name of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(64),
+					stringvalidator.UTF8LengthAtMost(64),
 				},
 			},
 			"manager": schema.StringAttribute{
@@ -451,35 +451,35 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "The employee ID of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(16),
+					stringvalidator.UTF8LengthAtMost(16),
 				},
 			},
 			"employee_number": schema.StringAttribute{
 				MarkdownDescription: "The employee number of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(512),
+					stringvalidator.UTF8LengthAtMost(512),
 				},
 			},
 			"office": schema.StringAttribute{
 				MarkdownDescription: "The physical office location of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(128),
+					stringvalidator.UTF8LengthAtMost(128),
 				},
 			},
 			"division": schema.StringAttribute{
 				MarkdownDescription: "The division of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(256),
+					stringvalidator.UTF8LengthAtMost(256),
 				},
 			},
 			"organization": schema.StringAttribute{
 				MarkdownDescription: "The organization of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(64),
+					stringvalidator.UTF8LengthAtMost(64),
 				},
 			},
 
@@ -488,28 +488,28 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "The home directory path of the user (e.g., `\\\\server\\share\\%username%`).",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(260),
+					stringvalidator.UTF8LengthAtMost(260),
 				},
 			},
 			"home_drive": schema.StringAttribute{
 				MarkdownDescription: "The home drive letter of the user (e.g., `H:`).",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(3),
+					stringvalidator.UTF8LengthAtMost(3),
 				},
 			},
 			"profile_path": schema.StringAttribute{
 				MarkdownDescription: "The profile path of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(260),
+					stringvalidator.UTF8LengthAtMost(260),
 				},
 			},
 			"logon_script": schema.StringAttribute{
 				MarkdownDescription: "The logon script path of the user.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(260),
+					stringvalidator.UTF8LengthAtMost(260),
 				},
 			},
 
@@ -589,13 +589,6 @@ func (r *UserResource) ValidateConfig(ctx context.Context, req resource.Validate
 	}
 }
 
-// ConfigValidators implements resource.ResourceWithConfigValidators.
-func (r *UserResource) ConfigValidators(_ context.Context) []resource.ConfigValidator {
-	return []resource.ConfigValidator{
-		validators.ChangePasswordAtLogonRequiresPassword(),
-	}
-}
-
 func (r *UserResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
@@ -644,6 +637,11 @@ func (r *UserResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRe
 		return
 	}
 
+	resp.Diagnostics.Append(validateChangePasswordAtLogonPlan(ctx, req)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	// Create: leave framework Unknown defaults in place.
 	if req.State.Raw.IsNull() {
 		return
@@ -688,9 +686,56 @@ func (r *UserResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRe
 	}
 	if differs {
 		plan.WhenChanged = types.StringUnknown()
+		// Volatile server-side values: UseStateForUnknown keeps them quiet on
+		// no-op plans (the framework marks computed attrs unknown on any raw
+		// plan/state diff, even one a modifier later undoes); on a real change
+		// Update returns fresh values, so they must be unknown.
+		plan.AccountLockedOut = types.BoolUnknown()
+		plan.PasswordNotRequired = types.BoolUnknown()
+		plan.UserAccountControl = types.Int64Unknown()
+		plan.MemberOf = types.ListUnknown(types.StringType)
+		plan.PrimaryGroup = types.StringUnknown()
+		plan.LastLogon = types.StringUnknown()
+		plan.AccountExpires = types.StringUnknown()
 	}
 
 	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
+}
+
+// validateChangePasswordAtLogonPlan rejects change_password_at_logon = false
+// when AD would force a change at next logon anyway. On create that is any
+// account without a password; on update only a true -> false transition without
+// a configured password (imported users that already have a password in AD and
+// state false must keep planning cleanly).
+func validateChangePasswordAtLogonPlan(ctx context.Context, req resource.ModifyPlanRequest) diag.Diagnostics {
+	var diags diag.Diagnostics
+	var cpal types.Bool
+	var password types.String
+	diags.Append(req.Config.GetAttribute(ctx, path.Root("change_password_at_logon"), &cpal)...)
+	diags.Append(req.Config.GetAttribute(ctx, path.Root("password"), &password)...)
+	if diags.HasError() || cpal.IsNull() || cpal.IsUnknown() || cpal.ValueBool() || password.IsUnknown() {
+		return diags
+	}
+	if !password.IsNull() && password.ValueString() != "" {
+		return diags
+	}
+
+	if !req.State.Raw.IsNull() {
+		var stateCPAL types.Bool
+		diags.Append(req.State.GetAttribute(ctx, path.Root("change_password_at_logon"), &stateCPAL)...)
+		if diags.HasError() || !stateCPAL.ValueBool() {
+			return diags
+		}
+	}
+
+	diags.AddAttributeError(
+		path.Root("change_password_at_logon"),
+		"change_password_at_logon = false requires a password",
+		"Setting change_password_at_logon = false is not supported for passwordless accounts. "+
+			"AD requires the user to change their password at first logon when no password has been set. "+
+			"Either set a password or remove the change_password_at_logon = false setting.",
+	)
+	return diags
 }
 
 type rotationOutcome int
@@ -963,15 +1008,21 @@ func (r *UserResource) Update(ctx context.Context, req resource.UpdateRequest, r
 
 	if updateReq == nil {
 		tflog.Debug(ctx, "No changes detected for AD user")
-		// Plan == state for AD-tracked attrs. After a rotation, currentData
-		// already reflects the post-reset server state from the refresh above;
-		// copy the server-computed fields onto data without a second round trip.
-		if passwordReset {
-			data.WhenChanged = currentData.WhenChanged
-			data.PasswordLastSet = currentData.PasswordLastSet
-			data.UserAccountControl = currentData.UserAccountControl
-			data.PasswordNotRequired = currentData.PasswordNotRequired
-			data.AccountLockedOut = currentData.AccountLockedOut
+		// Nothing to write, but the plan still carries unknown computed values
+		// (when_changed, password_last_set, ...), e.g. after a password reset or a
+		// password_version change that did not reset. State must come from the
+		// server, never from the plan.
+		refreshed, err := userManager.GetUserByGUID(data.ID.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Error Reading User After Update",
+				fmt.Sprintf("Could not refresh user with ID %s: %s", data.ID.ValueString(), err.Error()),
+			)
+			return
+		}
+		r.userToModel(ctx, refreshed, &data, &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
 		}
 		resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 		return

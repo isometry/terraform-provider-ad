@@ -45,7 +45,7 @@ type OUResourceModel struct {
 	Path        customtypes.DNStringValue `tfsdk:"path"`        // Required - Parent container DN
 	Description types.String              `tfsdk:"description"` // Optional - OU description
 	Protected   types.Bool                `tfsdk:"protected"`   // Optional+Computed+Default: false
-	ManagedBy   customtypes.DNStringValue `tfsdk:"managed_by"`  // Optional+Computed - managedBy attribute
+	ManagedBy   customtypes.DNStringValue `tfsdk:"managed_by"`  // Optional - managedBy attribute
 	// Computed attributes
 	DN   customtypes.DNStringValue `tfsdk:"dn"`   // Computed - Full Distinguished Name
 	GUID types.String              `tfsdk:"guid"` // Computed - GUID string (same as ID)
@@ -72,7 +72,7 @@ func (r *OUResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				MarkdownDescription: "The name of the organizational unit. This becomes the CN component of the distinguished name.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthBetween(1, 64),
+					stringvalidator.UTF8LengthBetween(1, 64),
 					stringvalidator.RegexMatches(
 						regexp.MustCompile(`^[^"\\#+,;<=>\r\n/]+$`),
 						"OU name cannot contain double quotes, backslashes, hash, plus, comma, semicolon, angle brackets, carriage return, newline, or forward slash",
@@ -91,7 +91,8 @@ func (r *OUResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				MarkdownDescription: "A description for the organizational unit. This is optional and can be used to provide additional context about the OU's purpose.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(1024),
+					stringvalidator.UTF8LengthAtLeast(1),
+					stringvalidator.UTF8LengthAtMost(1024),
 				},
 			},
 			"protected": schema.BoolAttribute{

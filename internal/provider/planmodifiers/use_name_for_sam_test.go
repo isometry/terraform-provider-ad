@@ -1,6 +1,7 @@
 package planmodifiers_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -215,6 +216,7 @@ func TestUseNameForSAMAccountName_PlanModifyString_Users(t *testing.T) {
 		expectedPlanValue  types.String
 		expectDiagnostics  bool
 		expectErrorSummary string
+		expectErrorDetail  string // substring; empty = not checked
 	}{
 		"explicit_sam_account_name_provided": {
 			configValue:       types.StringValue("explicit"),
@@ -240,6 +242,15 @@ func TestUseNameForSAMAccountName_PlanModifyString_Users(t *testing.T) {
 			expectedPlanValue:  types.StringNull(),                         // Should not set value
 			expectDiagnostics:  true,
 			expectErrorSummary: "SAM Account Name Required",
+			expectErrorDetail:  "exceeds the 20 character limit",
+		},
+		"non_ascii_19_runes_reports_invalid_characters_not_length": {
+			configValue:        types.StringNull(),
+			nameValue:          types.StringValue(strings.Repeat("é", 19)), // 19 runes, 38 bytes
+			expectedPlanValue:  types.StringNull(),
+			expectDiagnostics:  true,
+			expectErrorSummary: "SAM Account Name Required",
+			expectErrorDetail:  "not valid for SAM account names",
 		},
 		"name_with_invalid_characters": {
 			configValue:        types.StringNull(),
@@ -335,7 +346,7 @@ func TestUseNameForSAMAccountName_PlanModifyString_Users(t *testing.T) {
 			if test.expectDiagnostics && resp.Diagnostics.HasError() {
 				foundExpectedError := false
 				for _, diag := range resp.Diagnostics.Errors() {
-					if diag.Summary() == test.expectErrorSummary {
+					if diag.Summary() == test.expectErrorSummary && strings.Contains(diag.Detail(), test.expectErrorDetail) {
 						foundExpectedError = true
 						break
 					}

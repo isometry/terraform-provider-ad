@@ -50,7 +50,7 @@ type GroupResourceModel struct {
 	Scope          types.String              `tfsdk:"scope"`            // Optional+Computed+Default: "global"
 	Category       types.String              `tfsdk:"category"`         // Optional+Computed+Default: "security"
 	Description    types.String              `tfsdk:"description"`      // Optional
-	ManagedBy      customtypes.DNStringValue `tfsdk:"managed_by"`       // Optional+Computed - managedBy attribute
+	ManagedBy      customtypes.DNStringValue `tfsdk:"managed_by"`       // Optional - managedBy attribute
 	// Computed attributes
 	DistinguishedName customtypes.DNStringValue `tfsdk:"dn"`  // Computed
 	SID               types.String              `tfsdk:"sid"` // Computed
@@ -77,7 +77,7 @@ func (r *GroupResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				MarkdownDescription: "The name of the group (cn attribute). This is the display name visible in Active Directory.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthBetween(1, 64),
+					stringvalidator.UTF8LengthBetween(1, 64),
 					stringvalidator.RegexMatches(
 						regexp.MustCompile(`^[^"]+$`),
 						"Group name cannot contain double quotes",
@@ -91,7 +91,7 @@ func (r *GroupResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				Optional: true,
 				Computed: true,
 				Validators: []validator.String{
-					stringvalidator.LengthBetween(1, 64),
+					stringvalidator.UTF8LengthBetween(1, 64),
 					stringvalidator.RegexMatches(
 						regexp.MustCompile(`^[a-zA-Z0-9._-]+$`),
 						"SAM account name can only contain letters, numbers, dots, underscores, and hyphens",
@@ -131,7 +131,8 @@ func (r *GroupResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				MarkdownDescription: "A description for the group. This is optional and can be used to provide additional context about the group's purpose.",
 				Optional:            true,
 				Validators: []validator.String{
-					stringvalidator.LengthAtMost(1024),
+					stringvalidator.UTF8LengthAtLeast(1),
+					stringvalidator.UTF8LengthAtMost(1024),
 				},
 			},
 			"managed_by": schema.StringAttribute{
