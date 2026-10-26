@@ -151,205 +151,21 @@ func (c *client) Close() error {
 	return c.pool.Close()
 }
 
-// BindWithConfig performs authentication using the client's configuration.
-func (c *client) BindWithConfig(ctx context.Context) error {
-	if !c.config.HasAuthentication() {
-		tflog.SubsystemError(c.ctx, "ldap", "No authentication configuration available")
-		return fmt.Errorf("no authentication configuration available")
-	}
-
-	start := time.Now()
-	authMethod := c.config.GetAuthMethod()
-
-	// Log operation start
-	tflog.SubsystemDebug(c.ctx, "ldap", "Starting authentication", map[string]any{
-		"operation":   "authentication",
-		"auth_method": authMethod.String(),
-		"username":    c.config.Username,
-	})
-
-	conn, err := c.pool.Get(ctx)
-	if err != nil {
-		tflog.SubsystemError(c.ctx, "ldap", "Failed to get connection for authentication", map[string]any{
-			"operation":   "authentication",
-			"auth_method": authMethod.String(),
-			"error":       err.Error(),
-			"duration_ms": time.Since(start).Milliseconds(),
-		})
-		return fmt.Errorf("failed to get connection: %w", err)
-	}
-	defer conn.Close()
-
-	tflog.SubsystemDebug(c.ctx, "ldap", "Starting authentication", map[string]any{
-		"auth_method": authMethod.String(),
-	})
-
-	// Perform authentication based on configured method
-	err = c.withRetry(ctx, func() error {
-		return c.authenticate(ctx, conn.Conn())
-	})
-
-	// Log operation completion
-	fields := map[string]any{
-		"operation":   "authentication",
-		"auth_method": authMethod.String(),
-		"username":    c.config.Username,
-		"duration_ms": time.Since(start).Milliseconds(),
-	}
-
-	if err != nil {
-		fields["error"] = err.Error()
-		tflog.SubsystemError(c.ctx, "ldap", "Authentication operation failed", fields)
-	} else {
-		tflog.SubsystemDebug(c.ctx, "ldap", "Authentication operation completed successfully", fields)
-	}
-
-	return err
-}
-
-// authenticate performs authentication based on the configured method.
-func (c *client) authenticate(ctx context.Context, conn *ldap.Conn) error {
-	authMethod := c.config.GetAuthMethod()
-
-	tflog.SubsystemDebug(c.ctx, "ldap", "Performing authentication", map[string]any{
-		"auth_method": authMethod.String(),
-	})
-
-	start := time.Now()
-	var err error
-
-	switch authMethod {
-	case AuthMethodSimpleBind:
-		err = c.authenticateSimple(conn)
-	case AuthMethodKerberos:
-		err = c.authenticateKerberos(ctx, conn)
-	case AuthMethodExternal:
-		err = c.authenticateExternal(ctx, conn)
-	default:
-		err = fmt.Errorf("unsupported authentication method: %s", authMethod.String())
-	}
-
-	if err != nil {
-		tflog.SubsystemError(c.ctx, "ldap", "Authentication failed", map[string]any{
-			"auth_method": authMethod.String(),
-			"error":       err.Error(),
-			"duration_ms": time.Since(start).Milliseconds(),
-		})
-		return err
-	}
-
-	tflog.SubsystemInfo(c.ctx, "ldap", "Authentication successful", map[string]any{
-		"auth_method": authMethod.String(),
-		"duration_ms": time.Since(start).Milliseconds(),
-	})
-
-	return nil
-}
-
-// authenticateSimple performs simple bind authentication.
-func (c *client) authenticateSimple(conn *ldap.Conn) error {
-	if c.config.Username == "" {
-		tflog.SubsystemError(c.ctx, "ldap", "Username is required for simple bind authentication")
-		return fmt.Errorf("username is required for simple bind authentication")
-	}
-
-	// Handle anonymous bind (empty password)
-	password := c.config.Password
-	isAnonymousBind := password == "" && c.config.Username != ""
-
-	fields := map[string]any{
-		"username":       c.config.Username,
-		"anonymous_bind": isAnonymousBind,
-	}
-
-	tflog.SubsystemDebug(c.ctx, "ldap", "Performing simple bind", fields)
-
-	var err error
-	if isAnonymousBind {
-		// Allow anonymous bind attempt with username only
-		tflog.SubsystemDebug(c.ctx, "ldap", "Attempting anonymous bind with username")
-		err = conn.Bind(c.config.Username, "")
-	} else {
-		tflog.SubsystemDebug(c.ctx, "ldap", "Attempting authenticated bind")
-		err = conn.Bind(c.config.Username, password)
-	}
-
-	if err != nil {
-		fields["operation"] = "simple_bind"
-		fields["error"] = err.Error()
-
-		// Add LDAP-specific error information if available
-		if ldapErr, ok := err.(*ldap.Error); ok {
-			fields["ldap_result_code"] = ldapErr.ResultCode
-			if ldapErr.MatchedDN != "" {
-				fields["ldap_matched_dn"] = ldapErr.MatchedDN
-			}
-			if ldapErr.Err != nil {
-				fields["ldap_diagnostic_message"] = ldapErr.Err.Error()
-			}
-		}
-
-		tflog.SubsystemError(c.ctx, "ldap", "LDAP simple bind operation failed", fields)
-		return err
-	}
-
-	tflog.SubsystemDebug(c.ctx, "ldap", "Simple bind successful", fields)
-	return nil
-}
-
-// authenticateKerberos performs GSSAPI/Kerberos authentication.
-func (c *client) authenticateKerberos(ctx context.Context, conn *ldap.Conn) error {
-	// For client connections, we need to extract server info from the config
-	// Since client doesn't have direct access to ServerInfo like pool does,
-	// we'll create it from the first available server or derive from connection
-
-	var serverInfo *ServerInfo
-
-	// Try to get server info from the config
-	if len(c.config.LDAPURLs) > 0 {
-		// Use the first LDAP URL to create ServerInfo
-		parsedServer, err := ParseLDAPURL(c.config.LDAPURLs[0])
-		if err != nil {
-			return fmt.Errorf("failed to parse LDAP URL for Kerberos: %w", err)
-		}
-		serverInfo = parsedServer
-	} else if c.config.Domain != "" {
-		// For domain-based configs, we need to construct a hostname
-		// This is a fallback - ideally we'd have access to the actual connected server
-		serverInfo = &ServerInfo{
-			Host:   c.config.Domain,
-			Port:   636, // Default LDAPS port
-			UseTLS: true,
-		}
-	} else {
-		return fmt.Errorf("insufficient connection information for Kerberos authentication")
-	}
-
-	return performKerberosAuthWithContext(ctx, conn, c.config, serverInfo)
-}
-
-// authenticateExternal performs SASL EXTERNAL authentication using the TLS
-// client certificate presented during the handshake.
-func (c *client) authenticateExternal(ctx context.Context, conn externalBinder) error {
-	if !c.usesTLS() {
+// externalBind performs SASL EXTERNAL using the TLS client certificate presented
+// during the handshake. Shared by the pool so the TLS rule lives in one place.
+func externalBind(cfg *ConnectionConfig, conn externalBinder) error {
+	if !cfg.usesTLS() {
 		return errors.New("client certificate authentication needs TLS: use an ldaps:// URL or set use_tls = true")
 	}
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-	}
-
 	return conn.ExternalBind()
 }
 
 // usesTLS reports whether connections are configured for ldaps:// or StartTLS.
-func (c *client) usesTLS() bool {
-	if c.config.UseTLS && !c.config.SkipTLS {
+func (c *ConnectionConfig) usesTLS() bool {
+	if c.UseTLS && !c.SkipTLS {
 		return true
 	}
-	for _, u := range c.config.LDAPURLs {
+	for _, u := range c.LDAPURLs {
 		if strings.HasPrefix(strings.ToLower(u), "ldaps://") {
 			return true
 		}

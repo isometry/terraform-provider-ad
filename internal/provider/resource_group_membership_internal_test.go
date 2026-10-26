@@ -94,8 +94,6 @@ func (s *stubMembershipClient) Bind(ctx context.Context, username, password stri
 	return nil
 }
 
-func (s *stubMembershipClient) BindWithConfig(ctx context.Context) error { return nil }
-
 func (s *stubMembershipClient) Search(ctx context.Context, req *ldapclient.SearchRequest) (*ldapclient.SearchResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

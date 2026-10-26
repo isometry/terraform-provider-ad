@@ -63,8 +63,6 @@ func (c *recordingMembershipClient) Bind(ctx context.Context, username, password
 	return nil
 }
 
-func (c *recordingMembershipClient) BindWithConfig(ctx context.Context) error { return nil }
-
 func (c *recordingMembershipClient) GetBaseDN(ctx context.Context) (string, error) {
 	return c.baseDN, nil
 }

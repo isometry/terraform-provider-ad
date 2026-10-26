@@ -118,9 +118,6 @@ type Client interface {
 	Connect(ctx context.Context) error
 	Close() error
 
-	// Authentication
-	BindWithConfig(ctx context.Context) error // Uses authentication from ConnectionConfig
-
 	// Basic operations
 	Search(ctx context.Context, req *SearchRequest) (*SearchResult, error)
 	SearchWithPaging(ctx context.Context, req *SearchRequest) (*SearchResult, error)
@@ -299,7 +296,7 @@ func (a AuthMethod) String() string {
 // GetAuthMethod determines the authentication method from the configuration.
 func (c *ConnectionConfig) GetAuthMethod() AuthMethod {
 	// Kerberos authentication takes precedence
-	if c.KerberosRealm != "" && (c.KerberosKeytab != "" || c.Username != "") {
+	if c.hasKerberos() {
 		return AuthMethodKerberos
 	}
 
@@ -321,10 +318,15 @@ func (c *ConnectionConfig) GetAuthMethod() AuthMethod {
 	return AuthMethodSimpleBind
 }
 
+// hasKerberos reports whether Kerberos is configured: a realm plus any credential source.
+func (c *ConnectionConfig) hasKerberos() bool {
+	return c.KerberosRealm != "" && (c.KerberosKeytab != "" || c.KerberosCCache != "" || c.Username != "")
+}
+
 // HasAuthentication checks if any authentication method is configured.
 func (c *ConnectionConfig) HasAuthentication() bool {
 	hasPassword := c.Username != "" && c.Password != ""
-	hasKerberos := c.KerberosRealm != "" && (c.KerberosKeytab != "" || c.Username != "")
+	hasKerberos := c.hasKerberos()
 	hasExternal := c.TLSClientCertFile != "" && c.TLSClientKeyFile != ""
 
 	return hasPassword || hasKerberos || hasExternal

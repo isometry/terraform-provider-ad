@@ -143,7 +143,8 @@ func (p *ActiveDirectoryProvider) Schema(ctx context.Context, req provider.Schem
 				Optional: true,
 			},
 			"kerberos_keytab": schema.StringAttribute{
-				MarkdownDescription: "Path to Kerberos keytab file for authentication. " +
+				MarkdownDescription: "Path to Kerberos keytab file for authentication. If `username` is not set, the principal is taken from the keytab " +
+					"(a machine entry ending in `$` is preferred). " +
 					"Can be set via the `AD_KERBEROS_KEYTAB` environment variable.",
 				Optional: true,
 			},
@@ -155,7 +156,9 @@ func (p *ActiveDirectoryProvider) Schema(ctx context.Context, req provider.Schem
 			},
 			"kerberos_ccache": schema.StringAttribute{
 				MarkdownDescription: "Path to Kerberos credential cache file for authentication. " +
-					"When specified, existing Kerberos tickets will be used for authentication. " +
+					"When specified, existing Kerberos tickets (and the cache's own principal) will be used for authentication. " +
+					"Kerberos credentials are chosen in this order: explicit `kerberos_ccache`, explicit `kerberos_keytab`, " +
+					"`username` + `password`, then the default credential cache or keytab only when none of these is configured. " +
 					"Can be set via the `AD_KERBEROS_CCACHE` environment variable.",
 				Optional: true,
 			},
@@ -202,12 +205,14 @@ func (p *ActiveDirectoryProvider) Schema(ctx context.Context, req provider.Schem
 				Sensitive: true,
 			},
 			"tls_client_cert_file": schema.StringAttribute{
-				MarkdownDescription: "Path to client certificate file for mutual TLS authentication. " +
+				MarkdownDescription: "Path to client certificate file for mutual TLS authentication (SASL EXTERNAL). Requires an `ldaps://` URL or `use_tls = true`. " +
+					"Used only when no Kerberos and no `username`/`password` is configured. " +
 					"Can be set via the `AD_TLS_CLIENT_CERT_FILE` environment variable.",
 				Optional: true,
 			},
 			"tls_client_key_file": schema.StringAttribute{
-				MarkdownDescription: "Path to client private key file for mutual TLS authentication. " +
+				MarkdownDescription: "Path to client private key file for mutual TLS authentication (SASL EXTERNAL). Requires an `ldaps://` URL or `use_tls = true`. " +
+					"Used only when no Kerberos and no `username`/`password` is configured. " +
 					"Can be set via the `AD_TLS_CLIENT_KEY_FILE` environment variable.",
 				Optional:  true,
 				Sensitive: true,
@@ -374,26 +379,6 @@ func (p *ActiveDirectoryProvider) Configure(ctx context.Context, req provider.Co
 		"duration_ms": time.Since(start).Milliseconds(),
 	})
 
-	// Test authentication
-	start = time.Now()
-	if err := client.BindWithConfig(ctx); err != nil {
-		tflog.Error(ctx, "Authentication test failed", map[string]any{
-			"error":       err.Error(),
-			"duration_ms": time.Since(start).Milliseconds(),
-		})
-		resp.Diagnostics.AddError(
-			"Authentication Failed",
-			"The provider could not authenticate with Active Directory. "+
-				"Please verify your authentication credentials and settings.\n\n"+
-				"Authentication Error: "+err.Error(),
-		)
-		return
-	}
-
-	tflog.Info(ctx, "Authentication successful", map[string]any{
-		"duration_ms": time.Since(start).Milliseconds(),
-	})
-
 	// Initialize cache manager
 	p.cacheManager = ldapclient.NewCacheManager()
 
@@ -494,20 +479,6 @@ func (p *ActiveDirectoryProvider) buildLDAPConfig(data *ActiveDirectoryProviderM
 	kerberosCCache := p.getStringValue(data.KerberosCCache, "AD_KERBEROS_CCACHE")
 	kerberosSPN := p.getStringValue(data.KerberosSPN, "AD_KERBEROS_SPN")
 
-	// Check that we have some form of authentication
-	hasPasswordAuth := username != "" && password != ""
-	hasKerberosAuth := kerberosRealm != ""
-
-	if !hasPasswordAuth && !hasKerberosAuth {
-		diags.AddError(
-			"Missing Authentication Configuration",
-			"Either username/password authentication or Kerberos authentication must be configured. "+
-				"For username/password: provide 'username' and 'password' attributes or set AD_USERNAME|AD_USER and AD_PASSWORD environment variables. "+
-				"For Kerberos: provide 'kerberos_realm' and optionally 'username'/'password' (for password auth), 'kerberos_keytab' (for keytab auth), or 'kerberos_ccache' (for credential cache auth).",
-		)
-		return config
-	}
-
 	// Set authentication fields in ConnectionConfig
 	config.Username = username
 	config.Password = password
@@ -548,6 +519,17 @@ func (p *ActiveDirectoryProvider) buildLDAPConfig(data *ActiveDirectoryProviderM
 	config.TLSCACert = p.getStringValue(data.TLSCACert, "AD_TLS_CA_CERT")
 	config.TLSClientCertFile = p.getStringValue(data.TLSClientCertFile, "AD_TLS_CLIENT_CERT_FILE")
 	config.TLSClientKeyFile = p.getStringValue(data.TLSClientKeyFile, "AD_TLS_CLIENT_KEY_FILE")
+
+	if !config.HasAuthentication() {
+		diags.AddError(
+			"Missing Authentication Configuration",
+			"No usable authentication is configured. Supported combinations: "+
+				"'username' and 'password' (or AD_USERNAME|AD_USER and AD_PASSWORD); "+
+				"'kerberos_realm' with 'kerberos_keytab', 'kerberos_ccache' or 'username' (with 'password' for password auth); "+
+				"or 'tls_client_cert_file' and 'tls_client_key_file' for client certificate authentication.",
+		)
+		return config
+	}
 
 	// Connection pool settings
 	config.MaxConnections = p.getIntBounded(data.MaxConnections, "AD_MAX_CONNECTIONS", "max_connections",

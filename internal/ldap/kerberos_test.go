@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/jcmturner/gokrb5/v8/keytab"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -106,13 +108,44 @@ func TestPrepareKerberosConfig(t *testing.T) {
 			errorMsg:    "kerberos realm is required",
 		},
 		{
-			name: "missing username",
+			name: "keytab without username is allowed",
+			config: &ConnectionConfig{
+				KerberosRealm:  "EXAMPLE.COM",
+				KerberosKeytab: testKeytab,
+			},
+			expected: &ConnectionConfig{
+				KerberosRealm:  "EXAMPLE.COM",
+				KerberosKeytab: testKeytab,
+			},
+		},
+		{
+			name: "ccache without username is allowed",
+			config: &ConnectionConfig{
+				KerberosRealm:  "EXAMPLE.COM",
+				KerberosCCache: testKeytab, // any existing file
+			},
+			expected: &ConnectionConfig{
+				KerberosRealm:  "EXAMPLE.COM",
+				KerberosCCache: testKeytab,
+			},
+		},
+		{
+			name: "password without username",
+			config: &ConnectionConfig{
+				KerberosRealm: "EXAMPLE.COM",
+				Password:      "pw",
+			},
+			expectError: true,
+			errorMsg:    "username (principal) is required for Kerberos password",
+		},
+		{
+			name: "no credentials at all",
 			config: &ConnectionConfig{
 				KerberosRealm:  "EXAMPLE.COM",
 				KerberosKeytab: "/path/to/test.keytab",
 			},
 			expectError: true,
-			errorMsg:    "username (principal) is required",
+			errorMsg:    "no suitable Kerberos credentials",
 		},
 		{
 			name: "missing credentials (with invalid paths)",
@@ -672,6 +705,8 @@ func TestSelectKerberosCredential_Order(t *testing.T) {
 		{"explicit ccache beats keytab", ConnectionConfig{Username: "svc", KerberosCCache: expCache, KerberosKeytab: expKeytab}, kerberosExplicitCCache, expCache},
 		{"explicit keytab beats password", ConnectionConfig{Username: "svc", KerberosKeytab: expKeytab, Password: "pw"}, kerberosExplicitKeytab, expKeytab},
 		{"nothing configured uses default cache", ConnectionConfig{}, kerberosDefaultCCache, defCache},
+		{"explicit ccache without username", ConnectionConfig{KerberosCCache: expCache}, kerberosExplicitCCache, expCache},
+		{"explicit keytab without username", ConnectionConfig{KerberosKeytab: expKeytab}, kerberosExplicitKeytab, expKeytab},
 		{"missing explicit keytab falls through to default cache", ConnectionConfig{Username: "svc", KerberosKeytab: filepath.Join(dir, "nope")}, kerberosDefaultCCache, defCache},
 	}
 	for _, tt := range tests {
@@ -684,11 +719,59 @@ func TestSelectKerberosCredential_Order(t *testing.T) {
 		})
 	}
 
+	t.Run("no default cache falls back to default keytab without username", func(t *testing.T) {
+		t.Setenv("KRB5CCNAME", filepath.Join(dir, "absent"))
+		t.Setenv("KRB5_KTNAME", defKeytab)
+		m, p := selectKerberosCredential(&ConnectionConfig{})
+		assert.Equal(t, kerberosDefaultKeytab, m)
+		assert.Equal(t, defKeytab, p)
+	})
+
 	t.Run("no default cache falls back to default keytab", func(t *testing.T) {
 		t.Setenv("KRB5CCNAME", filepath.Join(dir, "absent"))
 		t.Setenv("KRB5_KTNAME", defKeytab)
 		m, p := selectKerberosCredential(&ConnectionConfig{Username: "svc"})
 		assert.Equal(t, kerberosDefaultKeytab, m)
 		assert.Equal(t, defKeytab, p)
+	})
+}
+
+func TestKeytabPrincipal(t *testing.T) {
+	write := func(t *testing.T, principals ...string) string {
+		kt := keytab.New()
+		for _, pr := range principals {
+			require.NoError(t, kt.AddEntry(pr, "EXAMPLE.COM", "secret", time.Now(), 1, 18))
+		}
+		path := filepath.Join(t.TempDir(), "x.keytab")
+		b, err := kt.Marshal()
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(path, b, 0o600))
+		return path
+	}
+
+	t.Run("single entry", func(t *testing.T) {
+		got, err := keytabPrincipal(write(t, "svc-terraform"))
+		require.NoError(t, err)
+		assert.Equal(t, "svc-terraform", got)
+	})
+	t.Run("multi-component joined by slash", func(t *testing.T) {
+		got, err := keytabPrincipal(write(t, "ldap/dc1.example.com"))
+		require.NoError(t, err)
+		assert.Equal(t, "ldap/dc1.example.com", got)
+	})
+	t.Run("machine account preferred", func(t *testing.T) {
+		got, err := keytabPrincipal(write(t, "host/dc1.example.com", "DC1$", "other"))
+		require.NoError(t, err)
+		assert.Equal(t, "DC1$", got)
+	})
+	t.Run("first entry when no machine account", func(t *testing.T) {
+		got, err := keytabPrincipal(write(t, "first", "second"))
+		require.NoError(t, err)
+		assert.Equal(t, "first", got)
+	})
+	t.Run("empty keytab", func(t *testing.T) {
+		_, err := keytabPrincipal(write(t))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "keytab") // gokrb5's Load rejects a header-only keytab itself
 	})
 }

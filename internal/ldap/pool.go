@@ -378,7 +378,7 @@ func (p *connectionPool) authenticateConnection(pooledConn *PooledConnection) er
 	case AuthMethodKerberos:
 		err = p.authenticateKerberos(pooledConn.conn, pooledConn.serverInfo)
 	case AuthMethodExternal:
-		err = pooledConn.conn.Bind("", "")
+		err = externalBind(p.config, pooledConn.conn)
 	default:
 		return fmt.Errorf("unsupported authentication method: %s", authMethod.String())
 	}
