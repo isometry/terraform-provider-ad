@@ -3,6 +3,9 @@ package ldap
 import (
 	"context"
 	"errors"
+	"net"
+	"os"
+	"syscall"
 	"testing"
 	"time"
 
@@ -637,12 +640,12 @@ func TestClient_IsRetryableError(t *testing.T) {
 		},
 		{
 			name: "connection timeout error",
-			err:  errors.New("connection timeout"),
+			err:  &net.OpError{Op: "read", Err: os.ErrDeadlineExceeded},
 			want: true,
 		},
 		{
 			name: "broken pipe error",
-			err:  errors.New("broken pipe"),
+			err:  &net.OpError{Op: "write", Err: syscall.EPIPE},
 			want: true,
 		},
 		{

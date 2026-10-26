@@ -137,6 +137,31 @@ func TestParseLDAPURL(t *testing.T) {
 			want:    nil,
 			wantErr: true,
 		},
+		{
+			name: "ipv6 with port",
+			url:  "ldaps://[2001:db8::1]:636",
+			want: &ServerInfo{Host: "2001:db8::1", Port: 636, UseTLS: true, Source: "config"},
+		},
+		{
+			name: "ipv6 without port",
+			url:  "ldap://[2001:db8::1]",
+			want: &ServerInfo{Host: "2001:db8::1", Port: 389, Source: "config"},
+		},
+		{
+			name: "ipv6 ldaps without port",
+			url:  "ldaps://[::1]/",
+			want: &ServerInfo{Host: "::1", Port: 636, UseTLS: true, Source: "config"},
+		},
+		{
+			name: "uppercase scheme",
+			url:  "LDAPS://DC1.example.com:3269",
+			want: &ServerInfo{Host: "DC1.example.com", Port: 3269, UseTLS: true, Source: "config"},
+		},
+		{
+			name:    "empty host",
+			url:     "ldap://",
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -276,6 +301,11 @@ func TestServerInfoToURL(t *testing.T) {
 			},
 			want: "ldap://dc1.example.com:389",
 		},
+		{
+			name:   "ipv6 server is bracketed",
+			server: &ServerInfo{Host: "2001:db8::1", Port: 636, UseTLS: true},
+			want:   "ldaps://[2001:db8::1]:636",
+		},
 	}
 
 	for _, tt := range tests {
@@ -283,6 +313,11 @@ func TestServerInfoToURL(t *testing.T) {
 			got := ServerInfoToURL(tt.server)
 			if got != tt.want {
 				t.Errorf("ServerInfoToURL() = %v, want %v", got, tt.want)
+			}
+			// Round trip: the produced URL must parse back to the same server.
+			back, err := ParseLDAPURL(got)
+			if err != nil || back.Host != tt.server.Host || back.Port != tt.server.Port || back.UseTLS != tt.server.UseTLS {
+				t.Errorf("round trip of %q = %+v, %v", got, back, err)
 			}
 		})
 	}

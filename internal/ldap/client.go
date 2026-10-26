@@ -5,8 +5,11 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/go-ldap/ldap/v3"
@@ -770,19 +773,18 @@ func (c *client) isRetryableError(err error) bool {
 		return true
 	}
 
-	// Check for network-related errors and authentication errors
-	errStr := strings.ToLower(err.Error())
-	if strings.Contains(errStr, "connection") ||
-		strings.Contains(errStr, "timeout") ||
-		strings.Contains(errStr, "network") ||
-		strings.Contains(errStr, "broken pipe") ||
-		strings.Contains(errStr, "connection reset") ||
-		strings.Contains(errStr, "successful bind must be completed") ||
-		strings.Contains(errStr, "bind must be completed") {
+	if isNetworkError(err) {
 		return true
 	}
 
-	return false
+	// Never match server diagnostic text (DNs in it contain words like "network");
+	// AD's "bind must be completed" arrives as operationsError.
+	var le *ldap.Error
+	if errors.As(err, &le) {
+		return le.ResultCode == ldap.LDAPResultOperationsError &&
+			strings.Contains(strings.ToLower(le.Error()), "successful bind must be completed")
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "bind must be completed")
 }
 
 // WhoAmI performs the LDAP Who Am I? extended operation.
@@ -994,19 +996,21 @@ func (c *client) GetRootDSE(ctx context.Context) (*RootDSEInfo, error) {
 }
 
 // isNetworkError reports whether err means the underlying socket is dead
-// (as opposed to the server rejecting the request).
+// (as opposed to the server rejecting the request). It matches error types,
+// never server diagnostic text, which can contain arbitrary DNs.
 func isNetworkError(err error) bool {
-	if err == nil {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	if ldap.IsErrorWithCode(err, ldap.ErrorNetwork) {
-		return true
+	var le *ldap.Error
+	if errors.As(err, &le) {
+		// A server result code is not a socket failure; only ErrorNetwork is.
+		return le.ResultCode == ldap.ErrorNetwork
 	}
-	s := strings.ToLower(err.Error())
-	return strings.Contains(s, "connection closed") ||
-		strings.Contains(s, "eof") ||
-		strings.Contains(s, "broken pipe") ||
-		strings.Contains(s, "connection reset")
+	var ne net.Error
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, net.ErrClosed) || errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.As(err, &ne)
 }
 
 // markNetworkFailure flags conn unhealthy when err is network-class, so the
@@ -1025,11 +1029,13 @@ func (c *client) execRetry(ctx context.Context, connp **PooledConnection, op fun
 	needFresh := false
 	return c.withRetry(ctx, func() error {
 		if needFresh {
+			// Release the dead connection first: with a hard max_connections cap
+			// we may be holding the last slot.
+			(*connp).Close()
 			fresh, err := c.pool.Get(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to get connection: %w", err)
 			}
-			(*connp).Close()
 			*connp = fresh
 			needFresh = false
 		}
