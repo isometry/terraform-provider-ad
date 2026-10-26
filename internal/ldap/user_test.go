@@ -1216,6 +1216,27 @@ func TestValidateCreateUserRequest(t *testing.T) {
 			errMsg:  "invalid characters",
 		},
 		{
+			name: "SAM account name of 19 non-ASCII characters (38 bytes) is valid",
+			req: &CreateUserRequest{
+				Name:              "testuser",
+				UserPrincipalName: "testuser@example.com",
+				SAMAccountName:    strings.Repeat("ä", 19),
+				Container:         "OU=Users,DC=example,DC=com",
+			},
+			wantErr: false,
+		},
+		{
+			name: "SAM account name of 21 non-ASCII characters is too long",
+			req: &CreateUserRequest{
+				Name:              "testuser",
+				UserPrincipalName: "testuser@example.com",
+				SAMAccountName:    strings.Repeat("ä", 21),
+				Container:         "OU=Users,DC=example,DC=com",
+			},
+			wantErr: true,
+			errMsg:  "cannot exceed 20 characters",
+		},
+		{
 			name: "valid request minimal",
 			req: &CreateUserRequest{
 				Name:              "testuser",
@@ -1819,6 +1840,27 @@ func TestUserManager_UpdateUser_ContainerMove(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, user)
 	mockClient.AssertExpectations(t)
+}
+
+func TestUserManager_UpdateUser_ContainerMove_SameParentDifferentFormatting(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockClient{}
+	um := NewUserManager(ctx, mockClient, "DC=example,DC=com", NewCacheManager())
+
+	userGUID := "12345678-1234-1234-1234-123456789012"
+	currentDN := "CN=Test User,OU=Users,DC=example,DC=com"
+	sameContainer := "ou=users, dc=example,dc=com"
+
+	mockClient.On("Search", mock.Anything, mock.Anything).Return(
+		makeUserSearchResult(currentDN, userGUID, "sid", "Test User", "testuser@example.com", "testuser"),
+		nil,
+	)
+
+	user, err := um.UpdateUser(userGUID, &UpdateUserRequest{Container: &sameContainer})
+
+	require.NoError(t, err)
+	assert.NotNil(t, user)
+	mockClient.AssertNotCalled(t, "ModifyDN", mock.Anything, mock.Anything)
 }
 
 func TestUserManager_UpdateUser_SecurityFlagChanges(t *testing.T) {

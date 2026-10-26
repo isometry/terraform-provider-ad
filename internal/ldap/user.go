@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-ldap/ldap/v3"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -359,48 +360,9 @@ func (um *UserManager) GetUserBySAM(samAccountName string) (*User, error) {
 	return um.getUserBySAM(samAccountName)
 }
 
-// SearchUsers searches for users using LDAP filter with pagination support.
+// SearchUsers searches for users under the base DN using LDAP filter with pagination support.
 func (um *UserManager) SearchUsers(filter string, attributes []string) ([]*User, error) {
-	if filter == "" {
-		filter = "(&(objectClass=user)(!(objectClass=computer)))"
-	} else {
-		// Ensure we're only searching for user objects (not computers)
-		filter = fmt.Sprintf("(&(objectClass=user)(!(objectClass=computer))%s)", filter)
-	}
-
-	if len(attributes) == 0 {
-		attributes = um.getAllUserAttributes()
-	}
-
-	searchReq := &SearchRequest{
-		BaseDN:     um.baseDN,
-		Scope:      ScopeWholeSubtree,
-		Filter:     filter,
-		Attributes: attributes,
-		TimeLimit:  um.timeout,
-	}
-
-	result, err := um.client.SearchWithPaging(um.ctx, searchReq)
-	if err != nil {
-		return nil, WrapError("search_users", err)
-	}
-
-	users := make([]*User, 0, len(result.Entries))
-	for i, entry := range result.Entries {
-		user, err := um.entryToUser(entry)
-		if err != nil {
-			tflog.SubsystemWarn(um.ctx, "ldap", "Failed to convert LDAP entry to user, skipping", map[string]any{
-				"operation":   "entry_to_user",
-				"entry_index": i,
-				"entry_dn":    entry.DN,
-				"error":       err.Error(),
-			})
-			continue
-		}
-		users = append(users, user)
-	}
-
-	return users, nil
+	return um.searchUsersInContainer(um.baseDN, filter, attributes, ScopeWholeSubtree)
 }
 
 // SearchUsersWithFilter searches for users using user-friendly filter criteria.
@@ -460,8 +422,8 @@ func (um *UserManager) ValidateCreateUserRequest(req *CreateUserRequest) error {
 	}
 
 	// SAM account name max length for users is 20 characters
-	if len(req.SAMAccountName) > 20 {
-		return fmt.Errorf("SAM account name cannot exceed 20 characters for users: %s (%d chars)", req.SAMAccountName, len(req.SAMAccountName))
+	if utf8.RuneCountInString(req.SAMAccountName) > 20 {
+		return fmt.Errorf("SAM account name cannot exceed 20 characters for users: %s (%d chars)", req.SAMAccountName, utf8.RuneCountInString(req.SAMAccountName))
 	}
 
 	if req.Container == "" {
@@ -649,7 +611,7 @@ func (um *UserManager) UpdateUser(guid string, req *UpdateUserRequest) (*User, e
 	// Handle name and/or container changes (both require ModifyDN)
 	needsRename := req.Name != nil && *req.Name != currentUser.CommonName
 	currentContainer, _ := GetDNParent(currentUser.DistinguishedName)
-	needsMove := req.Container != nil && !strings.EqualFold(*req.Container, currentContainer)
+	needsMove := req.Container != nil && !DNEqual(*req.Container, currentContainer)
 
 	if needsRename || needsMove {
 		newName := currentUser.CommonName
@@ -1499,7 +1461,7 @@ func (um *UserManager) renameAndMoveUser(currentUser *User, newName, newContaine
 	currentContainer, _ := GetDNParent(currentUser.DistinguishedName)
 
 	// Check if any actual change is needed
-	if newName == currentUser.CommonName && strings.EqualFold(newContainer, currentContainer) {
+	if newName == currentUser.CommonName && DNEqual(newContainer, currentContainer) {
 		return nil
 	}
 
@@ -1531,7 +1493,7 @@ func (um *UserManager) renameAndMoveUser(currentUser *User, newName, newContaine
 
 	// Determine if we need to specify a new superior (container)
 	var newSuperior string
-	if !strings.EqualFold(newContainer, currentContainer) {
+	if !DNEqual(newContainer, currentContainer) {
 		newSuperior = newContainer
 	}
 
@@ -1570,8 +1532,8 @@ func (um *UserManager) addModifyAttribute(modReq *ModifyRequest, ldapAttr string
 	}
 
 	if *newValue == "" {
-		// Delete the attribute
-		modReq.DeleteAttributes = append(modReq.DeleteAttributes, ldapAttr)
+		// Clear via Replace-with-no-values: idempotent if already absent
+		modReq.ReplaceAttributes[ldapAttr] = []string{}
 	} else {
 		// Replace with new value
 		modReq.ReplaceAttributes[ldapAttr] = []string{*newValue}
