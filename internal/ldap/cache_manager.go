@@ -2,6 +2,7 @@ package ldap
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -382,7 +383,13 @@ func (cm *CacheManager) WarmCache(ctx context.Context, client Client, baseDN str
 
 	// Use paged search to handle large result sets
 	result, err := client.SearchWithPaging(ctx, searchReq)
-	if err != nil {
+	if errors.Is(err, ErrSearchTruncated) && result != nil {
+		// Keep the partial results: uncached members fall back to LDAP lookups.
+		tflog.SubsystemWarn(ctx, "ldap", "Cache warming search truncated; caching partial results", map[string]any{
+			"entries_found": len(result.Entries),
+			"error":         err.Error(),
+		})
+	} else if err != nil {
 		return WrapError("cache_warm_search", fmt.Errorf("failed to search for cache warming: %w", err))
 	}
 

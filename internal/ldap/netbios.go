@@ -12,26 +12,50 @@ import (
 )
 
 // netbiosResolver looks up (and caches) the NetBIOS name of the domain the
-// provider is configured for. Only successes are cached, so a transient or
-// permission failure is retried on the next resolution.
+// provider is configured for. Successes are cached for good; a failure is
+// cached for netbiosFailureTTL so an unreadable CN=Partitions does not cost
+// two searches per DOMAIN\ member.
 type netbiosResolver struct {
 	mu    sync.Mutex
 	names []string
+	err   error
+	errAt time.Time
 }
 
-// get returns the NetBIOS name(s) of the domain rooted at baseDN.
-func (r *netbiosResolver) get(ctx context.Context, client Client, baseDN string, timeout time.Duration) ([]string, error) {
+// Package variables so tests control the clock and window.
+var (
+	netbiosNow        = time.Now
+	netbiosFailureTTL = 60 * time.Second
+)
+
+// get returns the NetBIOS name(s) of the domain. The domain root is read from
+// the rootDSE (defaultNamingContext), never the configured base_dn, which may
+// be an OU.
+func (r *netbiosResolver) get(ctx context.Context, client Client, _ string, timeout time.Duration) ([]string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.names != nil {
 		return r.names, nil
 	}
+	if r.err != nil && netbiosNow().Sub(r.errAt) < netbiosFailureTTL {
+		return nil, r.err
+	}
+	names, err := r.lookup(ctx, client, timeout)
+	if err != nil {
+		r.err, r.errAt = err, netbiosNow()
+		return nil, err
+	}
+	r.names, r.err = names, nil
+	return names, nil
+}
+
+func (r *netbiosResolver) lookup(ctx context.Context, client Client, timeout time.Duration) ([]string, error) {
 
 	rootDSE, err := client.Search(ctx, &SearchRequest{
 		BaseDN:     "",
 		Scope:      ScopeBaseObject,
 		Filter:     "(objectClass=*)",
-		Attributes: []string{"configurationNamingContext"},
+		Attributes: []string{"configurationNamingContext", "defaultNamingContext"},
 		SizeLimit:  1,
 		TimeLimit:  timeout,
 	})
@@ -42,11 +66,15 @@ func (r *netbiosResolver) get(ctx context.Context, client Client, baseDN string,
 		return nil, fmt.Errorf("rootDSE has no configurationNamingContext")
 	}
 	configNC := rootDSE.Entries[0].GetAttributeValue("configurationNamingContext")
+	domainNC := rootDSE.Entries[0].GetAttributeValue("defaultNamingContext")
+	if domainNC == "" {
+		return nil, fmt.Errorf("rootDSE has no defaultNamingContext")
+	}
 
 	result, err := client.Search(ctx, &SearchRequest{
 		BaseDN:     "CN=Partitions," + configNC,
 		Scope:      ScopeSingleLevel,
-		Filter:     fmt.Sprintf("(&(objectClass=crossRef)(nCName=%s)(nETBIOSName=*))", ldap.EscapeFilter(baseDN)),
+		Filter:     fmt.Sprintf("(&(objectClass=crossRef)(nCName=%s)(nETBIOSName=*))", ldap.EscapeFilter(domainNC)),
 		Attributes: []string{"nETBIOSName"},
 		TimeLimit:  timeout,
 	})
@@ -59,9 +87,8 @@ func (r *netbiosResolver) get(ctx context.Context, client Client, baseDN string,
 		names = append(names, e.GetAttributeValues("nETBIOSName")...)
 	}
 	if len(names) == 0 {
-		return nil, fmt.Errorf("no crossRef with nETBIOSName found for %s", baseDN)
+		return nil, fmt.Errorf("no crossRef with nETBIOSName found for %s", domainNC)
 	}
-	r.names = names
 	return names, nil
 }
 

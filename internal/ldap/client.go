@@ -284,7 +284,18 @@ func (c *client) Search(ctx context.Context, req *SearchRequest) (*SearchResult,
 	})
 }
 
-// SearchWithPaging performs an LDAP search with automatic pagination.
+// ErrSearchTruncated is returned (wrapped) by SearchWithPaging, together with
+// the partial result, when it stops at its duration or page cap.
+var ErrSearchTruncated = errors.New("paged search truncated")
+
+// Package-level so tests can lower them.
+var (
+	maxSearchDuration = 30 * time.Minute // Maximum total search time
+	maxPagesPerSearch = 1000             // Maximum pages to prevent runaway searches
+)
+
+// SearchWithPaging performs an LDAP search with automatic pagination. If a cap
+// is hit it returns the partial result and an error wrapping ErrSearchTruncated.
 func (c *client) SearchWithPaging(ctx context.Context, req *SearchRequest) (*SearchResult, error) {
 	if req == nil {
 		return nil, fmt.Errorf("search request cannot be nil")
@@ -335,9 +346,6 @@ func (c *client) SearchWithPaging(ctx context.Context, req *SearchRequest) (*Sea
 	})
 
 	lastProgressTime := start
-	maxSearchDuration := 30 * time.Minute // Maximum total search time
-	maxPagesPerSearch := 1000             // Maximum pages to prevent runaway searches
-
 	for {
 		// Check for timeout conditions before starting next page
 		currentTime := time.Now()
@@ -358,8 +366,8 @@ func (c *client) SearchWithPaging(ctx context.Context, req *SearchRequest) (*Sea
 			return &SearchResult{
 				Entries: allEntries,
 				Total:   len(allEntries),
-				HasMore: true, // Indicate there may be more results
-			}, nil
+				HasMore: true,
+			}, fmt.Errorf("%w: exceeded maximum duration of %s after %d entries", ErrSearchTruncated, maxSearchDuration, len(allEntries))
 		}
 
 		// Check maximum pages per search
@@ -376,8 +384,8 @@ func (c *client) SearchWithPaging(ctx context.Context, req *SearchRequest) (*Sea
 			return &SearchResult{
 				Entries: allEntries,
 				Total:   len(allEntries),
-				HasMore: true, // Indicate there may be more results
-			}, nil
+				HasMore: true,
+			}, fmt.Errorf("%w: exceeded maximum of %d pages after %d entries", ErrSearchTruncated, maxPagesPerSearch, len(allEntries))
 		}
 
 		// Check if context was cancelled
@@ -810,8 +818,12 @@ func (c *client) WhoAmI(ctx context.Context) (*WhoAmIResult, error) {
 
 // Helper functions for common operations
 
-// GetBaseDN retrieves the base DN from the root DSE.
+// GetBaseDN returns the configured base DN, or else the root DSE's
+// defaultNamingContext.
 func (c *client) GetBaseDN(ctx context.Context) (string, error) {
+	if c.config != nil && c.config.BaseDN != "" {
+		return c.config.BaseDN, nil
+	}
 	searchReq := &SearchRequest{
 		BaseDN:     "",
 		Scope:      ScopeBaseObject,

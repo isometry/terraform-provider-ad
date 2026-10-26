@@ -118,7 +118,8 @@ func (p *ActiveDirectoryProvider) Schema(ctx context.Context, req provider.Schem
 			},
 			"base_dn": schema.StringAttribute{
 				MarkdownDescription: "Base DN for LDAP searches (e.g., `dc=example,dc=com`). " +
-					"If not specified, will be automatically discovered from the root DSE. " +
+					"When set, the value is used verbatim as the base for searches by all resources and data sources and for cache warming (a wrong value makes searches fail). " +
+					"If not specified, the domain's default naming context is discovered from the root DSE. " +
 					"Can be set via the `AD_BASE_DN` environment variable.",
 				Optional: true,
 			},
@@ -387,40 +388,27 @@ func (p *ActiveDirectoryProvider) Configure(ctx context.Context, req provider.Co
 	if warmCache {
 		tflog.Info(ctx, "Cache warming enabled, starting cache warming operation")
 
-		// Get base DN for cache warming
-		baseDN, err := client.GetBaseDN(ctx)
-		if err != nil {
-			tflog.Warn(ctx, "Could not determine base DN for cache warming, will attempt with configured base DN", map[string]any{
-				"error": err.Error(),
+		// An empty base DN makes WarmCache resolve it via client.GetBaseDN,
+		// which honours the configured base_dn.
+		start = time.Now()
+		if err := p.cacheManager.WarmCache(ctx, client, ""); err != nil {
+			tflog.Error(ctx, "Cache warming failed but will continue", map[string]any{
+				"error":       err.Error(),
+				"duration_ms": time.Since(start).Milliseconds(),
 			})
-			baseDN = config.BaseDN // Use configured base DN as fallback
-		}
-
-		if baseDN == "" {
-			tflog.Warn(ctx, "No base DN available for cache warming, skipping cache warming")
+			// Add warning diagnostic but don't fail provider initialization
+			resp.Diagnostics.AddWarning(
+				"Cache Warming Failed",
+				"Cache warming was enabled but failed to complete successfully. "+
+					"The provider will function normally but performance may be reduced. "+
+					"Cache Warming Error: "+err.Error(),
+			)
 		} else {
-			// Perform cache warming with progress logging
-			start = time.Now()
-			if err := p.cacheManager.WarmCache(ctx, client, baseDN); err != nil {
-				tflog.Error(ctx, "Cache warming failed but will continue", map[string]any{
-					"error":       err.Error(),
-					"duration_ms": time.Since(start).Milliseconds(),
-				})
-				// Add warning diagnostic but don't fail provider initialization
-				resp.Diagnostics.AddWarning(
-					"Cache Warming Failed",
-					"Cache warming was enabled but failed to complete successfully. "+
-						"The provider will function normally but performance may be reduced. "+
-						"Cache Warming Error: "+err.Error(),
-				)
-			} else {
-				stats := p.cacheManager.GetStats()
-				tflog.Info(ctx, "Cache warming completed successfully", map[string]any{
-					"duration_ms":    time.Since(start).Milliseconds(),
-					"entries_cached": stats.Entries,
-					"base_dn":        baseDN,
-				})
-			}
+			stats := p.cacheManager.GetStats()
+			tflog.Info(ctx, "Cache warming completed successfully", map[string]any{
+				"duration_ms":    time.Since(start).Milliseconds(),
+				"entries_cached": stats.Entries,
+			})
 		}
 	} else {
 		tflog.Debug(ctx, "Cache warming disabled")
