@@ -120,8 +120,12 @@ func (d *GroupDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 
 			// Member flattening option
 			"flatten_members": schema.BoolAttribute{
-				MarkdownDescription: "If set to true, returns a flattened list of users only (excludes groups) from " +
-					"recursive group membership. This traverses nested group membership to return all user members. " +
+				MarkdownDescription: "If set to true, `members` is a flattened list of user accounts only (groups are excluded), resolved " +
+					"in a single transitive-membership search (LDAP matching rule `1.2.840.113556.1.4.1941`, restricted to " +
+					"`objectCategory=person` and `objectClass=user`) that follows nested groups. Computers and contacts are not " +
+					"returned, and the search is scoped to the provider's base DN, so users from other domains or forests are not " +
+					"included. Users whose only membership is their primary group (e.g. `Domain Users`) are not found, as the " +
+					"transitive memberOf rule does not consider `primaryGroupID`. The data source returns an error if the lookup fails. " +
 					"When false or unset, the `members` attribute contains direct members only (users and groups).",
 				Optional: true,
 			},

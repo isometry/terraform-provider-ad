@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 	"sort"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -49,15 +50,16 @@ func (f BuildHierarchyFunction) Metadata(_ context.Context, req function.Metadat
 func (f BuildHierarchyFunction) Definition(_ context.Context, req function.DefinitionRequest, resp *function.DefinitionResponse) {
 	resp.Definition = function.Definition{
 		Summary:     "Build hierarchical tree structure from objects",
-		Description: "Organizes objects into a hierarchical tree structure based on parent-child or root relationships. Returns restructured objects with children grouped under their parents/roots. The function preserves all original object attributes and adds hierarchical structure. Objects that have children will gain a children field containing a map of their child objects with keys preserved. Root field supports boolean values (true to mark explicit roots) and string values (to reference roots, creating them implicitly if needed). Validation prevents objects from having both parent and root fields. Configuration map fields (all optional): default_root (string) - Default root for orphaned objects; parent_field (string) - Field name for parent reference (default: parent); root_field (string) - Field name for root reference/marking (default: root); children_field (string) - Field name for children collection (default: children); max_depth (number) - Maximum tree depth (default: 5).",
+		Description: "Organizes objects into a hierarchical tree structure based on parent-child or root relationships. Returns restructured objects with children grouped under their parents/roots. The function preserves all original object attributes and adds hierarchical structure. Objects that have children will gain a children field containing a map of their child objects with keys preserved. Root field supports boolean values (true to mark explicit roots) and string values (to reference roots, creating them implicitly if needed). Validation prevents objects from having both parent and root fields, and an object whose parent does not name an existing key is an error. Objects without parent or root relationships are placed under default_root when set (default_root itself is a root, created implicitly if it is not an input key). Configuration map fields (all optional): default_root (string) - Default root for objects without parent or root relationships; parent_field (string) - Field name for parent reference (default: parent); root_field (string) - Field name for root reference/marking (default: root); children_field (string) - Field name for children collection (default: children); max_depth (number) - Maximum tree depth (default: 5).",
 		MarkdownDescription: "Organizes objects into a hierarchical tree structure based on parent-child or root relationships. Returns restructured objects with children grouped under their parents/roots.\n\n" +
 			"The function preserves all original object attributes and adds hierarchical structure. Objects that have children will gain a children field containing a map of their child objects with keys preserved.\n\n" +
 			"**Root Field Semantics:**\n" +
 			"- `root: true` (boolean): Explicitly marks the object as a root\n" +
 			"- `root: \"name\"` (string): References a root (creates it implicitly if it doesn't exist)\n" +
-			"- Objects cannot have both `parent` and `root` fields (validation error)\n\n" +
+			"- Objects cannot have both `parent` and `root` fields (validation error)\n" +
+			"- A `parent` that does not name a key of the input is an error (`object \"a\": parent \"typo\" does not exist`); use `root` to make an object a root on purpose\n\n" +
 			"**Configuration map fields (all optional):**\n" +
-			"- `default_root` (string): Default root for objects without parent or root relationships\n" +
+			"- `default_root` (string): Default root for objects without parent or root relationships; they are attached under it. If it names an input key that object is itself a root, otherwise an empty root is created\n" +
 			"- `parent_field` (string): Field name for parent reference in objects (default: \"parent\")\n" +
 			"- `root_field` (string): Field name for root reference/marking in objects (default: \"root\")\n" +
 			"- `children_field` (string): Field name for children collection in output objects (default: \"children\")\n" +
@@ -234,8 +236,8 @@ func (f BuildHierarchyFunction) BuildHierarchy(ctx context.Context, objectsMap m
 			if _, exists := workingObjects[rootStr]; !exists {
 				implicitRoots[rootStr] = true
 			}
-		} else if defaultRoot != "" && !isExplicitRoot {
-			// No parent/root specified, use default_root
+		} else if defaultRoot != "" && key != defaultRoot {
+			// No parent/root specified, use default_root (which is itself a root)
 			parentMap[key] = defaultRoot
 			childrenMap[defaultRoot] = append(childrenMap[defaultRoot], key)
 
@@ -252,6 +254,14 @@ func (f BuildHierarchyFunction) BuildHierarchy(ctx context.Context, objectsMap m
 		if _, exists := workingObjects[rootKey]; !exists {
 			// Create empty root object
 			workingObjects[rootKey] = make(map[string]any)
+		}
+	}
+
+	// Phase 2b: Every parent must exist (checked after phase 1 as objects may be
+	// listed before their parents; sorted for a stable error).
+	for _, key := range slices.Sorted(maps.Keys(parentMap)) {
+		if _, exists := workingObjects[parentMap[key]]; !exists {
+			return nil, fmt.Errorf("object %q: %s %q does not exist", key, config.ParentField, parentMap[key])
 		}
 	}
 

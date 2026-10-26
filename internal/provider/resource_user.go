@@ -217,7 +217,9 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "The password for the user. This is **write-only** and never stored in state. " +
 					"When `password_version` is 0 or omitted, the password is only set on create. " +
 					"When `password_version` > 0, the password is set whenever the version changes. " +
-					"Requires LDAPS connection. **Note**: Requires Terraform 1.11+.",
+					"The provider refuses to write the password unless the live LDAP connection is encrypted " +
+					"(an `ldaps://` URL, or a successful StartTLS via `use_tls = true`), regardless of the `use_tls` setting itself. " +
+					"**Note**: Requires Terraform 1.11+.",
 				Optional:  true,
 				Sensitive: true,
 				WriteOnly: true,
@@ -233,10 +235,13 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 
 			// Security flags
 			"enabled": schema.BoolAttribute{
-				MarkdownDescription: "Whether the user account is enabled. Defaults to `true`.",
-				Optional:            true,
-				Computed:            true,
-				Default:             booldefault.StaticBool(true),
+				MarkdownDescription: "Whether the user account is enabled. Defaults to `true`. Active Directory cannot enable an account " +
+					"that has no usable password, so on create the planned value is `false` when no `password` is configured. " +
+					"On update, the prior state value is kept when this attribute is omitted, and an explicit `true` is planned as " +
+					"`false` while the account still has `change_password_at_logon = true` and no `password` is supplied.",
+				Optional: true,
+				Computed: true,
+				Default:  booldefault.StaticBool(true),
 				PlanModifiers: []planmodifier.Bool{
 					planmodifiers.EnabledRequiresPassword(path.Root("password")),
 				},
@@ -260,9 +265,10 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Default:             booldefault.StaticBool(false),
 			},
 			"change_password_at_logon": schema.BoolAttribute{
-				MarkdownDescription: "Whether the user must change their password at next logon. On Create, defaults to `true` when no `password` is set and `false` otherwise. On Update, the prior state value is preserved when this attribute is omitted from configuration.",
-				Optional:            true,
-				Computed:            true,
+				MarkdownDescription: "Whether the user must change their password at next logon. On Create, defaults to `true` when no `password` is set and `false` otherwise. On Update, the prior state value is preserved when this attribute is omitted from configuration. " +
+					"Setting it to `false` is rejected for an account without a password (on create, or on update when changing from `true` without a `password`), because Active Directory would force a change at first logon anyway.",
+				Optional: true,
+				Computed: true,
 				PlanModifiers: []planmodifier.Bool{
 					planmodifiers.DefaultChangePasswordAtLogon(),
 				},

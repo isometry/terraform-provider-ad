@@ -16,9 +16,10 @@ The function preserves all original object attributes and adds hierarchical stru
 - `root: true` (boolean): Explicitly marks the object as a root
 - `root: "name"` (string): References a root (creates it implicitly if it doesn't exist)
 - Objects cannot have both `parent` and `root` fields (validation error)
+- A `parent` that does not name a key of the input is an error (`object "a": parent "typo" does not exist`); use `root` to make an object a root on purpose
 
 **Configuration map fields (all optional):**
-- `default_root` (string): Default root for objects without parent or root relationships
+- `default_root` (string): Default root for objects without parent or root relationships; they are attached under it. If it names an input key that object is itself a root, otherwise an empty root is created
 - `parent_field` (string): Field name for parent reference in objects (default: "parent")
 - `root_field` (string): Field name for root reference/marking in objects (default: "root")
 - `children_field` (string): Field name for children collection in output objects (default: "children")
@@ -103,83 +104,63 @@ locals {
   })
 }
 
-# Expected result structure for org_hierarchy:
+# Expected result structure for org_hierarchy (only roots at the top level;
+# children are maps keyed by the original object keys):
 # {
 #   "it" = {
 #     name = "IT Department"
-#     children = [
-#       {
-#         name = "Development Team"
-#         parent = "it"
-#       },
-#       {
-#         name = "Operations Team"
+#     children = {
+#       "dev-team" = {
+#         name   = "Development Team"
 #         parent = "it"
 #       }
-#     ]
+#       "ops-team" = {
+#         name   = "Operations Team"
+#         parent = "it"
+#       }
+#     }
 #   }
 #   "hr" = {
 #     name = "HR Department"
-#     children = [
-#       {
-#         name = "Recruiting"
+#     children = {
+#       "recruiting" = {
+#         name   = "Recruiting"
 #         parent = "hr"
 #       }
-#     ]
-#   }
-#   "dev-team" = {
-#     name = "Development Team"
-#     parent = "it"
-#   }
-#   "ops-team" = {
-#     name = "Operations Team"
-#     parent = "it"
-#   }
-#   "recruiting" = {
-#     name = "Recruiting"
-#     parent = "hr"
+#     }
 #   }
 # }
 
-# Expected result structure for project_hierarchy:
+# Expected result structure for project_hierarchy (children_field = "tasks"):
 # {
 #   "project-a" = {
-#     title = "Project Alpha"
+#     title   = "Project Alpha"
 #     manager = "john.doe"
-#     tasks = [
-#       {
-#         title = "Database Design"
-#         reports_to = "project-a"
-#       },
-#       {
-#         title = "API Development"
+#     tasks = {
+#       "task-1" = {
+#         title      = "Database Design"
 #         reports_to = "project-a"
 #       }
-#     ]
+#       "task-2" = {
+#         title      = "API Development"
+#         reports_to = "project-a"
+#       }
+#     }
 #   }
 #   "project-b" = {
-#     title = "Project Beta"
+#     title   = "Project Beta"
 #     manager = "jane.smith"
-#     tasks = [
-#       {
-#         title = "Testing"
+#     tasks = {
+#       "task-3" = {
+#         title      = "Testing"
 #         reports_to = "project-b"
 #       }
-#     ]
-#   }
-#   "task-1" = {
-#     title = "Database Design"
-#     reports_to = "project-a"
-#   }
-#   "task-2" = {
-#     title = "API Development"
-#     reports_to = "project-a"
-#   }
-#   "task-3" = {
-#     title = "Testing"
-#     reports_to = "project-b"
+#     }
 #   }
 # }
+
+# A parent that does not name an existing key is an error, e.g.
+# { a = { parent = "typo" } } fails with: object "a": parent "typo" does not exist
 
 # Output the hierarchical structures
 output "organization" {

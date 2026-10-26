@@ -51,10 +51,10 @@ resource "ad_ou" "it_groups" {
 
 # Protected OU (cannot be accidentally deleted)
 resource "ad_ou" "service_accounts" {
-  name                  = "Service Accounts"
-  path                  = ad_ou.it_department.dn
-  description           = "Critical service accounts"
-  protect_from_deletion = true
+  name        = "Service Accounts"
+  path        = ad_ou.it_department.dn
+  description = "Critical service accounts"
+  protected   = true
 }
 
 # Using OU as container for groups
