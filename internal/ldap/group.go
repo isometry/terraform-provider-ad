@@ -182,12 +182,14 @@ type GroupManager struct {
 
 // NewGroupManager creates a new group manager instance.
 func NewGroupManager(ctx context.Context, client Client, baseDN string, cacheManager *CacheManager) *GroupManager {
+	normalizer := NewMemberNormalizer(client, baseDN, cacheManager)
+	normalizer.SetContext(ctx)
 	return &GroupManager{
 		ctx:          ctx,
 		client:       client,
 		guidHandler:  NewGUIDHandler(),
 		sidHandler:   NewSIDHandler(),
-		normalizer:   NewMemberNormalizer(client, baseDN, cacheManager),
+		normalizer:   normalizer,
 		baseDN:       baseDN,
 		timeout:      30 * time.Second,
 		cacheManager: cacheManager,

@@ -1037,6 +1037,7 @@ func (r *UserResource) ImportState(ctx context.Context, req resource.ImportState
 
 	// Normalize the import ID to a DN (supports DN, GUID, SID, UPN, SAM formats)
 	normalizer := ldapclient.NewMemberNormalizer(r.client, r.baseDN, r.cacheManager)
+	normalizer.SetContext(ctx)
 	resolved, err := normalizer.Resolve(importID)
 	if err != nil {
 		resp.Diagnostics.AddError(

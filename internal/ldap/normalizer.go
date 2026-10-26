@@ -72,6 +72,7 @@ type MemberNormalizer struct {
 	cacheManager *CacheManager // Reference to shared cache
 	timeout      time.Duration
 	netbios      netbiosResolver
+	ctx          context.Context // parent of every lookup; cancelled on Ctrl-C
 }
 
 // NewMemberNormalizer creates a new member identifier normalizer.
@@ -83,12 +84,21 @@ func NewMemberNormalizer(client Client, baseDN string, cacheManager *CacheManage
 		baseDN:       baseDN,
 		cacheManager: cacheManager, // Use shared cache
 		timeout:      30 * time.Second,
+		ctx:          context.Background(),
 	}
 }
 
 // SetTimeout sets the LDAP operation timeout.
 func (m *MemberNormalizer) SetTimeout(timeout time.Duration) {
 	m.timeout = timeout
+}
+
+// SetContext sets the parent context for all lookups so cancellation
+// interrupts resolution. A nil context is ignored.
+func (m *MemberNormalizer) SetContext(ctx context.Context) {
+	if ctx != nil {
+		m.ctx = ctx
+	}
 }
 
 // DetectIdentifierType analyzes an identifier string and determines its type.
@@ -177,16 +187,8 @@ func (m *MemberNormalizer) Resolve(identifier string) (ResolvedIdentifier, error
 	}
 	resolved.DN = normalizedDN
 
-	// Cache the result
-	if m.cacheManager != nil {
-		cacheEntry := &LDAPCacheEntry{
-			DN:         resolved.DN,
-			ObjectGUID: resolved.GUID,
-			ObjectSID:  "", // Will be set from LDAP response if available
-			Attributes: make(map[string][]string),
-		}
-		_ = m.cacheManager.Put(cacheEntry) // Ignore cache errors - they're not critical
-	}
+	// Each resolver caches its own result (with its SID/UPN/SAM index keys);
+	// re-Putting here would replace that entry and wipe those indexes.
 
 	return resolved, nil
 }
@@ -204,6 +206,14 @@ func (m *MemberNormalizer) ResolveBatch(identifiers []string) (map[string]Resolv
 	failures := make(map[string]error, len(identifiers))
 
 	for _, original := range identifiers {
+		// Once cancelled, every remaining identifier fails with ctx.Err()
+		// without touching the cache or LDAP.
+		if err := m.ctx.Err(); err != nil {
+			if strings.TrimSpace(original) != "" {
+				failures[original] = err
+			}
+			continue
+		}
 		trimmed := strings.TrimSpace(original)
 		if trimmed == "" {
 			continue
@@ -226,7 +236,7 @@ func (m *MemberNormalizer) ResolveBatch(identifiers []string) (map[string]Resolv
 
 // validateDN verifies that a DN-shaped input exists in Active Directory.
 func (m *MemberNormalizer) validateDN(dn string) (ResolvedIdentifier, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
+	ctx, cancel := context.WithTimeout(m.ctx, m.timeout)
 	defer cancel()
 
 	// Normalize DN case before searching to ensure consistent format
@@ -283,7 +293,7 @@ func (m *MemberNormalizer) validateDN(dn string) (ResolvedIdentifier, error) {
 
 // resolveGUID resolves a GUID to its Distinguished Name.
 func (m *MemberNormalizer) resolveGUID(guid string) (ResolvedIdentifier, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
+	ctx, cancel := context.WithTimeout(m.ctx, m.timeout)
 	defer cancel()
 
 	// Create GUID search request
@@ -338,7 +348,14 @@ func (m *MemberNormalizer) resolveGUID(guid string) (ResolvedIdentifier, error) 
 
 // ResolveSID resolves a Security Identifier to its Distinguished Name.
 func (m *MemberNormalizer) ResolveSID(sid string) (ResolvedIdentifier, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
+	// entryToUser calls this per user read for the (usually identical) primary group.
+	if m.cacheManager != nil {
+		if cached, found := m.cacheManager.Get("sid:" + sid); found {
+			return ResolvedIdentifier{DN: cached.DN, GUID: cached.ObjectGUID}, nil
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(m.ctx, m.timeout)
 	defer cancel()
 
 	// Search by objectSid using binary encoding
@@ -394,7 +411,7 @@ func (m *MemberNormalizer) ResolveSID(sid string) (ResolvedIdentifier, error) {
 
 // resolveUPN resolves a User Principal Name to its Distinguished Name.
 func (m *MemberNormalizer) resolveUPN(upn string) (ResolvedIdentifier, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
+	ctx, cancel := context.WithTimeout(m.ctx, m.timeout)
 	defer cancel()
 
 	// Search by userPrincipalName
@@ -446,7 +463,7 @@ func (m *MemberNormalizer) resolveUPN(upn string) (ResolvedIdentifier, error) {
 
 // resolveSAM resolves a SAM Account Name to its Distinguished Name.
 func (m *MemberNormalizer) resolveSAM(sam string) (ResolvedIdentifier, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
+	ctx, cancel := context.WithTimeout(m.ctx, m.timeout)
 	defer cancel()
 
 	username, err := m.samUsername(ctx, sam)

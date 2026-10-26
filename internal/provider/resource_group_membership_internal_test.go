@@ -606,11 +606,40 @@ func TestGroupMembershipResource_ModifyPlanUnknownMembersDetail(t *testing.T) {
 	}
 }
 
+// TestGroupMembershipResource_ModifyPlanCancelledContextIssuesNoSearches proves
+// the plan context reaches the member normalizer: with an already-cancelled
+// context, uncached identifiers are not looked up in the directory at all.
+func TestGroupMembershipResource_ModifyPlanCancelledContextIssuesNoSearches(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	const upn = "upnmember@example.com"
+	stub := &stubMembershipClient{resolvable: map[string]stubObject{
+		"(userPrincipalName=" + upn + ")": {dn: "CN=UPNMember,OU=Users,DC=example,DC=com", guid: "44444444-4444-4444-4444-444444444444"},
+	}}
+	r := newTestGroupMembershipResource(ldapclient.NewCacheManager())
+	r.client = stub
+
+	planModel := &GroupMembershipResourceModel{
+		ID:                   types.StringUnknown(),
+		GroupID:              types.StringValue("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+		Members:              newMembershipSet(t, upn, "DOMAIN\\SAMMember"),
+		MemberDetails:        types.SetUnknown(memberDetailObjectType),
+		IgnoreMissingMembers: types.BoolNull(),
+	}
+	runMembershipModifyPlan(t, ctx, r, planModel, nil)
+
+	if _, queries := stub.counts(); len(queries) != 0 {
+		t.Errorf("expected no resolver searches with a cancelled context, got %v", queries)
+	}
+}
+
 // TestGroupMembershipResource_ModifyPlanResolvesEveryIdentifierFormat proves
 // that ModifyPlan populates `member_details` with the correct (dn, id)
 // pair for every supported `members` identifier format — DN, GUID, SID,
 // UPN, and SAM — each resolved via a cache-seeded entry (no live LDAP
-// call), following the same direct-ModifyPlan-invocation and cache-seeding
+// call), except DOMAIN\user, which always resolves via a stubbed search.
+// It follows the same direct-ModifyPlan-invocation and cache-seeding
 // conventions as TestGroupMembershipResource_ModifyPlanNeverMutatesMembers.
 func TestGroupMembershipResource_ModifyPlanResolvesEveryIdentifierFormat(t *testing.T) {
 	ctx := t.Context()
@@ -667,15 +696,16 @@ func TestGroupMembershipResource_ModifyPlanResolvesEveryIdentifierFormat(t *test
 	}); err != nil {
 		t.Fatalf("failed to seed UPN cache entry: %v", err)
 	}
-	if err := cm.Put(&ldapclient.LDAPCacheEntry{
-		DN:         dnOfSAM,
-		ObjectGUID: guidOfSAM,
-		Attributes: map[string][]string{"sAMAccountName": {"SAMMember"}},
-	}); err != nil {
-		t.Fatalf("failed to seed SAM cache entry: %v", err)
-	}
 
+	// DOMAIN\user identifiers are never served from the cache (the NetBIOS
+	// prefix must always be validated), so SAMMember is resolved through a
+	// live (stubbed) sAMAccountName search. The stub fails the NetBIOS lookup,
+	// so the resolver fails open: it strips the prefix and searches by the
+	// bare SAM name.
 	r := newTestGroupMembershipResource(cm)
+	r.client = &stubMembershipClient{resolvable: map[string]stubObject{
+		"(sAMAccountName=SAMMember)": {dn: dnOfSAM, guid: guidOfSAM},
+	}}
 
 	members := newMembershipSet(t, dnFormat, guidMember, sidMember, upnMember, samMember)
 	want := map[string]string{

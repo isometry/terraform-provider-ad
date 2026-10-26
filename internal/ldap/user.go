@@ -288,12 +288,14 @@ type UserManager struct {
 
 // NewUserManager creates a new user manager instance.
 func NewUserManager(ctx context.Context, client Client, baseDN string, cacheManager *CacheManager) *UserManager {
+	normalizer := NewMemberNormalizer(client, baseDN, cacheManager)
+	normalizer.SetContext(ctx)
 	return &UserManager{
 		ctx:          ctx,
 		client:       client,
 		guidHandler:  NewGUIDHandler(),
 		sidHandler:   NewSIDHandler(),
-		normalizer:   NewMemberNormalizer(client, baseDN, cacheManager),
+		normalizer:   normalizer,
 		baseDN:       baseDN,
 		timeout:      30 * time.Second,
 		cacheManager: cacheManager,
