@@ -2,6 +2,7 @@ package provider_test
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -662,4 +663,80 @@ func collectSetAttr(attrs map[string]string, setAttr string) []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+// TestAccGroupDataSource_largeGroupLookups is a regression test: data.ad_group
+// looked up by dn, by name+container or by sam_account_name, and data.ad_groups,
+// used to report member_count = 0 for groups above 1500 members (lookup by id
+// was correct). They must now follow member;range=N-*.
+//
+// Opt-in: requires TF_ACC=1 and AD_TEST_LARGE_GROUP=1 plus the usual AD_TEST_*
+// variables. 1600 users and the group are created out-of-band via the LDAP
+// client in a dedicated OU (removed on cleanup). Expect a minute or two; run
+// with -timeout 30m.
+func TestAccGroupDataSource_largeGroupLookups(t *testing.T) {
+	SkipIfNotAccTest(t)
+	if os.Getenv("AD_TEST_LARGE_GROUP") != "1" {
+		t.Skip("Skipping large group test - set AD_TEST_LARGE_GROUP=1 to run")
+	}
+	testAccPreCheck(t)
+
+	const memberCount = "1600"
+	ouName := "tf-test-lgds-" + GenerateTestName("")
+	ouDN, userDNs := setupLargeGroupFixture(t, ouName, 1600)
+	name, sam, dn, guid := createLargeGroupOutOfBand(t, ouDN, userDNs)
+
+	cfg := fmt.Sprintf(`
+%[1]s
+
+data "ad_group" "by_id" {
+  id = %[2]q
+}
+
+data "ad_group" "by_dn" {
+  dn = %[3]q
+}
+
+data "ad_group" "by_name" {
+  name      = %[4]q
+  container = %[6]q
+}
+
+data "ad_group" "by_sam" {
+  sam_account_name = %[5]q
+}
+
+data "ad_group" "flat" {
+  id              = %[2]q
+  flatten_members = true
+}
+
+data "ad_groups" "ou" {
+  container = %[6]q
+  scope     = "onelevel"
+}
+`, testProviderConfig(), guid, dn, name, sam, ouDN)
+
+	checks := []resource.TestCheckFunc{
+		resource.TestCheckResourceAttr("data.ad_groups.ou", "group_count", "1"),
+		resource.TestCheckResourceAttr("data.ad_groups.ou", "groups.0.member_count", memberCount),
+	}
+	for _, ds := range []string{"by_id", "by_dn", "by_name", "by_sam", "flat"} {
+		addr := "data.ad_group." + ds
+		checks = append(checks,
+			resource.TestCheckResourceAttr(addr, "member_count", memberCount),
+			resource.TestCheckResourceAttr(addr, "members.#", memberCount),
+		)
+	}
+	check := resource.ComposeAggregateTestCheckFunc(checks...)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: cfg, Check: check},
+			// Idempotent reads.
+			{Config: cfg, Check: check},
+		},
+	})
 }
