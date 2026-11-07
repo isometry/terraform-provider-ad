@@ -69,6 +69,7 @@ func TestProviderResources(t *testing.T) {
 
 	expectedResources := []string{
 		"ad_group",
+		"ad_group_member",
 		"ad_group_membership",
 		"ad_ou",
 		"ad_user",

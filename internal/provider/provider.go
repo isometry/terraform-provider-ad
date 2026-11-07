@@ -646,6 +646,7 @@ func (p *ActiveDirectoryProvider) getIntBounded(configValue types.Int64, envVar,
 func (p *ActiveDirectoryProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewGroupResource,
+		NewGroupMemberResource,
 		NewGroupMembershipResource,
 		NewOUResource,
 		NewUserResource,

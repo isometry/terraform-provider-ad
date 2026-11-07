@@ -7,6 +7,7 @@ description: |-
   Anti-Drift Protection: This resource automatically normalizes all member identifiers to distinguished names (DNs) and object GUIDs internally while preserving your original configuration. The members attribute retains exactly what you configure, while member_details shows the resolved (dn, id) pairs used for Active Directory operations. Members are identified by objectGUID, which never changes for an object's lifetime (unlike its DN, which changes on rename), so membership writes are immune to members being renamed. Members that are new to this resource, or that cannot be resolved yet (e.g. objects created in the same apply), are resolved again immediately before the write.
   Supported Identifier Formats:
   Distinguished Name (DN): CN=John Doe,OU=Users,DC=example,DC=comObject GUID: 550e8400-e29b-41d4-a716-446655440000User Principal Name (UPN): john@example.comSAM Account Name: DOMAIN\john or johnSecurity Identifier (SID): S-1-5-21-123456789-123456789-123456789-1001
+  ~> Warning: Do not use ad_group_membership together with ad_group_member for the same group: this resource removes every member it does not list, including members managed by ad_group_member.
 ---
 
 # ad_group_membership (Resource)
@@ -21,6 +22,8 @@ Manages the membership of an Active Directory group. This resource allows you to
 - User Principal Name (UPN): `john@example.com`
 - SAM Account Name: `DOMAIN\john` or `john`
 - Security Identifier (SID): `S-1-5-21-123456789-123456789-123456789-1001`
+
+~> **Warning:** Do not use `ad_group_membership` together with `ad_group_member` for the same group: this resource removes every member it does not list, including members managed by `ad_group_member`.
 
 ## Example Usage
 
