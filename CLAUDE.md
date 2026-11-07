@@ -153,6 +153,7 @@ Each resource follows these patterns:
 - `ad_ou` - Organizational Units with protection and nesting support
 - `ad_user` - User accounts with password management and account controls
 - `ad_group_membership` - Group membership management with flexible member identification
+- `ad_group_member` - Single non-authoritative group member (one group, one member)
 
 **Data Sources**:
 - `ad_group` / `ad_groups` - Query groups by various attributes

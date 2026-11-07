@@ -211,6 +211,73 @@ func (gmm *GroupMembershipManager) RemoveGroupMembers(groupGUID string, memberDN
 	})
 }
 
+// IsDirectMember reports whether the object with objectGUID memberGUID is a
+// direct value of the member attribute of the group with objectGUID groupGUID.
+// It is one base-scope search on the group's "<GUID=...>" alternative DN with
+// the filter (member=<GUID=memberGUID>), so its cost does not depend on group
+// size. Nested membership is not considered.
+//
+// A missing group is a not-found error (IsNotFoundError). An existing object
+// that is not a group reports false.
+func (gmm *GroupMembershipManager) IsDirectMember(groupGUID, memberGUID string) (bool, error) {
+	groupAltDN, memberAltDN, err := groupMemberAltDNs(groupGUID, memberGUID)
+	if err != nil {
+		return false, err
+	}
+
+	result, err := gmm.client.Search(gmm.ctx, &SearchRequest{
+		BaseDN:     groupAltDN,
+		Scope:      ScopeBaseObject,
+		Filter:     fmt.Sprintf("(member=%s)", ldap.EscapeFilter(memberAltDN)),
+		Attributes: []string{"1.1"},
+		TimeLimit:  gmm.timeout,
+	})
+	if ldap.IsErrorWithCode(err, ldap.LDAPResultNoSuchObject) {
+		return false, NewNotFoundError("is_direct_member", "group with GUID %s not found", groupGUID)
+	}
+	if err != nil {
+		return false, WrapError("is_direct_member", err)
+	}
+
+	return len(result.Entries) > 0, nil
+}
+
+// RemoveGroupMemberByGUID removes only this member from the group. The modify
+// targets the group's "<GUID=...>" alternative DN and deletes the value
+// "<GUID=memberGUID>" with the permissive-modify control, so neither DN is
+// looked up, a renamed member is still matched, and an absent or deleted
+// member is a no-op. A missing group is a not-found error (IsNotFoundError).
+func (gmm *GroupMembershipManager) RemoveGroupMemberByGUID(groupGUID, memberGUID string) error {
+	groupAltDN, memberAltDN, err := groupMemberAltDNs(groupGUID, memberGUID)
+	if err != nil {
+		return err
+	}
+
+	err = gmm.client.Modify(gmm.ctx, &ModifyRequest{
+		DN:           groupAltDN,
+		DeleteValues: map[string][]string{"member": {memberAltDN}},
+		Controls:     []ldap.Control{ldap.NewControlString(ControlTypePermissiveModify, false, "")},
+	})
+	if ldap.IsErrorWithCode(err, ldap.LDAPResultNoSuchObject) {
+		return NewNotFoundError("remove_group_member", "group with GUID %s not found", groupGUID)
+	}
+	return WrapError("remove_group_member", err)
+}
+
+// groupMemberAltDNs validates both GUIDs and returns their "<GUID=...>"
+// alternative-DN forms.
+func groupMemberAltDNs(groupGUID, memberGUID string) (groupAltDN, memberAltDN string, err error) {
+	groupAltDN, err = GUIDToAltDN(groupGUID)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid group GUID: %w", err)
+	}
+	memberAltDN, err = GUIDToAltDN(memberGUID)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid member GUID: %w", err)
+	}
+	return groupAltDN, memberAltDN, nil
+}
+
 // CalculateMembershipDelta compares desired membership with current state
 // and returns the changes needed to achieve the desired state.
 // All desired members must be provided as Distinguished Names (DNs).

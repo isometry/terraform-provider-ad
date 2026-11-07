@@ -91,7 +91,8 @@ func (r *GroupMembershipResource) Schema(ctx context.Context, req resource.Schem
 			"- Object GUID: `550e8400-e29b-41d4-a716-446655440000`\n" +
 			"- User Principal Name (UPN): `john@example.com`\n" +
 			"- SAM Account Name: `DOMAIN\\john` or `john`\n" +
-			"- Security Identifier (SID): `S-1-5-21-123456789-123456789-123456789-1001`",
+			"- Security Identifier (SID): `S-1-5-21-123456789-123456789-123456789-1001`\n\n" +
+			"~> **Warning:** Do not use `ad_group_membership` together with `ad_group_member` for the same group: this resource removes every member it does not list, including members managed by `ad_group_member`.",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
